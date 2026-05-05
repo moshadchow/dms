@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ══════════════════════════════════════════════
+   CSS VARIABLES — Light mode (default)
+══════════════════════════════════════════════ */
+:root {
+  /* Backgrounds */
+  --bg:        #f8fafc;
+  --surface:   #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
+
+  /* Borders */
+  --border:      #f1f5f9;
+  --border-soft: #e2e8f0;
+
+  /* Text */
+  --text:           #1e293b;
+  --text-secondary: #64748b;
+  --text-tertiary:  #94a3b8;
+  --text-muted:     #cbd5e1;
+
+  /* Brand */
+  --primary:       #4f46e5;
+  --primary-soft:  #eef2ff;
+  --primary-hover: #4338ca;
+
+  /* Status */
+  --success-bg:  #f0fdf4;
+  --success:     #16a34a;
+  --warning-bg:  #fefce8;
+  --warning:     #ca8a04;
+  --danger-bg:   #fef2f2;
+  --danger:      #dc2626;
+  --info-bg:     #eff6ff;
+  --info:        #2563eb;
+
+  /* Input */
+  --input-bg:     #f8fafc;
+  --input-border: #e2e8f0;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,0.15);
+
+  /* Topbar / Sidebar */
+  --topbar-bg:  #ffffff;
+  --sidebar-bg: #ffffff;
+}
+
+/* ══════════════════════════════════════════════
+   CSS VARIABLES — Dark mode
+══════════════════════════════════════════════ */
+[data-theme="dark"] {
+  /* ── Backgrounds ── */
+  --bg:        #0d1117;   /* page background — near black */
+  --surface:   #1c2128;   /* cards, modals, panels — slightly lighter */
+  --surface-2: #22272e;   /* inputs, secondary surfaces */
+  --surface-3: #2d333b;   /* hover states, dividers */
+
+  /* ── Borders ── */
+  --border:      #2d333b;   /* more visible borders */
+  --border-soft: #373e47;
+
+  /* ── Text ── */
+  --text:           #f0f6fc;   /* primary — maximum contrast on dark */
+  --text-secondary: #adbac7;   /* labels, subtitles — clearly readable */
+  --text-tertiary:  #768390;   /* placeholders, timestamps */
+  --text-muted:     #545d68;   /* disabled, very subtle */
+
+  /* ── Brand ── */
+  --primary:       #79c0ff;   /* links, active states — blue that pops on dark */
+  --primary-soft:  #1a2b3c;
+  --primary-hover: #a5d6ff;
+
+  /* ── Status ── */
+  --success-bg: #1a2e1a;
+  --success:    #56d364;
+  --warning-bg: #2b2200;
+  --warning:    #e3b341;
+  --danger-bg:  #2d1217;
+  --danger:     #ff7b72;
+  --info-bg:    #112233;
+  --info:       #79c0ff;
+
+  /* ── Input ── */
+  --input-bg:     #21262d;
+  --input-border: #30363d;
+
+  /* ── Shadows ── a bit stronger in dark ── */
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 20px rgba(0,0,0,0.6);
+  --shadow-lg: 0 24px 80px rgba(0,0,0,0.8);
+
+  /* ── Layout shells ── */
+  --topbar-bg:  #1c2128;
+  --sidebar-bg: #1c2128;
+}
+
+/* ══════════════════════════════════════════════
+   Reset & base
+══════════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  background-color: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* ══════════════════════════════════════════════
+   Scrollbar
+══════════════════════════════════════════════ */
+::-webkit-scrollbar           { width: 5px; height: 5px; }
+::-webkit-scrollbar-track     { background: transparent; }
+::-webkit-scrollbar-thumb     { background: var(--surface-3); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* ══════════════════════════════════════════════
+   Focus ring
+══════════════════════════════════════════════ */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+button:focus:not(:focus-visible), input:focus:not(:focus-visible) { outline: none; }
+
+/* ══════════════════════════════════════════════
+   Input
+══════════════════════════════════════════════ */
+.input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--input-border);
+  background-color: var(--input-bg);
+  font-size: 0.875rem;
+  color: var(--text);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms, background-color 150ms;
+}
+.input::placeholder { color: var(--text-tertiary); }
+.input:hover:not(:disabled)  { border-color: var(--border-soft); }
+.input:focus {
+  border-color: var(--primary);
+  background-color: var(--surface);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+.input:disabled { opacity: 0.55; cursor: not-allowed; }
+textarea.input  { resize: vertical; min-height: 80px; }
+select.input    { appearance: none; cursor: pointer; }
+
+/* ══════════════════════════════════════════════
+   Card
+══════════════════════════════════════════════ */
+.card {
+  background-color: var(--surface);
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ══════════════════════════════════════════════
+   Buttons
+══════════════════════════════════════════════ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 6px; padding: 7px 14px; border-radius: 8px;
+  font-size: 0.85rem; font-weight: 600; font-family: inherit;
+  border: none; cursor: pointer; transition: all 150ms; white-space: nowrap;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-primary   { background: var(--text); color: var(--surface); }
+.btn-primary:hover:not(:disabled) { opacity: 0.85; }
+
+.btn-secondary {
+  background: var(--surface-2); color: var(--text-secondary);
+  border: 1px solid var(--border-soft);
+}
+.btn-secondary:hover:not(:disabled) { background: var(--surface-3); }
+
+.btn-danger    { background: var(--danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { opacity: 0.88; }
+
+.btn-ghost     { background: transparent; color: var(--text-secondary); }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); }
+
+/* ══════════════════════════════════════════════
+   Animations
+══════════════════════════════════════════════ */
+@keyframes spin     { to { transform: rotate(360deg); } }
+@keyframes fade-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse    { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+.animate-spin     { animation: spin 0.7s linear infinite; }
+.animate-fade-in  { animation: fade-in 200ms ease; }
+.animate-slide-up { animation: slide-up 200ms ease; }
+.animate-pulse    { animation: pulse 1.5s ease-in-out infinite; }
