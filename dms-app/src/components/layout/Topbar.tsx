@@ -4,19 +4,18 @@ import { toast } from 'react-hot-toast'
 import { useAuthStore } from '@/store/authStore'
 import { ROLE_LABELS } from '@/utils/permissions'
 import type { RoleName } from '@/types/user.types'
-import ChangePasswordModal from '@/components/auth/ChangePasswordModal'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 
 interface Props {
-  onMenuToggle: () => void
-  sidebarOpen:  boolean
+  onMenuToggle:     () => void
+  sidebarOpen:      boolean
+  onChangePassword: () => void
 }
 
-export default function Topbar({ onMenuToggle, sidebarOpen }: Props) {
+export default function Topbar({ onMenuToggle, sidebarOpen, onChangePassword }: Props) {
   const navigate = useNavigate()
   const { user, logout, isAdmin } = useAuthStore()
-  const [dropdownOpen, setDropdownOpen]     = useState(false)
-  const [changePassOpen, setChangePassOpen] = useState(false)
+  const [dropdownOpen, setDropdownOpen] = useState(false)
 
   const handleLogout = () => {
     logout()
@@ -102,7 +101,7 @@ export default function Topbar({ onMenuToggle, sidebarOpen }: Props) {
 
                 {/* Menu items */}
                 <div style={{ padding: '0.375rem' }}>
-                  <button onClick={() => { setDropdownOpen(false); setChangePassOpen(true) }} style={menuItem('var(--text-secondary)')}>
+                  <button onClick={() => { setDropdownOpen(false); onChangePassword() }} style={menuItem('var(--text-secondary)')}>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                     Change password
                   </button>
@@ -119,8 +118,6 @@ export default function Topbar({ onMenuToggle, sidebarOpen }: Props) {
       </header>
 
       {dropdownOpen && <div style={{ position: 'fixed', inset: 0, zIndex: 30 }} onClick={() => setDropdownOpen(false)} />}
-
-      <ChangePasswordModal isOpen={changePassOpen} onClose={() => setChangePassOpen(false)} />
     </>
   )
 }
