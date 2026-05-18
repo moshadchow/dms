@@ -14,7 +14,11 @@ Security contract
   /download endpoints which call resolve_storage_path() internally.
 """
 
+import html
+import shutil
 import uuid
+import zipfile
+from xml.etree import ElementTree as ET
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
@@ -41,9 +45,9 @@ def validate_file(file: UploadFile) -> FileType:
     if mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
+        detail=(
                 f"File type '{mime}' is not supported. "
-                "Allowed types: PDF, Excel (.xlsx/.xls), JPG, PNG"
+                "Allowed types: PDF, DOCX, Excel (.xlsx/.xls), JPG, PNG"
             ),
         )
     return ALLOWED_MIME_TYPES[mime]
@@ -92,6 +96,80 @@ async def save_upload(
 
     relative = str(dest_path.relative_to(storage_root))
     return relative, len(content)
+
+
+def build_variant_storage_path(
+    category_id: int,
+    directory_id: int,
+    owner_user_id: int,
+    variant_id: int,
+    source_file_name: str,
+) -> str:
+    storage_root = Path(settings.STORAGE_ROOT)
+    safe_name = Path(source_file_name or "variant").name
+    relative = Path(str(category_id)) / str(directory_id) / "_variants" / str(owner_user_id) / str(variant_id) / safe_name
+    abs_dir = storage_root / relative.parent
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    return str(relative)
+
+
+def copy_into_storage(source_relative_path: str, dest_relative_path: str) -> int:
+    storage_root = Path(settings.STORAGE_ROOT)
+    source_path = resolve_storage_path(source_relative_path)
+    dest_path = (storage_root / dest_relative_path).resolve()
+
+    if not str(dest_path).startswith(str(storage_root.resolve())):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file path")
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, dest_path)
+    return dest_path.stat().st_size
+
+
+def extract_docx_preview_html(abs_path: Path) -> str:
+    """
+    Render a lightweight HTML preview from a DOCX file.
+
+    This intentionally extracts plain paragraph text only. The frontend uses
+    it as a stable DOM surface for sticky-note anchors.
+    """
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    try:
+        with zipfile.ZipFile(abs_path) as archive:
+            xml = archive.read("word/document.xml")
+    except (zipfile.BadZipFile, KeyError, FileNotFoundError, ET.ParseError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="DOCX preview is unavailable for this file",
+        ) from exc
+
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="DOCX preview is unavailable for this file",
+        ) from exc
+    paragraphs: list[str] = []
+
+    for index, paragraph in enumerate(root.findall(".//w:p", ns)):
+        texts: list[str] = []
+        for node in paragraph.findall(".//w:t", ns):
+            if node.text:
+                texts.append(node.text)
+        content = html.escape("".join(texts)).strip()
+        paragraphs.append(
+            f'<p class="docx-paragraph" data-paragraph-index="{index}">{content or "&nbsp;"}</p>'
+        )
+
+    body = "".join(paragraphs) or "<p class=\"docx-paragraph\" data-paragraph-index=\"0\">&nbsp;</p>"
+    return (
+        '<div class="docx-preview-root" data-docx-preview="true">'
+        f"{body}"
+        "</div>"
+    )
 
 
 # ──────────────────────────────────────────────

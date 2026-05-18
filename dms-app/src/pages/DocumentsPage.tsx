@@ -248,6 +248,7 @@ export default function DocumentsPage() {
                 >
                   <option value="">All types</option>
                   <option value="pdf">PDF</option>
+                  <option value="docx">DOCX</option>
                   <option value="excel">Excel</option>
                   <option value="image">Image</option>
                 </select>

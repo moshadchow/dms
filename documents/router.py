@@ -7,8 +7,16 @@ from sqlmodel import Session
 
 from core.database import get_session
 from core.dependencies import CurrentUser, require_permission
-from documents.models import DocumentListResponse, DocumentRead, DocumentUpdate
+from documents.models import (
+    DocumentListResponse,
+    DocumentRead,
+    DocumentUpdate,
+    DocumentVariantRead,
+    DocumentVariantSaveRequest,
+    DocumentWorkspaceRead,
+)
 from documents.service import DocumentService
+from documents.variants import DocumentVariantService
 from users.models import PermissionAction
 
 router = APIRouter()
@@ -22,7 +30,7 @@ router = APIRouter()
 def list_documents(
     directory_id: Optional[int] = Query(None),
     category_id:  Optional[int] = Query(None),
-    file_type:    Optional[str] = Query(None, description="pdf | excel | image"),
+    file_type:    Optional[str] = Query(None, description="pdf | docx | excel | image"),
     search:       Optional[str] = Query(None, description="Search title or filename"),
     skip:         int           = Query(0, ge=0),
     limit:        int           = Query(50, ge=1, le=200),
@@ -70,6 +78,96 @@ async def upload_document(
 
 
 # ──────────────────────────────────────────────
+#
+# Workspace / private variants
+#
+
+@router.get(
+    "/{document_id}/workspace",
+    response_model=DocumentWorkspaceRead,
+    summary="Get document workspace with private annotations",
+    dependencies=[Depends(require_permission(PermissionAction.VIEW))],
+)
+def get_document_workspace(
+    document_id:  int,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    return DocumentVariantService(session).get_workspace(document_id, current_user)
+
+
+@router.post(
+    "/{document_id}/variants",
+    response_model=DocumentWorkspaceRead,
+    summary="Save a private annotated variant",
+    dependencies=[Depends(require_permission(PermissionAction.VIEW))],
+)
+def save_private_variant(
+    document_id:  int,
+    payload:      DocumentVariantSaveRequest,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    return DocumentVariantService(session).save_private_variant(document_id, payload, current_user)
+
+
+@router.get(
+    "/variants/{variant_id}",
+    response_model=DocumentVariantRead,
+    summary="Get private variant metadata",
+    dependencies=[Depends(require_permission(PermissionAction.VIEW))],
+)
+def get_private_variant(
+    variant_id:   int,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    return DocumentVariantService(session).get_variant(variant_id, current_user)
+
+
+@router.get(
+    "/variants/{variant_id}/view",
+    summary="Preview private variant in browser",
+    dependencies=[Depends(require_permission(PermissionAction.VIEW))],
+)
+def view_private_variant(
+    variant_id:   int,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    abs_path, variant = DocumentVariantService(session).get_variant_file_path(variant_id, current_user)
+
+    def _iter(path: Path, chunk: int = 256 * 1024):
+        with open(path, "rb") as f:
+            while data := f.read(chunk):
+                yield data
+
+    return StreamingResponse(
+        _iter(abs_path),
+        media_type=variant.source_mime_type,
+        headers={"Content-Disposition": f'inline; filename="{variant.source_file_name}"'},
+    )
+
+
+@router.get(
+    "/variants/{variant_id}/download",
+    summary="Download private variant",
+    dependencies=[Depends(require_permission(PermissionAction.DOWNLOAD))],
+)
+def download_private_variant(
+    variant_id:   int,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    abs_path, variant = DocumentVariantService(session).get_variant_file_path(variant_id, current_user)
+    return FileResponse(
+        path=str(abs_path),
+        filename=variant.source_file_name,
+        media_type=variant.source_mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{variant.source_file_name}"'},
+    )
+
+
 # Single document metadata
 # ──────────────────────────────────────────────
 

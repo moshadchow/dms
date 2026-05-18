@@ -17,7 +17,7 @@ def validate_file(file: UploadFile) -> FileType:
     if mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"File type '{mime}' is not supported. Allowed: PDF, Excel, JPG, PNG",
+            detail=f"File type '{mime}' is not supported. Allowed: PDF, DOCX, Excel, JPG, PNG",
         )
     return ALLOWED_MIME_TYPES[mime]
 
