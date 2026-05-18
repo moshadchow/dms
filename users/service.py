@@ -5,8 +5,10 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from categories.models import Category
 from core.security import hash_password
 from users.models import (
+    AssignedCategoryRead,
     Permission,
     PermissionAction,
     PermissionRead,
@@ -15,6 +17,7 @@ from users.models import (
     RoleRead,
     RolePermissionLink,
     User,
+    UserCategoryLink,
     UserCreate,
     UserRead,
     UserRoleLink,
@@ -45,6 +48,15 @@ def _user_to_read(user: User) -> UserRead:
         created_at=user.created_at,
         updated_at=user.updated_at,
         roles=[_role_to_read(r) for r in user.roles],
+        categories=[
+            AssignedCategoryRead(
+                id=category.id,
+                name=category.name,
+                description=category.description,
+                is_active=category.is_active,
+            )
+            for category in user.categories
+        ],
     )
 
 
@@ -64,7 +76,8 @@ class UserService:
         is_active: Optional[bool] = None,
     ) -> Tuple[List[UserRead], int]:
         query = select(User).options(
-            selectinload(User.roles).selectinload(Role.permissions)  # type: ignore[arg-type]
+            selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
+            selectinload(User.categories),  # type: ignore[arg-type]
         )
         if search:
             query = query.where(
@@ -103,6 +116,7 @@ class UserService:
         self.session.add(user)
         self.session.flush()
         self._assign_roles(user.id, data.role_ids)
+        self._assign_categories(user.id, data.category_ids)
         self.session.commit()
 
         # Re-fetch with eager load so roles are in memory
@@ -136,6 +150,14 @@ class UserService:
             self.session.flush()
             self._assign_roles(user_id, data.role_ids)
 
+        if data.category_ids is not None:
+            for link in self.session.exec(
+                select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
+            ).all():
+                self.session.delete(link)
+            self.session.flush()
+            self._assign_categories(user_id, data.category_ids)
+
         user.updated_at = datetime.utcnow()
         self.session.add(user)
         self.session.commit()
@@ -164,6 +186,13 @@ class UserService:
             if not role:
                 raise HTTPException(status_code=404, detail=f"Role {role_id} not found")
             self.session.add(UserRoleLink(user_id=user_id, role_id=role_id))
+
+    def _assign_categories(self, user_id: int, category_ids: List[int]) -> None:
+        for category_id in category_ids:
+            category = self.session.get(Category, category_id)
+            if not category:
+                raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+            self.session.add(UserCategoryLink(user_id=user_id, category_id=category_id))
 
     # ──────────────────────────────────────────
     # Roles

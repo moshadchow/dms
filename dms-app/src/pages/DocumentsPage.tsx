@@ -1,9 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
+import { isAccessDeniedError } from '@/api/client'
 import { directoriesApi } from '@/api/directories.api'
 import { categoriesApi } from '@/api/categories.api'
 import { documentsApi } from '@/api/documents.api'
+import { useCategoryAccess } from '@/hooks/useCategoryAccess'
 import { useDirectoryStore } from '@/store/directoryStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import DirectoryTree from '@/components/directories/DirectoryTree'
@@ -14,7 +16,6 @@ import EditDocumentModal from '@/components/documents/EditDocumentModal'
 import type { Category } from '@/types/category.types'
 import type { DirectoryNode } from '@/types/directory.types'
 import type { Document, DocumentListResponse } from '@/types/document.types'
-import { formatFileSize } from '@/utils/formatters'
 
 export default function DocumentsPage() {
   const { directoryId } = useParams()
@@ -22,6 +23,7 @@ export default function DocumentsPage() {
   const navigate        = useNavigate()
   const isRoot          = searchParams.get('root') === 'true'
   const { canCreate } = usePermissions()
+  const { isAdmin, canAccessCategory } = useCategoryAccess()
 
   const { setSelectedCategory, setSelectedDirectory, refreshDirectories } = useDirectoryStore()
 
@@ -59,6 +61,16 @@ export default function DocumentsPage() {
       try {
         if (isRoot) {
           const catId = parseInt(directoryId)
+          if (Number.isNaN(catId)) {
+            navigate('/dashboard', { replace: true })
+            return
+          }
+
+          if (!isAdmin && !canAccessCategory(catId)) {
+            navigate('/forbidden', { replace: true })
+            return
+          }
+
           const cat   = await categoriesApi.get(catId)
           setCategory(cat)
           setResolvedCategoryId(catId)
@@ -72,15 +84,20 @@ export default function DocumentsPage() {
           setSelectedCategory(dir.category_id)
           setSelectedDirectory(dir.id)
         }
-      } catch {
+      } catch (error) {
+        if (!isAdmin && isAccessDeniedError(error)) {
+          navigate('/forbidden', { replace: true })
+          return
+        }
+
         toast.error('Failed to load page')
-        navigate('/dashboard')
+        navigate('/dashboard', { replace: true })
       } finally {
         setLoading(false)
       }
     }
     run()
-  }, [directoryId, isRoot])
+  }, [directoryId, isRoot, isAdmin, canAccessCategory, navigate, setSelectedCategory, setSelectedDirectory])
 
   // ── Load directory tree ───────────────────────────────────────
   const loadTree = useCallback(async (catId: number) => {

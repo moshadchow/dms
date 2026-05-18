@@ -29,7 +29,7 @@ def list_directories(
     session: Session = Depends(get_session),
 ):
     """Returns only top-level (root) directories. Use /tree for the full hierarchy."""
-    return DirectoryService(session).list_by_category(category_id)
+    return DirectoryService(session).list_by_category(category_id, current_user)
 
 
 @router.get(
@@ -46,7 +46,7 @@ def get_tree(
     Returns the complete recursive directory tree.
     Each node includes its children, enabling the frontend to render a collapsible tree.
     """
-    return DirectoryService(session).get_tree(category_id)
+    return DirectoryService(session).get_tree(category_id, current_user)
 
 
 @router.post(
@@ -65,7 +65,11 @@ def create_directory(
     Create a directory (or subdirectory by setting parent_id).
     Requires CREATE permission.
     """
-    return DirectoryService(session).create_directory(payload, created_by=current_user.id)
+    return DirectoryService(session).create_directory(
+        payload,
+        created_by=current_user.id,
+        current_user=current_user,
+    )
 
 
 @router.get("/{directory_id}", response_model=DirectoryRead, summary="Get directory by ID")
@@ -74,7 +78,7 @@ def get_directory(
     current_user: CurrentUser,
     session:      Session = Depends(get_session),
 ):
-    return DirectoryService(session).get_directory(directory_id)
+    return DirectoryService(session).get_directory(directory_id, current_user)
 
 
 @router.patch(
@@ -89,7 +93,7 @@ def update_directory(
     current_user: CurrentUser,
     session:      Session = Depends(get_session),
 ):
-    return DirectoryService(session).update_directory(directory_id, payload)
+    return DirectoryService(session).update_directory(directory_id, payload, current_user)
 
 
 @router.delete(
@@ -104,4 +108,4 @@ def delete_directory(
     session:      Session = Depends(get_session),
 ):
     """Directory must have no subdirectories and no active documents."""
-    DirectoryService(session).delete_directory(directory_id)
+    DirectoryService(session).delete_directory(directory_id, current_user)
