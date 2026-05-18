@@ -209,7 +209,7 @@ class DocumentFilterParams(BaseModel):
 
     directory_id: Optional[int]      = None
     category_id:  Optional[int]      = None
-    file_type:    Optional[FileType] = Field(None, description="pdf | excel | image")
+    file_type:    Optional[FileType] = Field(None, description="pdf | docx | excel | image")
     status:       Optional[DocumentStatus] = Field(
                                                DocumentStatus.ACTIVE,
                                                description="Defaults to active",

@@ -1,9 +1,12 @@
 import { apiClient } from './client'
 import type {
   Document,
+  DocumentVariant,
+  DocumentVariantSaveRequest,
   DocumentListResponse,
   DocumentUpdateRequest,
   DocumentListParams,
+  DocumentWorkspaceResponse,
 } from '@/types/document.types'
 
 export const documentsApi = {
@@ -14,6 +17,21 @@ export const documentsApi = {
 
   get: async (id: number): Promise<Document> => {
     const res = await apiClient.get<Document>(`/documents/${id}`)
+    return res.data
+  },
+
+  getWorkspace: async (id: number): Promise<DocumentWorkspaceResponse> => {
+    const res = await apiClient.get<DocumentWorkspaceResponse>(`/documents/${id}/workspace`)
+    return res.data
+  },
+
+  saveVariant: async (id: number, data: DocumentVariantSaveRequest): Promise<DocumentWorkspaceResponse> => {
+    const res = await apiClient.post<DocumentWorkspaceResponse>(`/documents/${id}/variants`, data)
+    return res.data
+  },
+
+  getVariant: async (variantId: number): Promise<DocumentVariant> => {
+    const res = await apiClient.get<DocumentVariant>(`/documents/variants/${variantId}`)
     return res.data
   },
 
@@ -61,8 +79,26 @@ export const documentsApi = {
     return `${base}/api/v1/documents/${id}/view?token=${token}`
   },
 
+  getVariantViewUrl: (variantId: number): string => {
+    const token = localStorage.getItem('access_token')
+    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
+    return `${base}/api/v1/documents/variants/${variantId}/view?token=${token}`
+  },
+
   download: async (id: number, fileName: string): Promise<void> => {
     const res = await apiClient.get(`/documents/${id}/download`, {
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data as Blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+
+  downloadVariant: async (variantId: number, fileName: string): Promise<void> => {
+    const res = await apiClient.get(`/documents/variants/${variantId}/download`, {
       responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data as Blob)
