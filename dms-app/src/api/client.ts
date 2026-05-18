@@ -107,3 +107,8 @@ export function getErrorMessage(error: unknown): string {
 
   return 'An unexpected error occurred'
 }
+
+export function isAccessDeniedError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false
+  return error.response?.status === 403 || error.response?.status === 404
+}

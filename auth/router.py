@@ -5,7 +5,7 @@ from auth.schemas import LoginRequest, PasswordChangeRequest, RefreshRequest, To
 from auth.service import AuthService
 from core.database import get_session
 from core.dependencies import CurrentUser
-from users.models import RoleRead, UserRead, PermissionRead
+from users.models import AssignedCategoryRead, PermissionRead, RoleRead, UserRead
 
 router = APIRouter()
 
@@ -71,6 +71,15 @@ def me(current_user: CurrentUser):
                 ],
             )
             for role in current_user.roles
+        ],
+        categories=[
+            AssignedCategoryRead(
+                id=category.id,
+                name=category.name,
+                description=category.description,
+                is_active=category.is_active,
+            )
+            for category in current_user.categories
         ],
     )
 

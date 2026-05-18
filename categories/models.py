@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
+from users.models import UserCategoryLink
 
 
 class CategoryBase(SQLModel):
@@ -24,6 +25,11 @@ class Category(CategoryBase, table=True):
 
     # Relationships
     directories: List["Directory"] = Relationship(back_populates="category")
+    users: List["User"] = Relationship(
+        back_populates="categories",
+        link_model=UserCategoryLink,
+        sa_relationship_kwargs={"lazy": "selectin"},
+    )
 
 
 # ── Pydantic schemas ──────────────────────────

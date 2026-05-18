@@ -14,11 +14,11 @@ router = APIRouter()
 @router.get("", response_model=List[CategoryReadWithStats], summary="List categories")
 def list_categories(
     include_inactive: bool        = Query(False),
-    _:                CurrentUser = None,
+    current_user:     CurrentUser = None,
     session:          Session     = Depends(get_session),
 ):
     """Return all active categories with directory and document counts."""
-    return CategoryService(session).list_categories(include_inactive)
+    return CategoryService(session).list_categories(current_user, include_inactive)
 
 
 @router.post(
@@ -38,10 +38,10 @@ def create_category(
 @router.get("/{category_id}", response_model=CategoryRead, summary="Get category by ID")
 def get_category(
     category_id: int,
-    _:           CurrentUser = None,
+    current_user: CurrentUser = None,
     session:     Session     = Depends(get_session),
 ):
-    return CategoryService(session).get_category(category_id)
+    return CategoryService(session).get_category(category_id, current_user)
 
 
 @router.patch(

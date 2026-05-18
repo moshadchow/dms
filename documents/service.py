@@ -1,19 +1,21 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
+from categories.models import Category
+from core.access import ensure_category_access, ensure_directory_access, ensure_document_access
 from directories.models import Directory
 from documents.models import (
     Document,
-    DocumentCreate,
     DocumentListResponse,
     DocumentRead,
     DocumentStatus,
     DocumentUpdate,
 )
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
+from users.models import User, UserCategoryLink
 
 
 class DocumentService:
@@ -24,15 +26,14 @@ class DocumentService:
     # Internal — ORM fetch (session-bound)
     # ──────────────────────────────────────────
 
-    def _get_orm(self, document_id: int) -> Document:
+    def _get_orm(self, document_id: int, current_user: User, *, include_deleted: bool = False) -> Document:
         """Return a session-bound ORM Document (for mutations only)."""
-        doc = self.session.get(Document, document_id)
-        if not doc or doc.status == DocumentStatus.DELETED:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Document {document_id} not found",
-            )
-        return doc
+        return ensure_document_access(
+            self.session,
+            current_user,
+            document_id,
+            include_deleted=include_deleted,
+        )
 
     @staticmethod
     def _to_read(doc: Document) -> DocumentRead:
@@ -56,11 +57,12 @@ class DocumentService:
     # Public — returns Pydantic schemas only
     # ──────────────────────────────────────────
 
-    def get_document(self, document_id: int) -> DocumentRead:
-        return self._to_read(self._get_orm(document_id))
+    def get_document(self, document_id: int, current_user: User) -> DocumentRead:
+        return self._to_read(self._get_orm(document_id, current_user))
 
     def list_documents(
         self,
+        current_user: User,
         directory_id: Optional[int] = None,
         category_id:  Optional[int] = None,
         file_type:    Optional[str]  = None,
@@ -68,12 +70,40 @@ class DocumentService:
         skip:         int = 0,
         limit:        int = 50,
     ) -> DocumentListResponse:
-        query = select(Document).where(Document.status == DocumentStatus.ACTIVE)
+        query = (
+            select(Document)
+            .join(Directory, Document.directory_id == Directory.id)
+            .where(Document.status == DocumentStatus.ACTIVE)
+        )
+
+        if current_user.is_admin():
+            if directory_id is not None:
+                directory = self.session.get(Directory, directory_id)
+                if not directory:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Directory {directory_id} not found",
+                    )
+            if category_id is not None:
+                ensure_category_access(self.session, current_user, category_id)
+        else:
+            query = query.join_from(Directory, Category).join(
+                UserCategoryLink,
+                UserCategoryLink.category_id == Directory.category_id,
+            ).where(
+                UserCategoryLink.user_id == current_user.id,
+                Category.is_active == True,
+            )
+
+            if directory_id is not None:
+                ensure_directory_access(self.session, current_user, directory_id)
+            if category_id is not None:
+                ensure_category_access(self.session, current_user, category_id)
 
         if directory_id is not None:
             query = query.where(Document.directory_id == directory_id)
         if category_id is not None:
-            query = query.join(Directory).where(Directory.category_id == category_id)
+            query = query.where(Directory.category_id == category_id)
         if file_type is not None:
             query = query.where(Document.file_type == file_type)
         if search:
@@ -106,14 +136,10 @@ class DocumentService:
         description:  Optional[str],
         directory_id: int,
         uploaded_by:  int,
+        current_user: User,
     ) -> DocumentRead:
         # Validate directory exists
-        directory = self.session.get(Directory, directory_id)
-        if not directory:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Directory {directory_id} not found",
-            )
+        directory = ensure_directory_access(self.session, current_user, directory_id)
 
         # Validate file type
         file_type = validate_file(file)
@@ -145,8 +171,8 @@ class DocumentService:
     # Update
     # ──────────────────────────────────────────
 
-    def update_document(self, document_id: int, data: DocumentUpdate) -> DocumentRead:
-        doc = self._get_orm(document_id)
+    def update_document(self, document_id: int, data: DocumentUpdate, current_user: User) -> DocumentRead:
+        doc = self._get_orm(document_id, current_user)
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(doc, field, value)
         doc.updated_at = datetime.utcnow()
@@ -159,8 +185,8 @@ class DocumentService:
     # Archive / Restore
     # ──────────────────────────────────────────
 
-    def archive_document(self, document_id: int) -> DocumentRead:
-        doc = self._get_orm(document_id)
+    def archive_document(self, document_id: int, current_user: User) -> DocumentRead:
+        doc = self._get_orm(document_id, current_user)
         doc.status = DocumentStatus.ARCHIVED
         doc.updated_at = datetime.utcnow()
         self.session.add(doc)
@@ -168,13 +194,8 @@ class DocumentService:
         self.session.refresh(doc)
         return self._to_read(doc)
 
-    def restore_document(self, document_id: int) -> DocumentRead:
-        doc = self.session.get(Document, document_id)
-        if not doc:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Document {document_id} not found",
-            )
+    def restore_document(self, document_id: int, current_user: User) -> DocumentRead:
+        doc = ensure_document_access(self.session, current_user, document_id, include_deleted=True)
         doc.status = DocumentStatus.ACTIVE
         doc.updated_at = datetime.utcnow()
         self.session.add(doc)
@@ -186,8 +207,8 @@ class DocumentService:
     # Delete
     # ──────────────────────────────────────────
 
-    def delete_document(self, document_id: int, hard: bool = False) -> None:
-        doc = self._get_orm(document_id)
+    def delete_document(self, document_id: int, current_user: User, hard: bool = False) -> None:
+        doc = self._get_orm(document_id, current_user)
         if hard:
             delete_from_disk(doc.storage_path)
             self.session.delete(doc)
@@ -201,11 +222,11 @@ class DocumentService:
     # Download / Preview — returns ORM for streaming
     # ──────────────────────────────────────────
 
-    def get_file_path(self, document_id: int):
+    def get_file_path(self, document_id: int, current_user: User):
         """
         Return (absolute_path, DocumentRead) for the router to stream.
         DocumentRead is used only for mime_type and file_name — no lazy attrs.
         """
-        doc = self._get_orm(document_id)
+        doc = self._get_orm(document_id, current_user)
         abs_path = resolve_storage_path(doc.storage_path)
         return abs_path, self._to_read(doc)

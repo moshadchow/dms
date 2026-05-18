@@ -30,6 +30,7 @@ def list_documents(
     session:      Session       = Depends(get_session),
 ):
     return DocumentService(session).list_documents(
+        current_user=current_user,
         directory_id=directory_id,
         category_id=category_id,
         file_type=file_type,
@@ -64,6 +65,7 @@ async def upload_document(
         description=description,
         directory_id=directory_id,
         uploaded_by=current_user.id,
+        current_user=current_user,
     )
 
 
@@ -77,7 +79,7 @@ def get_document(
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
 ):
-    return DocumentService(session).get_document(document_id)
+    return DocumentService(session).get_document(document_id, current_user)
 
 
 # ──────────────────────────────────────────────
@@ -94,7 +96,7 @@ def view_document(
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
 ):
-    abs_path, doc = DocumentService(session).get_file_path(document_id)
+    abs_path, doc = DocumentService(session).get_file_path(document_id, current_user)
 
     def _iter(path: Path, chunk: int = 256 * 1024):
         with open(path, "rb") as f:
@@ -122,7 +124,7 @@ def download_document(
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
 ):
-    abs_path, doc = DocumentService(session).get_file_path(document_id)
+    abs_path, doc = DocumentService(session).get_file_path(document_id, current_user)
     return FileResponse(
         path=str(abs_path),
         filename=doc.file_name,
@@ -147,7 +149,7 @@ def update_document(
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
 ):
-    return DocumentService(session).update_document(document_id, payload)
+    return DocumentService(session).update_document(document_id, payload, current_user)
 
 
 # ──────────────────────────────────────────────
@@ -165,7 +167,7 @@ def archive_document(
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
 ):
-    return DocumentService(session).archive_document(document_id)
+    return DocumentService(session).archive_document(document_id, current_user)
 
 
 @router.post(
@@ -181,7 +183,7 @@ def restore_document(
     from fastapi import HTTPException
     if not current_user.is_admin():
         raise HTTPException(status_code=403, detail="Admin only")
-    return DocumentService(session).restore_document(document_id)
+    return DocumentService(session).restore_document(document_id, current_user)
 
 
 # ──────────────────────────────────────────────
@@ -203,4 +205,4 @@ def delete_document(
     from fastapi import HTTPException
     if hard and not current_user.is_admin():
         raise HTTPException(status_code=403, detail="Hard delete requires Admin role")
-    DocumentService(session).delete_document(document_id, hard=hard)
+    DocumentService(session).delete_document(document_id, current_user, hard=hard)

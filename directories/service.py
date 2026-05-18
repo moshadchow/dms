@@ -2,9 +2,9 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import HTTPException, status
-from sqlmodel import Session, func, select
+from sqlmodel import Session, select
 
-from categories.models import Category
+from core.access import ensure_category_access, ensure_directory_access
 from directories.models import Directory, DirectoryCreate, DirectoryNode, DirectoryUpdate
 from documents.models import Document, DocumentStatus
 from users.models import User
@@ -18,15 +18,12 @@ class DirectoryService:
     # Queries
     # ──────────────────────────────────────────
 
-    def get_directory(self, directory_id: int) -> Directory:
-        d = self.session.get(Directory, directory_id)
-        if not d:
-            raise HTTPException(status_code=404, detail=f"Directory {directory_id} not found")
-        return d
+    def get_directory(self, directory_id: int, current_user: User) -> Directory:
+        return ensure_directory_access(self.session, current_user, directory_id)
 
-    def list_by_category(self, category_id: int) -> List[Directory]:
+    def list_by_category(self, category_id: int, current_user: User) -> List[Directory]:
         """Return root-level directories (parent_id IS NULL) for a category."""
-        self._check_category(category_id)
+        ensure_category_access(self.session, current_user, category_id)
         return list(
             self.session.exec(
                 select(Directory)
@@ -38,9 +35,9 @@ class DirectoryService:
             ).all()
         )
 
-    def get_tree(self, category_id: int) -> List[DirectoryNode]:
+    def get_tree(self, category_id: int, current_user: User) -> List[DirectoryNode]:
         """Return the full nested directory tree for a category."""
-        self._check_category(category_id)
+        ensure_category_access(self.session, current_user, category_id)
         all_dirs = self.session.exec(
             select(Directory).where(Directory.category_id == category_id)
         ).all()
@@ -63,8 +60,8 @@ class DirectoryService:
     # Mutations
     # ──────────────────────────────────────────
 
-    def create_directory(self, data: DirectoryCreate, created_by: int) -> Directory:
-        self._check_category(data.category_id)
+    def create_directory(self, data: DirectoryCreate, created_by: int, current_user: User) -> Directory:
+        ensure_category_access(self.session, current_user, data.category_id)
 
         # Treat parent_id=0 the same as null — means root-level directory
         if data.parent_id == 0:
@@ -109,8 +106,8 @@ class DirectoryService:
         self.session.refresh(directory)
         return directory
 
-    def update_directory(self, directory_id: int, data: DirectoryUpdate) -> Directory:
-        directory = self.get_directory(directory_id)
+    def update_directory(self, directory_id: int, data: DirectoryUpdate, current_user: User) -> Directory:
+        directory = self.get_directory(directory_id, current_user)
         updates = data.model_dump(exclude_unset=True)
         for field, value in updates.items():
             setattr(directory, field, value)
@@ -120,8 +117,8 @@ class DirectoryService:
         self.session.refresh(directory)
         return directory
 
-    def delete_directory(self, directory_id: int) -> None:
-        directory = self.get_directory(directory_id)
+    def delete_directory(self, directory_id: int, current_user: User) -> None:
+        directory = self.get_directory(directory_id, current_user)
 
         # Block delete if subdirectories exist
         children = self.session.exec(
@@ -166,7 +163,3 @@ class DirectoryService:
     # Helpers
     # ──────────────────────────────────────────
 
-    def _check_category(self, category_id: int) -> None:
-        cat = self.session.get(Category, category_id)
-        if not cat:
-            raise HTTPException(status_code=404, detail=f"Category {category_id} not found")

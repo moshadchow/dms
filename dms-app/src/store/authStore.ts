@@ -15,6 +15,7 @@ interface AuthState {
   isAdmin: () => boolean
   hasPermission: (action: PermissionAction) => boolean
   hasRole: (roleName: string) => boolean
+  canAccessCategory: (categoryId: number) => boolean
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -54,6 +55,13 @@ export const useAuthStore = create<AuthState>()(
 
       hasRole: (roleName) =>
         get().user?.roles.some((r) => r.name === roleName) ?? false,
+
+      canAccessCategory: (categoryId) => {
+        const { user } = get()
+        if (!user) return false
+        if (user.roles.some((r) => r.name === 'admin')) return true
+        return user.categories.some((category) => category.id === categoryId)
+      },
     }),
     {
       name: 'dms-auth',

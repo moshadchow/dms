@@ -7,9 +7,10 @@ import { getErrorMessage } from '@/api/client'
 import UserTable from '@/components/admin/UserTable'
 import UserFormModal from '@/components/admin/UserFormModal'
 import PermissionMatrix from '@/components/admin/PermissionMatrix'
+import CategoryPermissionPanel from '@/components/admin/CategoryPermissionPanel'
 import type { User, Role, Permission } from '@/types/user.types'
 
-type Tab = 'users' | 'roles' | 'permissions'
+type Tab = 'users' | 'roles' | 'category-access'
 
 export default function AdminPage() {
   const navigate    = useNavigate()
@@ -79,6 +80,10 @@ export default function AdminPage() {
     {
       id: 'roles', label: 'Roles & Permissions',
       icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+    },
+    {
+      id: 'category-access', label: 'Category Access',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>,
     },
   ]
 
@@ -232,6 +237,10 @@ export default function AdminPage() {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'category-access' && (
+          <CategoryPermissionPanel onUserUpdated={loadUsers} />
         )}
       </div>
 

@@ -15,6 +15,13 @@ export interface Role {
   permissions: Permission[]
 }
 
+export interface AssignedCategory {
+  id: number
+  name: string
+  description: string | null
+  is_active: boolean
+}
+
 export interface User {
   id: number
   full_name: string
@@ -23,6 +30,7 @@ export interface User {
   created_at: string
   updated_at: string
   roles: Role[]
+  categories: AssignedCategory[]
 }
 
 export interface UserListResponse {
@@ -38,6 +46,7 @@ export interface UserCreateRequest {
   password: string
   is_active: boolean
   role_ids: number[]
+  category_ids?: number[]
 }
 
 export interface UserUpdateRequest {
@@ -45,6 +54,7 @@ export interface UserUpdateRequest {
   email?: string
   is_active?: boolean
   role_ids?: number[]
+  category_ids?: number[]
 }
 
 export interface RoleCreateRequest {
