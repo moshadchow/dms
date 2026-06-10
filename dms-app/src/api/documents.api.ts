@@ -72,17 +72,25 @@ export const documentsApi = {
     return res.data
   },
 
+  getViewEndpoint: (id: number): string => {
+    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
+    return `${base}/api/v1/documents/${id}/view`
+  },
+
   // Returns a blob URL for inline preview or download
   getViewUrl: (id: number): string => {
     const token = localStorage.getItem('access_token')
+    return `${documentsApi.getViewEndpoint(id)}?token=${token}`
+  },
+
+  getVariantViewEndpoint: (variantId: number): string => {
     const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-    return `${base}/api/v1/documents/${id}/view?token=${token}`
+    return `${base}/api/v1/documents/variants/${variantId}/view`
   },
 
   getVariantViewUrl: (variantId: number): string => {
     const token = localStorage.getItem('access_token')
-    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-    return `${base}/api/v1/documents/variants/${variantId}/view?token=${token}`
+    return `${documentsApi.getVariantViewEndpoint(variantId)}?token=${token}`
   },
 
   download: async (id: number, fileName: string): Promise<void> => {
