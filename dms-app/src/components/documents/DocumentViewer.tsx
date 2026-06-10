@@ -3,6 +3,7 @@ import { toast } from 'react-hot-toast'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { formatDateTime, formatFileSize } from '@/utils/formatters'
+import { createClientId } from '@/utils/ids'
 import { usePermissions } from '@/hooks/usePermissions'
 import PdfAnnotationWorkspace from '@/components/documents/PdfAnnotationWorkspace'
 import type {
@@ -136,7 +137,7 @@ export default function DocumentViewer({ doc, onClose }: Props) {
   }, [currentViewUrl, workspace?.document.file_type])
 
   const addDraft = (draft: Omit<DraftAnnotation, 'localId'>) => {
-    const localId = crypto.randomUUID()
+    const localId = createClientId()
     setDrafts((previous) => [
       ...previous,
       {

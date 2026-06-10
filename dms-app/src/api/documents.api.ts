@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { apiRoot } from './base'
 import type {
   Document,
   DocumentVariant,
@@ -73,8 +74,7 @@ export const documentsApi = {
   },
 
   getViewEndpoint: (id: number): string => {
-    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-    return `${base}/api/v1/documents/${id}/view`
+    return `${apiRoot}/documents/${id}/view`
   },
 
   // Returns a blob URL for inline preview or download
@@ -84,8 +84,7 @@ export const documentsApi = {
   },
 
   getVariantViewEndpoint: (variantId: number): string => {
-    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-    return `${base}/api/v1/documents/variants/${variantId}/view`
+    return `${apiRoot}/documents/variants/${variantId}/view`
   },
 
   getVariantViewUrl: (variantId: number): string => {

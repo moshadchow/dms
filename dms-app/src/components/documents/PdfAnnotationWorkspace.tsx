@@ -12,6 +12,7 @@ import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { usePermissions } from '@/hooks/usePermissions'
+import { createClientId } from '@/utils/ids'
 import type {
   Document,
   DocumentAnnotation,
@@ -20,7 +21,7 @@ import type {
   PdfStrokePoint,
 } from '@/types/document.types'
 
-GlobalWorkerOptions.workerSrc = pdfWorkerSrc
+GlobalWorkerOptions.workerSrc = `${pdfWorkerSrc}?v=pdfjs4`
 
 type ToolMode = 'pen' | 'eraser'
 
@@ -293,7 +294,7 @@ export default function PdfAnnotationWorkspace({
     }
 
     const stroke: PdfStrokeDraft = {
-      localId: crypto.randomUUID(),
+      localId: createClientId(),
       pageNumber,
       color,
       thickness,

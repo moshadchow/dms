@@ -1,10 +1,9 @@
 import axios from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
-
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
+import { apiRoot } from './base'
 
 export const apiClient = axios.create({
-  baseURL: `${BASE_URL}/api/v1`,
+  baseURL: apiRoot,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -49,7 +48,7 @@ apiClient.interceptors.response.use(
     }
 
     try {
-      const { data } = await axios.post(`${BASE_URL}/api/v1/auth/refresh`, {
+      const { data } = await axios.post(`${apiRoot}/auth/refresh`, {
         refresh_token: refreshToken,
       })
       localStorage.setItem('access_token', data.access_token)
