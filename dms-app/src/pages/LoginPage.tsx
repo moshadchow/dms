@@ -5,6 +5,7 @@ import { authApi } from '@/api/auth.api'
 import { useAuthStore } from '@/store/authStore'
 import { getErrorMessage } from '@/api/client'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import ucbLogo from '@/assets/ucb_logo.png'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -57,15 +58,28 @@ export default function LoginPage() {
         transition: 'background-color 200ms',
       }}>
 
-        {/* Icon */}
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ width: '56px', height: '56px', backgroundColor: 'var(--text)', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--surface)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-            </svg>
+        {/* Logo */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.75rem' }}>
+          <div style={{
+            backgroundColor: '#1a1a2e',
+            borderRadius: '12px',
+            padding: '12px 24px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <img
+              src={ucbLogo}
+              alt="UCB Logo"
+              style={{
+                width: '200px',
+                maxWidth: '100%',
+                height: 'auto',
+                objectFit: 'contain',
+                display: 'block',
+                userSelect: 'none',
+              }}
+            />
           </div>
         </div>
 
