@@ -100,6 +100,12 @@ export interface DocumentListParams {
   category_id?: number
   file_type?: FileType
   search?: string
+  status?: DocumentStatus
   skip?: number
   limit?: number
+}
+
+export interface BulkRestoreResponse {
+  restored: Document[]
+  failed: { id: number; error: string }[]
 }

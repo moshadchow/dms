@@ -8,6 +8,7 @@ import type {
   DocumentUpdateRequest,
   DocumentListParams,
   DocumentWorkspaceResponse,
+  BulkRestoreResponse,
 } from '@/types/document.types'
 
 export const documentsApi = {
@@ -70,6 +71,11 @@ export const documentsApi = {
 
   restore: async (id: number): Promise<Document> => {
     const res = await apiClient.post<Document>(`/documents/${id}/restore`)
+    return res.data
+  },
+
+  bulkRestore: async (ids: number[]): Promise<BulkRestoreResponse> => {
+    const res = await apiClient.post<BulkRestoreResponse>('/documents/bulk-restore', { document_ids: ids })
     return res.data
   },
 

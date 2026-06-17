@@ -239,6 +239,19 @@ class DocumentStatusResponse(BaseModel):
 
 
 # ══════════════════════════════════════════════
+# Bulk restore
+# ══════════════════════════════════════════════
+
+class BulkRestoreRequest(BaseModel):
+    document_ids: List[int] = Field(..., min_length=1, description="IDs of documents to restore")
+
+
+class BulkRestoreResponse(BaseModel):
+    restored: List[DocumentResponse]
+    failed:   List[dict] = Field(default_factory=list, description="List of {id, error} dicts")
+
+
+# ══════════════════════════════════════════════
 # Upload progress / batch (future-ready)
 # ══════════════════════════════════════════════
 

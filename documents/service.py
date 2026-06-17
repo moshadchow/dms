@@ -67,13 +67,19 @@ class DocumentService:
         category_id:  Optional[int] = None,
         file_type:    Optional[str]  = None,
         search:       Optional[str]  = None,
+        status:       Optional[DocumentStatus] = None,
         skip:         int = 0,
         limit:        int = 50,
     ) -> DocumentListResponse:
+        if status is not None and status != DocumentStatus.ACTIVE and not current_user.is_admin():
+            raise HTTPException(status_code=403, detail="Only admins can filter by non-active status")
+
+        effective_status = status if status is not None else DocumentStatus.ACTIVE
+
         query = (
             select(Document)
             .join(Directory, Document.directory_id == Directory.id)
-            .where(Document.status == DocumentStatus.ACTIVE)
+            .where(Document.status == effective_status)
         )
 
         if current_user.is_admin():
@@ -202,6 +208,20 @@ class DocumentService:
         self.session.commit()
         self.session.refresh(doc)
         return self._to_read(doc)
+
+    def bulk_restore_documents(self, document_ids: list[int], current_user: User) -> dict:
+        if not current_user.is_admin():
+            raise HTTPException(status_code=403, detail="Admin only")
+        restored = []
+        failed = []
+        for doc_id in document_ids:
+            try:
+                restored.append(self.restore_document(doc_id, current_user))
+            except HTTPException as exc:
+                failed.append({"id": doc_id, "error": exc.detail})
+            except Exception as exc:
+                failed.append({"id": doc_id, "error": str(exc)})
+        return {"restored": restored, "failed": failed}
 
     # ──────────────────────────────────────────
     # Delete
