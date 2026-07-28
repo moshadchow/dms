@@ -24,14 +24,16 @@ from users.models import PermissionAction, User
 # ──────────────────────────────────────────────
 
 ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
-    ("GET",    "/api/v1/documents"):    PermissionAction.VIEW,
-    ("GET",    "/api/v1/directories"):  PermissionAction.VIEW,
-    ("POST",   "/api/v1/documents"):    PermissionAction.CREATE,
-    ("POST",   "/api/v1/directories"):  PermissionAction.CREATE,
-    ("PUT",    "/api/v1/documents"):    PermissionAction.UPDATE,
-    ("PATCH",  "/api/v1/documents"):    PermissionAction.UPDATE,
-    ("DELETE", "/api/v1/documents"):    PermissionAction.DELETE,
-    ("DELETE", "/api/v1/directories"):  PermissionAction.DELETE,
+    ("GET",    "/api/v1/documents"):          PermissionAction.VIEW,
+    ("GET",    "/api/v1/directories"):         PermissionAction.VIEW,
+    ("POST",   "/api/v1/documents/upload"):   PermissionAction.CREATE,
+    ("POST",   "/api/v1/documents/"):         PermissionAction.VIEW,
+    ("POST",   "/api/v1/documents"):          PermissionAction.CREATE,
+    ("POST",   "/api/v1/directories"):        PermissionAction.CREATE,
+    ("PUT",    "/api/v1/documents"):          PermissionAction.UPDATE,
+    ("PATCH",  "/api/v1/documents"):          PermissionAction.UPDATE,
+    ("DELETE", "/api/v1/documents"):          PermissionAction.DELETE,
+    ("DELETE", "/api/v1/directories"):        PermissionAction.DELETE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)
@@ -57,11 +59,18 @@ def _extract_user(token: str) -> User | None:
 
 
 def _required_action(method: str, path: str) -> PermissionAction | None:
-    """Return the PermissionAction required for a given method + path, or None."""
+    """Return the PermissionAction required for a given method + path, or None.
+
+    Use longest matching prefix so more specific route entries override broad
+    base path rules.
+    """
+    best_action = None
+    best_prefix = ""
     for (m, prefix), action in ROUTE_PERMISSION_MAP.items():
-        if m == method and path.startswith(prefix):
-            return action
-    return None
+        if m == method and path.startswith(prefix) and len(prefix) > len(best_prefix):
+            best_prefix = prefix
+            best_action = action
+    return best_action
 
 
 async def rbac_middleware(request: Request, call_next: Callable) -> Response:

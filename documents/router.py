@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -10,11 +11,13 @@ from core.dependencies import CurrentUser, require_permission
 from documents.models import (
     DocumentListResponse,
     DocumentRead,
+    DocumentStatus,
     DocumentUpdate,
     DocumentVariantRead,
     DocumentVariantSaveRequest,
     DocumentWorkspaceRead,
 )
+from documents.schemas import BulkRestoreRequest, BulkRestoreResponse
 from documents.service import DocumentService
 from documents.variants import DocumentVariantService
 from users.models import PermissionAction
@@ -28,14 +31,15 @@ router = APIRouter()
 
 @router.get("", response_model=DocumentListResponse, summary="List / search documents")
 def list_documents(
-    directory_id: Optional[int] = Query(None),
-    category_id:  Optional[int] = Query(None),
-    file_type:    Optional[str] = Query(None, description="pdf | docx | excel | image"),
-    search:       Optional[str] = Query(None, description="Search title or filename"),
-    skip:         int           = Query(0, ge=0),
-    limit:        int           = Query(50, ge=1, le=200),
-    current_user: CurrentUser   = None,
-    session:      Session       = Depends(get_session),
+    directory_id: Optional[int]          = Query(None),
+    category_id:  Optional[int]          = Query(None),
+    file_type:    Optional[str]          = Query(None, description="pdf | docx | excel | image"),
+    search:       Optional[str]          = Query(None, description="Search title or filename"),
+    status:       Optional[DocumentStatus] = Query(None, description="Filter by status (admin only for non-active)"),
+    skip:         int                    = Query(0, ge=0),
+    limit:        int                    = Query(50, ge=1, le=200),
+    current_user: CurrentUser            = None,
+    session:      Session                = Depends(get_session),
 ):
     return DocumentService(session).list_documents(
         current_user=current_user,
@@ -43,6 +47,7 @@ def list_documents(
         category_id=category_id,
         file_type=file_type,
         search=search,
+        status=status,
         skip=skip,
         limit=limit,
     )
@@ -64,9 +69,17 @@ async def upload_document(
     title:        str           = Form(..., max_length=255),
     description:  Optional[str] = Form(None),
     directory_id: int           = Form(...),
+    user_level_ids: str         = Form("[]", description="JSON array of user level IDs"),
     current_user: CurrentUser   = None,
     session:      Session       = Depends(get_session),
 ):
+    try:
+        parsed_level_ids = json.loads(user_level_ids)
+        if not isinstance(parsed_level_ids, list):
+            parsed_level_ids = []
+    except (json.JSONDecodeError, TypeError):
+        parsed_level_ids = []
+
     return await DocumentService(session).upload_document(
         file=file,
         title=title,
@@ -74,6 +87,7 @@ async def upload_document(
         directory_id=directory_id,
         uploaded_by=current_user.id,
         current_user=current_user,
+        user_level_ids=parsed_level_ids,
     )
 
 
@@ -266,6 +280,20 @@ def archive_document(
     session:      Session     = Depends(get_session),
 ):
     return DocumentService(session).archive_document(document_id, current_user)
+
+
+@router.post(
+    "/bulk-restore",
+    response_model=BulkRestoreResponse,
+    summary="Restore multiple archived or deleted documents (Admin only)",
+)
+def bulk_restore_documents(
+    payload:      BulkRestoreRequest,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    result = DocumentService(session).bulk_restore_documents(payload.document_ids, current_user)
+    return result
 
 
 @router.post(

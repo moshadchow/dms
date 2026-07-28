@@ -31,6 +31,22 @@ class Settings(BaseSettings):
         "image/png",
     ]
 
+    # ── Azure AD (Microsoft Entra ID) ─────────
+    AZURE_CLIENT_ID:     str = ""
+    AZURE_CLIENT_SECRET: str = ""
+    AZURE_TENANT_ID:     str = ""
+    AZURE_REDIRECT_URI:  str = "http://localhost:8000/api/v1/auth/azure/callback"
+    AZURE_SCOPES:        List[str] = ["openid", "profile", "email"]
+    AZURE_DEFAULT_ROLE_NAME: str = "auditor"  # role assigned to JIT-provisioned users
+
+    @property
+    def AZURE_AUTHORITY(self) -> str:
+        return f"https://login.microsoftonline.com/{self.AZURE_TENANT_ID}"
+
+    @property
+    def AZURE_ENABLED(self) -> bool:
+        return bool(self.AZURE_CLIENT_ID and self.AZURE_CLIENT_SECRET and self.AZURE_TENANT_ID)
+
     # ── CORS ──────────────────────────────────
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 

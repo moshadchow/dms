@@ -3,14 +3,15 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { usersApi } from '@/api/users.api'
 import { useAuthStore } from '@/store/authStore'
-import { getErrorMessage } from '@/api/client'
 import UserTable from '@/components/admin/UserTable'
 import UserFormModal from '@/components/admin/UserFormModal'
 import PermissionMatrix from '@/components/admin/PermissionMatrix'
 import CategoryPermissionPanel from '@/components/admin/CategoryPermissionPanel'
-import type { User, Role, Permission } from '@/types/user.types'
+import UserLevelTable from '@/components/admin/UserLevelTable'
+import UserLevelFormModal from '@/components/admin/UserLevelFormModal'
+import type { User, Role, Permission, UserLevel } from '@/types/user.types'
 
-type Tab = 'users' | 'roles' | 'category-access'
+type Tab = 'users' | 'roles' | 'category-access' | 'user-levels'
 
 export default function AdminPage() {
   const navigate    = useNavigate()
@@ -25,12 +26,17 @@ export default function AdminPage() {
   const [users, setUsers]           = useState<User[]>([])
   const [roles, setRoles]           = useState<Role[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
+  const [userLevels, setUserLevels] = useState<UserLevel[]>([])
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [loadingRoles, setLoadingRoles] = useState(true)
+  const [loadingLevels, setLoadingLevels] = useState(true)
   const [search, setSearch]         = useState('')
   const [filterActive, setFilterActive] = useState<string>('')
+  const [filterLevel, setFilterLevel] = useState<string>('')
   const [formOpen, setFormOpen]     = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [levelFormOpen, setLevelFormOpen] = useState(false)
+  const [editingLevel, setEditingLevel] = useState<UserLevel | null>(null)
   const [userPage, setUserPage]     = useState(1)
   const [totalUsers, setTotalUsers] = useState(0)
   const LIMIT = 20
@@ -43,6 +49,7 @@ export default function AdminPage() {
         limit:     LIMIT,
         search:    search.trim() || undefined,
         is_active: filterActive === '' ? undefined : filterActive === 'true',
+        user_level_id: filterLevel === '' ? undefined : filterLevel === 'none' ? null : Number(filterLevel),
       })
       setUsers(data.items)
       setTotalUsers(data.total)
@@ -51,7 +58,7 @@ export default function AdminPage() {
     } finally {
       setLoadingUsers(false)
     }
-  }, [userPage, search, filterActive])
+  }, [userPage, search, filterActive, filterLevel])
 
   const loadRoles = useCallback(async () => {
     setLoadingRoles(true)
@@ -66,9 +73,22 @@ export default function AdminPage() {
     }
   }, [])
 
+  const loadLevels = useCallback(async () => {
+    setLoadingLevels(true)
+    try {
+      const levels = await usersApi.listUserLevels()
+      setUserLevels(levels)
+    } catch {
+      toast.error('Failed to load user levels')
+    } finally {
+      setLoadingLevels(false)
+    }
+  }, [])
+
   useEffect(() => { loadUsers() }, [loadUsers])
   useEffect(() => { loadRoles() }, [loadRoles])
-  useEffect(() => { setUserPage(1) }, [search, filterActive])
+  useEffect(() => { loadLevels() }, [loadLevels])
+  useEffect(() => { setUserPage(1) }, [search, filterActive, filterLevel])
 
   const totalPages = Math.ceil(totalUsers / LIMIT) || 1
 
@@ -84,6 +104,10 @@ export default function AdminPage() {
     {
       id: 'category-access', label: 'Category Access',
       icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>,
+    },
+    {
+      id: 'user-levels', label: 'User Levels',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>,
     },
   ]
 
@@ -104,6 +128,15 @@ export default function AdminPage() {
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New user
+          </button>
+        )}
+        {activeTab === 'user-levels' && (
+          <button
+            onClick={() => { setEditingLevel(null); setLevelFormOpen(true) }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New level
           </button>
         )}
       </div>
@@ -165,6 +198,13 @@ export default function AdminPage() {
                 <option value="">All status</option>
                 <option value="true">Active only</option>
                 <option value="false">Inactive only</option>
+              </select>
+              <select className="input" value={filterLevel} onChange={(e) => setFilterLevel(e.target.value)} style={{ width: '140px', fontSize: '0.82rem' }}>
+                <option value="">All levels</option>
+                {userLevels.map((lv) => (
+                  <option key={lv.id} value={String(lv.id)}>{lv.name}</option>
+                ))}
+                <option value="none">No level</option>
               </select>
             </div>
 
@@ -242,6 +282,16 @@ export default function AdminPage() {
         {activeTab === 'category-access' && (
           <CategoryPermissionPanel onUserUpdated={loadUsers} />
         )}
+
+        {/* ── User Levels tab ── */}
+        {activeTab === 'user-levels' && (
+          <UserLevelTable
+            levels={userLevels}
+            loading={loadingLevels}
+            onEdit={(lv) => { setEditingLevel(lv); setLevelFormOpen(true) }}
+            onRefresh={loadLevels}
+          />
+        )}
       </div>
 
       {/* User form modal */}
@@ -249,8 +299,17 @@ export default function AdminPage() {
         isOpen={formOpen}
         editing={editingUser}
         roles={roles}
+        userLevels={userLevels}
         onClose={() => { setFormOpen(false); setEditingUser(null) }}
         onSuccess={loadUsers}
+      />
+
+      {/* User level form modal */}
+      <UserLevelFormModal
+        isOpen={levelFormOpen}
+        editing={editingLevel}
+        onClose={() => { setLevelFormOpen(false); setEditingLevel(null) }}
+        onSuccess={() => { loadLevels(); loadUsers() }}
       />
     </div>
   )

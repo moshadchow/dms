@@ -3,7 +3,7 @@ from sqlmodel import Session, select
 
 from categories.models import Category
 from directories.models import Directory
-from documents.models import Document, DocumentStatus
+from documents.models import Document, DocumentStatus, DocumentUserLevelLink
 from users.models import User, UserCategoryLink
 
 
@@ -62,3 +62,34 @@ def ensure_document_access(
 
     ensure_category_access(session, user, directory.category_id)
     return document
+
+
+def ensure_document_user_level_access(
+    session: Session,
+    user: User,
+    document: Document,
+) -> None:
+    if user.is_admin():
+        return
+
+    permitted_level_ids = [
+        link.user_level_id
+        for link in session.exec(
+            select(DocumentUserLevelLink).where(
+                DocumentUserLevelLink.document_id == document.id,
+            )
+        ).all()
+    ]
+
+    # If no user level links exist, the document is not visible to anyone except admins
+    if not permitted_level_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this document",
+        )
+
+    if user.user_level_id not in permitted_level_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this document",
+        )

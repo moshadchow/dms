@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from categories.models import Category
 from core.security import hash_password
+from user_levels.models import UserLevel, UserLevelRead
 from users.models import (
     AssignedCategoryRead,
     Permission,
@@ -40,11 +41,15 @@ def _role_to_read(role: Role) -> RoleRead:
 
 
 def _user_to_read(user: User) -> UserRead:
+    level_read = None
+    if user.user_level:
+        level_read = UserLevelRead.model_validate(user.user_level)
     return UserRead(
         id=user.id,
         full_name=user.full_name,
         email=user.email,
         is_active=user.is_active,
+        auth_provider=user.auth_provider,
         created_at=user.created_at,
         updated_at=user.updated_at,
         roles=[_role_to_read(r) for r in user.roles],
@@ -57,6 +62,7 @@ def _user_to_read(user: User) -> UserRead:
             )
             for category in user.categories
         ],
+        user_level=level_read,
     )
 
 
@@ -74,10 +80,12 @@ class UserService:
         limit:     int = 50,
         search:    Optional[str]  = None,
         is_active: Optional[bool] = None,
+        user_level_id: Optional[int] = None,
     ) -> Tuple[List[UserRead], int]:
         query = select(User).options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
+            selectinload(User.user_level),  # type: ignore[arg-type]
         )
         if search:
             query = query.where(
@@ -85,6 +93,8 @@ class UserService:
             )
         if is_active is not None:
             query = query.where(User.is_active == is_active)
+        if user_level_id is not None:
+            query = query.where(User.user_level_id == user_level_id)
 
         all_users = self.session.exec(query).all()
         total     = len(all_users)
@@ -107,11 +117,36 @@ class UserService:
                 detail=f"Email '{data.email}' is already registered",
             )
 
+        # Determine user_level_id: use provided value, or default to "Low"
+        level_id = data.user_level_id
+        if level_id is None:
+            default_level = self.session.exec(
+                select(UserLevel).where(UserLevel.name == "Low", UserLevel.is_active == True)
+            ).first()
+            if default_level:
+                level_id = default_level.id
+
+        # Validate: local users must have a password
+        auth_provider = data.auth_provider or "local"
+        hashed_pw = None
+        if auth_provider == "local":
+            if not data.password:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Password is required for local users",
+                )
+            hashed_pw = hash_password(data.password)
+        elif data.azure_object_id:
+            hashed_pw = None
+
         user = User(
             full_name=data.full_name,
             email=data.email,
-            hashed_password=hash_password(data.password),
+            hashed_password=hashed_pw,
             is_active=data.is_active,
+            user_level_id=level_id,
+            auth_provider=auth_provider,
+            azure_object_id=data.azure_object_id,
         )
         self.session.add(user)
         self.session.flush()
@@ -157,6 +192,9 @@ class UserService:
                 self.session.delete(link)
             self.session.flush()
             self._assign_categories(user_id, data.category_ids)
+
+        if data.user_level_id is not None or (hasattr(data, 'user_level_id') and 'user_level_id' in data.model_fields_set):
+            user.user_level_id = data.user_level_id
 
         user.updated_at = datetime.utcnow()
         self.session.add(user)

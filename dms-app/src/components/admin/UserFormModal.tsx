@@ -3,7 +3,7 @@ import { toast } from 'react-hot-toast'
 import { usersApi } from '@/api/users.api'
 import { getErrorMessage } from '@/api/client'
 import { ROLE_LABELS } from '@/utils/permissions'
-import type { User, Role, RoleName } from '@/types/user.types'
+import type { User, Role, RoleName, UserLevel } from '@/types/user.types'
 
 interface Props {
   isOpen:    boolean
@@ -11,14 +11,16 @@ interface Props {
   onSuccess: () => void
   editing?:  User | null
   roles:     Role[]
+  userLevels?: UserLevel[]
 }
 
-export default function UserFormModal({ isOpen, onClose, onSuccess, editing, roles }: Props) {
+export default function UserFormModal({ isOpen, onClose, onSuccess, editing, roles, userLevels = [] }: Props) {
   const [fullName, setFullName]     = useState('')
   const [email, setEmail]           = useState('')
   const [password, setPassword]     = useState('')
   const [isActive, setIsActive]     = useState(true)
   const [selectedRoles, setSelectedRoles] = useState<number[]>([])
+  const [selectedLevel, setSelectedLevel] = useState<string>('')
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState('')
 
@@ -28,6 +30,7 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
       setEmail(editing.email)
       setIsActive(editing.is_active)
       setSelectedRoles(editing.roles.map((r) => r.id))
+      setSelectedLevel(editing.user_level ? String(editing.user_level.id) : '')
       setPassword('')
     } else {
       setFullName('')
@@ -35,6 +38,7 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
       setPassword('')
       setIsActive(true)
       setSelectedRoles([])
+      setSelectedLevel('')
     }
     setError('')
   }, [editing, isOpen])
@@ -55,12 +59,14 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
     setLoading(true)
     setError('')
     try {
+      const levelId = selectedLevel ? Number(selectedLevel) : null
       if (editing) {
         await usersApi.update(editing.id, {
           full_name: fullName.trim(),
           email:     email.trim(),
           is_active: isActive,
           role_ids:  selectedRoles,
+          user_level_id: levelId,
         })
         toast.success('User updated')
       } else {
@@ -70,6 +76,7 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
           password,
           is_active: isActive,
           role_ids:  selectedRoles,
+          user_level_id: levelId ?? undefined,
         })
         toast.success('User created')
       }
@@ -144,6 +151,19 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
                 <span style={{ position: 'absolute', top: '3px', left: isActive ? '21px' : '3px', width: '16px', height: '16px', backgroundColor: 'var(--surface)', borderRadius: '50%', transition: 'left 200ms', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
               </button>
               <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{isActive ? 'Active account' : 'Inactive account'}</span>
+            </div>
+          )}
+
+          {/* User Level selection */}
+          {userLevels.length > 0 && (
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={labelStyle}>User Level</label>
+              <select className="input" value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)} disabled={loading}>
+                <option value="">No level assigned</option>
+                {userLevels.filter((lv) => lv.is_active).map((lv) => (
+                  <option key={lv.id} value={String(lv.id)}>{lv.name}</option>
+                ))}
+              </select>
             </div>
           )}
 

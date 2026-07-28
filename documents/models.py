@@ -7,6 +7,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from users.models import UserReadShort
+    from user_levels.models import UserLevel
 
 
 class FileType(str, Enum):
@@ -36,6 +37,15 @@ class AnnotationAnchorType(str, Enum):
     TEXT_RANGE = "text_range"
 
 
+class DocumentAnnotationType(str, Enum):
+    NOTE = "note"
+    STROKE = "stroke"
+
+
+class DrawingTool(str, Enum):
+    PEN = "pen"
+
+
 ALLOWED_MIME_TYPES: dict[str, FileType] = {
     "application/pdf": FileType.PDF,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": FileType.DOCX,
@@ -46,6 +56,15 @@ ALLOWED_MIME_TYPES: dict[str, FileType] = {
 }
 
 MAX_FILE_SIZE_BYTES: int = 50 * 1024 * 1024
+
+
+class DocumentUserLevelLink(SQLModel, table=True):
+    __tablename__ = "document_user_level_links"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    document_id: int = Field(foreign_key="documents.id", index=True)
+    user_level_id: int = Field(foreign_key="user_levels.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class DocumentBase(SQLModel):
@@ -76,6 +95,10 @@ class Document(DocumentBase, table=True):
     )
     variants: List["DocumentVariant"] = Relationship(  # type: ignore[assignment]
         back_populates="source_document",
+        sa_relationship_kwargs={"lazy": "noload"},
+    )
+    user_levels: List["UserLevel"] = Relationship(  # type: ignore[assignment]
+        link_model=DocumentUserLevelLink,
         sa_relationship_kwargs={"lazy": "selectin"},
     )
 
@@ -127,12 +150,18 @@ class DocumentAnnotation(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     variant_id: int = Field(foreign_key="document_variants.id", index=True)
     page_number: Optional[int] = Field(default=None, index=True)
-    anchor_type: AnnotationAnchorType = Field(index=True)
+    annotation_type: DocumentAnnotationType = Field(
+        default=DocumentAnnotationType.NOTE,
+        index=True,
+    )
+    anchor_type: Optional[AnnotationAnchorType] = Field(default=None, index=True)
+    drawing_tool: Optional[DrawingTool] = Field(default=None, index=True)
+    thickness: Optional[float] = Field(default=None, ge=0.1, le=100.0)
     anchor_data: Dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSON, nullable=False),
     )
-    note_text: str = Field(max_length=5000)
+    note_text: Optional[str] = Field(default=None, max_length=5000)
     color: str = Field(default="#f59e0b", max_length=32)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -150,6 +179,7 @@ class DocumentCreate(DocumentBase):
     mime_type: str
     file_size: int
     storage_path: str
+    user_level_ids: List[int] = []
 
 
 class DocumentUpdate(SQLModel):
@@ -169,6 +199,8 @@ class DocumentRead(DocumentBase):
     status: DocumentStatus
     created_at: datetime
     updated_at: datetime
+    user_level_ids: List[int] = []
+    user_level_names: List[str] = []
 
     model_config = {"from_attributes": True}
 
@@ -195,9 +227,12 @@ class DocumentListResponse(SQLModel):
 
 class DocumentAnnotationCreate(SQLModel):
     page_number: Optional[int] = None
-    anchor_type: AnnotationAnchorType
+    annotation_type: DocumentAnnotationType = DocumentAnnotationType.NOTE
+    anchor_type: Optional[AnnotationAnchorType] = None
+    drawing_tool: Optional[DrawingTool] = None
+    thickness: Optional[float] = Field(default=None, ge=0.1, le=100.0)
     anchor_data: Dict[str, Any] = Field(default_factory=dict)
-    note_text: str = Field(min_length=1, max_length=5000)
+    note_text: Optional[str] = Field(default=None, max_length=5000)
     color: str = Field(default="#f59e0b", max_length=32)
 
 
@@ -209,9 +244,12 @@ class DocumentAnnotationRead(SQLModel):
     id: int
     variant_id: int
     page_number: Optional[int] = None
-    anchor_type: AnnotationAnchorType
+    annotation_type: DocumentAnnotationType
+    anchor_type: Optional[AnnotationAnchorType]
+    drawing_tool: Optional[DrawingTool]
+    thickness: Optional[float]
     anchor_data: Dict[str, Any]
-    note_text: str
+    note_text: Optional[str]
     color: str
     created_at: datetime
     updated_at: datetime

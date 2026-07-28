@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { authApi } from '@/api/auth.api'
+import { apiRoot } from '@/api/base'
 import { useAuthStore } from '@/store/authStore'
 import { getErrorMessage } from '@/api/client'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import ucbLogo from '@/assets/ucb_logo.png'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -15,9 +17,15 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
+  const [azureEnabled, setAzureEnabled] = useState(false)
 
   useEffect(() => {
     if (isAuthenticated()) navigate('/dashboard', { replace: true })
+    // Check if Azure AD is enabled
+    fetch(`${apiRoot}/auth/azure/config`)
+      .then((r) => r.json())
+      .then((data) => setAzureEnabled(data.enabled))
+      .catch(() => {})
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -57,15 +65,28 @@ export default function LoginPage() {
         transition: 'background-color 200ms',
       }}>
 
-        {/* Icon */}
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
-          <div style={{ width: '56px', height: '56px', backgroundColor: 'var(--text)', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--surface)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="16" y1="13" x2="8" y2="13"/>
-              <line x1="16" y1="17" x2="8" y2="17"/>
-            </svg>
+        {/* Logo */}
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.75rem' }}>
+          <div style={{
+            backgroundColor: '#1a1a2e',
+            borderRadius: '12px',
+            padding: '12px 24px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+            <img
+              src={ucbLogo}
+              alt="UCB Logo"
+              style={{
+                width: '200px',
+                maxWidth: '100%',
+                height: 'auto',
+                objectFit: 'contain',
+                display: 'block',
+                userSelect: 'none',
+              }}
+            />
           </div>
         </div>
 
@@ -110,6 +131,46 @@ export default function LoginPage() {
             ) : 'Sign In'}
           </button>
         </form>
+
+        {/* Azure AD SSO */}
+        {azureEnabled && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', margin: '1.5rem 0', gap: '0.75rem' }}>
+              <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>or</span>
+              <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
+            </div>
+            <a
+              href={`${apiRoot}/auth/azure/login`}
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                backgroundColor: '#fff',
+                color: '#333',
+                border: '1px solid #d1d1d1',
+                borderRadius: '0.625rem',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.75rem',
+                textDecoration: 'none',
+                fontFamily: 'inherit',
+                transition: 'background-color 150ms',
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">
+                <rect x="1" y="1" width="10" height="10" fill="#f25022" />
+                <rect x="12" y="1" width="10" height="10" fill="#7fba00" />
+                <rect x="1" y="12" width="10" height="10" fill="#00a4ef" />
+                <rect x="12" y="12" width="10" height="10" fill="#ffb900" />
+              </svg>
+              Sign in with Microsoft
+            </a>
+          </>
+        )}
 
         <p style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '1.5rem' }}>
           Don't have an account? <span style={{ color: 'var(--text)', fontWeight: 600 }}>Contact administrator</span>

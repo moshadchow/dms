@@ -24,7 +24,7 @@ class AuthService:
             select(User).where(User.email == email)
         ).first()
 
-        if not user or not verify_password(password, user.hashed_password):
+        if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
             raise InvalidCredentialsError()
 
         if not user.is_active:
@@ -67,7 +67,7 @@ class AuthService:
     ) -> None:
         from fastapi import HTTPException, status
 
-        if not verify_password(current_password, user.hashed_password):
+        if not user.hashed_password or not verify_password(current_password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Current password is incorrect",

@@ -1,16 +1,26 @@
 export type FileType = 'pdf' | 'docx' | 'excel' | 'image'
 export type DocumentStatus = 'active' | 'archived' | 'deleted'
 export type AnnotationAnchorType = 'point' | 'text_range'
+export type DocumentAnnotationType = 'note' | 'stroke'
 export type DocumentVariantStatus = 'active' | 'deleted'
 export type DocumentVariantType = 'private_annotation'
+export type DrawingTool = 'pen'
+
+export interface PdfStrokePoint {
+  x: number
+  y: number
+}
 
 export interface DocumentAnnotation {
   id: number
   variant_id: number
   page_number: number | null
-  anchor_type: AnnotationAnchorType
+  annotation_type: DocumentAnnotationType
+  anchor_type: AnnotationAnchorType | null
+  drawing_tool: DrawingTool | null
+  thickness: number | null
   anchor_data: Record<string, unknown>
-  note_text: string
+  note_text: string | null
   color: string
   created_at: string
   updated_at: string
@@ -46,6 +56,7 @@ export interface Document {
   status: DocumentStatus
   created_at: string
   updated_at: string
+  user_level_ids: number[]
 }
 
 export interface DocumentListResponse {
@@ -57,9 +68,12 @@ export interface DocumentListResponse {
 
 export interface DocumentAnnotationRequest {
   page_number?: number | null
-  anchor_type: AnnotationAnchorType
+  annotation_type?: DocumentAnnotationType
+  anchor_type?: AnnotationAnchorType | null
+  drawing_tool?: DrawingTool | null
+  thickness?: number | null
   anchor_data: Record<string, unknown>
-  note_text: string
+  note_text?: string | null
   color: string
 }
 
@@ -87,6 +101,12 @@ export interface DocumentListParams {
   category_id?: number
   file_type?: FileType
   search?: string
+  status?: DocumentStatus
   skip?: number
   limit?: number
+}
+
+export interface BulkRestoreResponse {
+  restored: Document[]
+  failed: { id: number; error: string }[]
 }

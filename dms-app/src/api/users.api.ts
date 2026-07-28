@@ -7,6 +7,9 @@ import type {
   Role,
   Permission,
   RoleCreateRequest,
+  UserLevel,
+  UserLevelCreateRequest,
+  UserLevelUpdateRequest,
 } from '@/types/user.types'
 
 export const usersApi = {
@@ -16,6 +19,7 @@ export const usersApi = {
     limit?: number
     search?: string
     is_active?: boolean
+    user_level_id?: number | null
   }): Promise<UserListResponse> => {
     const res = await apiClient.get<UserListResponse>('/users', { params })
     return res.data
@@ -65,5 +69,35 @@ export const usersApi = {
   listPermissions: async (): Promise<Permission[]> => {
     const res = await apiClient.get<Permission[]>('/users/permissions/all')
     return res.data
+  },
+
+  // ── User Levels ───────────────────────────────────────────────────
+  listUserLevels: async (): Promise<UserLevel[]> => {
+    const res = await apiClient.get<UserLevel[]>('/user-levels')
+    return res.data
+  },
+
+  listActiveUserLevels: async (): Promise<UserLevel[]> => {
+    const res = await apiClient.get<UserLevel[]>('/user-levels/active')
+    return res.data
+  },
+
+  getUserLevel: async (id: number): Promise<UserLevel> => {
+    const res = await apiClient.get<UserLevel>(`/user-levels/${id}`)
+    return res.data
+  },
+
+  createUserLevel: async (data: UserLevelCreateRequest): Promise<UserLevel> => {
+    const res = await apiClient.post<UserLevel>('/user-levels', data)
+    return res.data
+  },
+
+  updateUserLevel: async (id: number, data: UserLevelUpdateRequest): Promise<UserLevel> => {
+    const res = await apiClient.patch<UserLevel>(`/user-levels/${id}`, data)
+    return res.data
+  },
+
+  deleteUserLevel: async (id: number): Promise<void> => {
+    await apiClient.delete(`/user-levels/${id}`)
   },
 }

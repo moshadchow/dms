@@ -3,7 +3,9 @@ import { toast } from 'react-hot-toast'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { formatDateTime, formatFileSize } from '@/utils/formatters'
+import { createClientId } from '@/utils/ids'
 import { usePermissions } from '@/hooks/usePermissions'
+import PdfAnnotationWorkspace from '@/components/documents/PdfAnnotationWorkspace'
 import type {
   AnnotationAnchorType,
   Document,
@@ -50,12 +52,15 @@ export default function DocumentViewer({ doc, onClose }: Props) {
   const currentVariant = workspace?.variant ?? null
   const currentViewUrl = useMemo(() => {
     if (!currentDocument) return null
+    if (currentDocument.file_type === 'pdf') return null
     if (currentVariant) return documentsApi.getVariantViewUrl(currentVariant.id)
     return documentsApi.getViewUrl(currentDocument.id)
   }, [currentDocument, currentVariant])
 
   useEffect(() => {
     if (!doc) {
+      // Reset local modal state whenever the viewer closes.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setWorkspace(null)
       setDrafts([])
       setBlobUrl(null)
@@ -76,12 +81,14 @@ export default function DocumentViewer({ doc, onClose }: Props) {
         if (!alive) return
         setWorkspace(data)
         setDrafts(
-          data.annotations.map((annotation) => ({
+          data.annotations
+            .filter((annotation) => annotation.annotation_type !== 'stroke')
+            .map((annotation) => ({
             ...annotation,
             localId: `saved-${annotation.id}`,
             xPct: Number(annotation.anchor_data?.x_pct ?? annotation.anchor_data?.x ?? 0),
             yPct: Number(annotation.anchor_data?.y_pct ?? annotation.anchor_data?.y ?? 0),
-          }))
+            }))
         )
       })
       .catch((err) => {
@@ -96,11 +103,11 @@ export default function DocumentViewer({ doc, onClose }: Props) {
     return () => {
       alive = false
     }
-  }, [doc?.id, onClose])
+  }, [doc, onClose])
 
   useEffect(() => {
     if (!currentViewUrl) return
-    if (workspace?.document.file_type !== 'pdf') return
+    if (workspace?.document.file_type === 'pdf') return
 
     let alive = true
     const token = localStorage.getItem('access_token')
@@ -130,7 +137,7 @@ export default function DocumentViewer({ doc, onClose }: Props) {
   }, [currentViewUrl, workspace?.document.file_type])
 
   const addDraft = (draft: Omit<DraftAnnotation, 'localId'>) => {
-    const localId = crypto.randomUUID()
+    const localId = createClientId()
     setDrafts((previous) => [
       ...previous,
       {
@@ -256,12 +263,14 @@ export default function DocumentViewer({ doc, onClose }: Props) {
       const response = await documentsApi.saveVariant(currentDocument.id, { annotations: payload })
       setWorkspace(response)
       setDrafts(
-        response.annotations.map((annotation) => ({
+        response.annotations
+          .filter((annotation) => annotation.annotation_type !== 'stroke')
+          .map((annotation) => ({
           ...annotation,
           localId: `saved-${annotation.id}`,
           xPct: Number(annotation.anchor_data?.x_pct ?? 0),
           yPct: Number(annotation.anchor_data?.y_pct ?? 0),
-        }))
+          }))
       )
       toast.success('Private copy saved')
     } catch (err) {
@@ -289,6 +298,17 @@ export default function DocumentViewer({ doc, onClose }: Props) {
     .sort((a, b) => a.index - b.index)
 
   if (!doc) return null
+  if (!loading && workspace?.document.file_type === 'pdf') {
+    return (
+      <PdfAnnotationWorkspace
+        document={workspace.document}
+        variant={workspace.variant}
+        annotations={workspace.annotations}
+        onClose={onClose}
+        onWorkspaceSaved={setWorkspace}
+      />
+    )
+  }
 
   return (
     <div style={styles.backdropWrap}>
@@ -409,7 +429,7 @@ export default function DocumentViewer({ doc, onClose }: Props) {
                 <div style={styles.emptyNotes}>
                   <p style={styles.mutedText}>No annotations yet</p>
                 </div>
-              ) : visibleNotes.map(({ draft }, index) => (
+              ) : visibleNotes.map(({ draft }) => (
                 <div
                   key={draft.localId}
                   style={activeDraftId === draft.localId ? styles.noteCardActive : styles.noteCard}

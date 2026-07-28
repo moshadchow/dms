@@ -120,6 +120,7 @@ class DocumentResponse(BaseModel):
     status:       DocumentStatus
     created_at:   datetime
     updated_at:   datetime
+    user_level_ids: List[int]   = Field(default_factory=list, description="IDs of permitted user levels")
 
     model_config = {"from_attributes": True}
 
@@ -156,6 +157,7 @@ class DocumentCardResponse(BaseModel):
     uploaded_by: int
     status:     DocumentStatus
     created_at: datetime
+    user_level_ids: List[int] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -236,6 +238,19 @@ class DocumentStatusResponse(BaseModel):
     detail:      str
     document_id: int
     status:      DocumentStatus
+
+
+# ══════════════════════════════════════════════
+# Bulk restore
+# ══════════════════════════════════════════════
+
+class BulkRestoreRequest(BaseModel):
+    document_ids: List[int] = Field(..., min_length=1, description="IDs of documents to restore")
+
+
+class BulkRestoreResponse(BaseModel):
+    restored: List[DocumentResponse]
+    failed:   List[dict] = Field(default_factory=list, description="List of {id, error} dicts")
 
 
 # ══════════════════════════════════════════════

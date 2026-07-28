@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { apiRoot } from './base'
 import type {
   Document,
   DocumentVariant,
@@ -7,6 +8,7 @@ import type {
   DocumentUpdateRequest,
   DocumentListParams,
   DocumentWorkspaceResponse,
+  BulkRestoreResponse,
 } from '@/types/document.types'
 
 export const documentsApi = {
@@ -39,13 +41,15 @@ export const documentsApi = {
     file: File,
     title: string,
     directoryId: number,
-    description?: string
+    description?: string,
+    userLevelIds?: number[]
   ): Promise<Document> => {
     const form = new FormData()
     form.append('file', file)
     form.append('title', title)
     form.append('directory_id', String(directoryId))
     if (description) form.append('description', description)
+    form.append('user_level_ids', JSON.stringify(userLevelIds ?? []))
 
     const res = await apiClient.post<Document>('/documents/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -72,17 +76,28 @@ export const documentsApi = {
     return res.data
   },
 
+  bulkRestore: async (ids: number[]): Promise<BulkRestoreResponse> => {
+    const res = await apiClient.post<BulkRestoreResponse>('/documents/bulk-restore', { document_ids: ids })
+    return res.data
+  },
+
+  getViewEndpoint: (id: number): string => {
+    return `${apiRoot}/documents/${id}/view`
+  },
+
   // Returns a blob URL for inline preview or download
   getViewUrl: (id: number): string => {
     const token = localStorage.getItem('access_token')
-    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-    return `${base}/api/v1/documents/${id}/view?token=${token}`
+    return `${documentsApi.getViewEndpoint(id)}?token=${token}`
+  },
+
+  getVariantViewEndpoint: (variantId: number): string => {
+    return `${apiRoot}/documents/variants/${variantId}/view`
   },
 
   getVariantViewUrl: (variantId: number): string => {
     const token = localStorage.getItem('access_token')
-    const base = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
-    return `${base}/api/v1/documents/variants/${variantId}/view?token=${token}`
+    return `${documentsApi.getVariantViewEndpoint(variantId)}?token=${token}`
   },
 
   download: async (id: number, fileName: string): Promise<void> => {

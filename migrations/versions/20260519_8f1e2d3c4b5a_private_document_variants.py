@@ -1,7 +1,7 @@
 """private_document_variants
 
 Revision ID: 8f1e2d3c4b5a
-Revises: 20260518_b7f9a1c2d3e4
+Revises: b7f9a1c2d3e4
 Create Date: 2026-05-19 00:00:00.000000
 """
 
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 revision: str = "8f1e2d3c4b5a"
-down_revision: Union[str, None] = "20260518_b7f9a1c2d3e4"
+down_revision: Union[str, None] = "b7f9a1c2d3e4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -36,7 +36,7 @@ def upgrade() -> None:
         sa.Column("title", sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
         sa.Column("source_file_name", sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
         sa.Column("source_mime_type", sqlmodel.sql.sqltypes.AutoString(length=127), nullable=False),
-        sa.Column("file_type", sa.Enum("PDF", "DOCX", "EXCEL", "IMAGE", name="filetype"), nullable=False),
+        sa.Column("file_type", sa.dialects.postgresql.ENUM("PDF", "DOCX", "EXCEL", "IMAGE", name="filetype", create_type=False), nullable=False),
         sa.Column("file_size", sa.Integer(), nullable=False),
         sa.Column("storage_path", sqlmodel.sql.sqltypes.AutoString(length=512), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),

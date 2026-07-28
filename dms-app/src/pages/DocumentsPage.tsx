@@ -40,6 +40,9 @@ export default function DocumentsPage() {
   const [docLoading, setDocLoading] = useState(false)
   const [search, setSearch]         = useState('')
   const [fileTypeFilter, setFileTypeFilter] = useState('')
+  const [showArchived, setShowArchived]     = useState(false)
+  const [selectedIds, setSelectedIds]       = useState<Set<number>>(new Set())
+  const [bulkRestoring, setBulkRestoring]   = useState(false)
   const [page, setPage]             = useState(1)
   const LIMIT = 20
 
@@ -127,11 +130,13 @@ export default function DocumentsPage() {
   const loadDocuments = useCallback(async () => {
     if (!resolvedDirId) return
     setDocLoading(true)
+    setSelectedIds(new Set())
     try {
       const data = await documentsApi.list({
         directory_id: resolvedDirId,
         search:       search.trim() || undefined,
         file_type:    (fileTypeFilter || undefined) as any,
+        status:       showArchived ? 'archived' : undefined,
         skip:         (page - 1) * LIMIT,
         limit:        LIMIT,
       })
@@ -141,15 +146,40 @@ export default function DocumentsPage() {
     } finally {
       setDocLoading(false)
     }
-  }, [resolvedDirId, search, fileTypeFilter, page])
+  }, [resolvedDirId, search, fileTypeFilter, showArchived, page])
+
+  const handleSelectDoc = useCallback((id: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      checked ? next.add(id) : next.delete(id)
+      return next
+    })
+  }, [])
+
+  const handleBulkRestore = async () => {
+    if (selectedIds.size === 0) return
+    setBulkRestoring(true)
+    try {
+      const result = await documentsApi.bulkRestore([...selectedIds])
+      if (result.restored.length > 0)
+        toast.success(`Restored ${result.restored.length} document${result.restored.length > 1 ? 's' : ''}`)
+      if (result.failed.length > 0)
+        toast.error(`${result.failed.length} document${result.failed.length > 1 ? 's' : ''} could not be restored`)
+      loadDocuments()
+    } catch {
+      toast.error('Bulk restore failed')
+    } finally {
+      setBulkRestoring(false)
+    }
+  }
 
   useEffect(() => {
     if (resolvedDirId) loadDocuments()
     else setDocData(null)
   }, [resolvedDirId, loadDocuments])
 
-  // Reset page when search/filter changes
-  useEffect(() => { setPage(1) }, [search, fileTypeFilter, resolvedDirId])
+  // Reset page when search/filter/status changes
+  useEffect(() => { setPage(1) }, [search, fileTypeFilter, showArchived, resolvedDirId])
 
   if (loading) {
     return (
@@ -227,8 +257,8 @@ export default function DocumentsPage() {
               </div>
 
               {/* Search + filter bar */}
-              <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.625rem', flexShrink: 0 }}>
-                <div style={{ flex: 1, position: 'relative' }}>
+              <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', gap: '0.625rem', flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+                <div style={{ flex: 1, position: 'relative', minWidth: '140px' }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>
                     <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                   </svg>
@@ -252,7 +282,41 @@ export default function DocumentsPage() {
                   <option value="excel">Excel</option>
                   <option value="image">Image</option>
                 </select>
+                {isAdmin && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                    <input
+                      type="checkbox"
+                      checked={showArchived}
+                      onChange={(e) => { setShowArchived(e.target.checked); setSelectedIds(new Set()) }}
+                      style={{ cursor: 'pointer' }}
+                    />
+                    Show Archived
+                  </label>
+                )}
               </div>
+
+              {/* Bulk restore action bar */}
+              {showArchived && selectedIds.size > 0 && (
+                <div style={{ padding: '0.6rem 1.25rem', backgroundColor: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.82rem', color: '#1d4ed8', fontWeight: 500 }}>
+                    {selectedIds.size} selected
+                  </span>
+                  <button
+                    onClick={handleBulkRestore}
+                    disabled={bulkRestoring}
+                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 14px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '0.82rem', fontWeight: 600, cursor: bulkRestoring ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: bulkRestoring ? 0.7 : 1 }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
+                    {bulkRestoring ? 'Restoring…' : 'Restore Selected'}
+                  </button>
+                  <button
+                    onClick={() => setSelectedIds(new Set())}
+                    style={{ padding: '5px 10px', backgroundColor: 'transparent', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '7px', fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
 
               {/* Document grid */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.25rem' }}>
@@ -274,7 +338,7 @@ export default function DocumentsPage() {
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                     <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>
-                      {search || fileTypeFilter ? 'No documents match your filters' : 'No documents yet'}
+                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter ? 'No documents match your filters' : 'No documents yet'}
                     </p>
                     {canCreate && !search && !fileTypeFilter && (
                       <button
@@ -294,6 +358,9 @@ export default function DocumentsPage() {
                           doc={doc}
                           onView={setViewingDoc}
                           onRefresh={loadDocuments}
+                          selectable={showArchived && isAdmin}
+                          selected={selectedIds.has(doc.id)}
+                          onSelect={handleSelectDoc}
                         />
                       ))}
                     </div>

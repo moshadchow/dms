@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { usersApi } from '@/api/users.api'
 import { getErrorMessage } from '@/api/client'
-import { ROLE_LABELS, ROLE_COLORS } from '@/utils/permissions'
+import { ROLE_LABELS } from '@/utils/permissions'
 import { formatDate } from '@/utils/formatters'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import type { User, RoleName } from '@/types/user.types'
@@ -78,7 +78,7 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              {['User', 'Email', 'Roles', 'Status', 'Joined', 'Actions'].map((h) => (
+              {['User', 'Email', 'Roles', 'Provider', 'Level', 'Status', 'Joined', 'Actions'].map((h) => (
                 <th key={h} style={{ padding: '0.625rem 1rem', textAlign: 'left', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
                   {h}
                 </th>
@@ -117,6 +117,26 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
                         </span>
                       ))}
                     </div>
+                  </td>
+                  {/* Provider */}
+                  <td style={{ padding: '0.75rem 1rem' }}>
+                    <span style={{
+                      fontSize: '0.68rem', fontWeight: 600, padding: '2px 7px', borderRadius: '999px',
+                      backgroundColor: user.auth_provider === 'azure_ad' ? '#eff6ff' : '#f8fafc',
+                      color: user.auth_provider === 'azure_ad' ? '#1d4ed8' : '#64748b',
+                    }}>
+                      {user.auth_provider === 'azure_ad' ? 'Azure AD' : 'Local'}
+                    </span>
+                  </td>
+                  {/* Level */}
+                  <td style={{ padding: '0.75rem 1rem' }}>
+                    {user.user_level ? (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 600, padding: '2px 7px', borderRadius: '999px', backgroundColor: getLevelBadge(user.user_level.name).bg, color: getLevelBadge(user.user_level.name).color }}>
+                        {user.user_level.name}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>—</span>
+                    )}
                   </td>
                   {/* Status */}
                   <td style={{ padding: '0.75rem 1rem' }}>
@@ -190,4 +210,13 @@ function getRoleBadge(name: RoleName): React.CSSProperties {
     auditor: { backgroundColor: '#dcfce7', color: '#15803d' },
   }
   return map[name] ?? { backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)' }
+}
+
+function getLevelBadge(name: string): { bg: string; color: string } {
+  const map: Record<string, { bg: string; color: string }> = {
+    High:   { bg: '#fef3c7', color: '#b45309' },
+    Medium: { bg: '#dbeafe', color: '#1d4ed8' },
+    Low:    { bg: '#f3f4f6', color: '#6b7280' },
+  }
+  return map[name] ?? { bg: 'var(--surface-2)', color: 'var(--text-secondary)' }
 }

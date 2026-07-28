@@ -7,9 +7,12 @@ import { formatFileSize, formatDateTime } from '@/utils/formatters'
 import type { Document } from '@/types/document.types'
 
 interface Props {
-  doc:       Document
-  onView:    (doc: Document) => void
-  onRefresh: () => void
+  doc:        Document
+  onView:     (doc: Document) => void
+  onRefresh:  () => void
+  selectable?: boolean
+  selected?:   boolean
+  onSelect?:   (id: number, checked: boolean) => void
 }
 
 const FILE_ICONS: Record<string, React.ReactNode> = {
@@ -59,7 +62,7 @@ const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }>
   deleted:  { bg: '#fef2f2', color: '#dc2626', label: 'Deleted' },
 }
 
-export default function DocumentCard({ doc, onView, onRefresh }: Props) {
+export default function DocumentCard({ doc, onView, onRefresh, selectable, selected, onSelect }: Props) {
   const { canUpdate, canDelete, canDownload, isAdmin } = usePermissions()
   const [menuOpen, setMenuOpen]   = useState(false)
   const [loading, setLoading]     = useState(false)
@@ -130,6 +133,15 @@ export default function DocumentCard({ doc, onView, onRefresh }: Props) {
     >
       {/* Top row — icon + title + menu */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
+        {selectable && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={(e) => onSelect?.(doc.id, e.target.checked)}
+            onClick={(e) => e.stopPropagation()}
+            style={{ marginTop: '12px', flexShrink: 0, cursor: 'pointer', width: '15px', height: '15px' }}
+          />
+        )}
         {/* File type icon */}
         <div style={{ width: '40px', height: '40px', borderRadius: '10px', backgroundColor: fileBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           {fileIcon}
