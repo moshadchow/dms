@@ -1,8 +1,10 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
 import { documentsApi } from '@/api/documents.api'
+import { usersApi } from '@/api/users.api'
 import { getErrorMessage } from '@/api/client'
 import { formatFileSize } from '@/utils/formatters'
+import type { UserLevel } from '@/types/user.types'
 
 const ALLOWED_MIME = [
   'application/pdf',
@@ -35,6 +37,19 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
   const [dragging, setDragging]       = useState(false)
   const [uploading, setUploading]     = useState(false)
   const [description, setDescription] = useState('')
+  const [userLevels, setUserLevels]   = useState<UserLevel[]>([])
+  const [selectedLevelIds, setSelectedLevelIds] = useState<number[]>([])
+  const [levelError, setLevelError]   = useState('')
+
+  useEffect(() => {
+    if (isOpen) {
+      usersApi.listActiveUserLevels().then((levels) => {
+        setUserLevels(levels)
+      }).catch(() => {
+        toast.error('Failed to load user levels')
+      })
+    }
+  }, [isOpen])
 
   const addFiles = (raw: FileList | null) => {
     if (!raw) return
@@ -63,9 +78,22 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
   const updateTitle = (idx: number, title: string) =>
     setFiles((prev) => prev.map((f, i) => i === idx ? { ...f, title } : f))
 
+  const toggleLevel = (levelId: number) => {
+    setSelectedLevelIds((prev) =>
+      prev.includes(levelId) ? prev.filter((id) => id !== levelId) : [...prev, levelId]
+    )
+    setLevelError('')
+  }
+
   const handleUpload = async () => {
     const valid = files.filter((f) => !f.error && !f.done)
     if (!valid.length) return
+
+    if (selectedLevelIds.length === 0) {
+      setLevelError('Select at least one user level')
+      return
+    }
+
     setUploading(true)
     let successCount = 0
 
@@ -73,7 +101,13 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
       const entry = files[i]
       if (entry.error || entry.done) continue
       try {
-        await documentsApi.upload(entry.file, entry.title.trim() || entry.file.name, directoryId, description.trim() || undefined)
+        await documentsApi.upload(
+          entry.file,
+          entry.title.trim() || entry.file.name,
+          directoryId,
+          description.trim() || undefined,
+          selectedLevelIds,
+        )
         setFiles((prev) => prev.map((f, idx) => idx === i ? { ...f, done: true } : f))
         successCount++
       } catch (err) {
@@ -93,6 +127,8 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
     if (uploading) return
     setFiles([])
     setDescription('')
+    setSelectedLevelIds([])
+    setLevelError('')
     onClose()
   }
 
@@ -193,7 +229,7 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
 
           {/* Description field */}
           {files.length > 0 && (
-            <div>
+            <div style={{ marginBottom: '1rem' }}>
               <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
                 Description <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>(optional, applies to all)</span>
               </label>
@@ -205,6 +241,53 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
                 rows={2}
                 style={{ resize: 'none', fontFamily: 'inherit' }}
               />
+            </div>
+          )}
+
+          {/* Document Visibility — User Level selection */}
+          {files.length > 0 && (
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>
+                Document Visibility
+              </label>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', margin: '0 0 0.5rem' }}>
+                Select User Levels allowed to view this document
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {userLevels.map((level) => (
+                  <label
+                    key={level.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      border: `1px solid ${selectedLevelIds.includes(level.id) ? '#4f46e5' : 'var(--surface-2)'}`,
+                      backgroundColor: selectedLevelIds.includes(level.id) ? '#eef2ff' : 'var(--bg)',
+                      cursor: 'pointer',
+                      transition: 'all 150ms',
+                      fontSize: '0.82rem',
+                      fontWeight: 500,
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedLevelIds.includes(level.id)}
+                      onChange={() => toggleLevel(level.id)}
+                      style={{ width: '16px', height: '16px', accentColor: '#4f46e5', cursor: 'pointer' }}
+                    />
+                    {level.name}
+                  </label>
+                ))}
+                {userLevels.length === 0 && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: 0 }}>No active user levels found</p>
+                )}
+              </div>
+              {levelError && (
+                <p style={{ fontSize: '0.75rem', color: '#dc2626', margin: '0.4rem 0 0' }}>{levelError}</p>
+              )}
             </div>
           )}
         </div>

@@ -120,6 +120,7 @@ class DocumentResponse(BaseModel):
     status:       DocumentStatus
     created_at:   datetime
     updated_at:   datetime
+    user_level_ids: List[int]   = Field(default_factory=list, description="IDs of permitted user levels")
 
     model_config = {"from_attributes": True}
 
@@ -156,6 +157,7 @@ class DocumentCardResponse(BaseModel):
     uploaded_by: int
     status:     DocumentStatus
     created_at: datetime
+    user_level_ids: List[int] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

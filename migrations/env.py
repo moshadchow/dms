@@ -27,6 +27,7 @@ import users.models        # noqa: F401  — User, Role, Permission, link tables
 import categories.models   # noqa: F401  — Category
 import directories.models  # noqa: F401  — Directory (self-referencing)
 import documents.models    # noqa: F401  — Document
+import user_levels.models  # noqa: F401  — UserLevel
 
 from core.config import settings  # noqa: E402  (after sys.path insert)
 

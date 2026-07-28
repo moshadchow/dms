@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -68,9 +69,17 @@ async def upload_document(
     title:        str           = Form(..., max_length=255),
     description:  Optional[str] = Form(None),
     directory_id: int           = Form(...),
+    user_level_ids: str         = Form("[]", description="JSON array of user level IDs"),
     current_user: CurrentUser   = None,
     session:      Session       = Depends(get_session),
 ):
+    try:
+        parsed_level_ids = json.loads(user_level_ids)
+        if not isinstance(parsed_level_ids, list):
+            parsed_level_ids = []
+    except (json.JSONDecodeError, TypeError):
+        parsed_level_ids = []
+
     return await DocumentService(session).upload_document(
         file=file,
         title=title,
@@ -78,6 +87,7 @@ async def upload_document(
         directory_id=directory_id,
         uploaded_by=current_user.id,
         current_user=current_user,
+        user_level_ids=parsed_level_ids,
     )
 
 

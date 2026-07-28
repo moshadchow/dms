@@ -10,7 +10,7 @@ import core.database
 import middleware.rbac
 from core.database import get_session
 from core.security import create_access_token, hash_password
-from documents.models import Document, DocumentStatus, FileType
+from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
 from directories.models import Directory
 from main import app
 from users.models import (
@@ -24,6 +24,7 @@ from users.models import (
     UserRoleLink,
 )
 from categories.models import Category
+from user_levels.models import UserLevel
 
 
 @pytest.fixture()
@@ -86,17 +87,28 @@ def seeded_data(client):
                 RolePermissionLink(role_id=maker_role.id, permission_id=permissions[action].id)
             )
 
+        # User levels
+        high_level = UserLevel(name="High", description="High access", is_active=True)
+        medium_level = UserLevel(name="Medium", description="Medium access", is_active=True)
+        low_level = UserLevel(name="Low", description="Low access", is_active=True)
+        session.add(high_level)
+        session.add(medium_level)
+        session.add(low_level)
+        session.flush()
+
         admin = User(
             full_name="Admin User",
             email="admin@example.com",
             hashed_password=hash_password("Admin@1234"),
             is_active=True,
+            user_level_id=high_level.id,
         )
         maker = User(
             full_name="Maker User",
             email="maker@example.com",
             hashed_password=hash_password("Maker@1234"),
             is_active=True,
+            user_level_id=medium_level.id,
         )
         session.add(admin)
         session.add(maker)
@@ -164,6 +176,15 @@ def seeded_data(client):
         )
         session.add(finance_doc)
         session.add(hr_doc)
+        session.flush()
+
+        # Link documents to user levels for visibility
+        # finance_doc: visible to High and Medium
+        session.add(DocumentUserLevelLink(document_id=finance_doc.id, user_level_id=high_level.id))
+        session.add(DocumentUserLevelLink(document_id=finance_doc.id, user_level_id=medium_level.id))
+        # hr_doc: visible to High only
+        session.add(DocumentUserLevelLink(document_id=hr_doc.id, user_level_id=high_level.id))
+
         session.commit()
 
         return {
@@ -176,6 +197,9 @@ def seeded_data(client):
             "hr_directory_id": hr_dir.id,
             "finance_document_id": finance_doc.id,
             "hr_document_id": hr_doc.id,
+            "high_level_id": high_level.id,
+            "medium_level_id": medium_level.id,
+            "low_level_id": low_level.id,
         }
 
 

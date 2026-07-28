@@ -1,9 +1,14 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, Session, SQLModel, select
+
+from user_levels.models import UserLevelRead
+
+if TYPE_CHECKING:
+    from user_levels.models import UserLevel
 
 
 # ──────────────────────────────────────────────
@@ -128,6 +133,7 @@ class User(UserBase, table=True):
 
     id:              Optional[int] = Field(default=None, primary_key=True)
     hashed_password: str           = Field(max_length=255)
+    user_level_id:   Optional[int] = Field(default=None, foreign_key="user_levels.id")
     created_at:      datetime      = Field(default_factory=datetime.utcnow)
     updated_at:      datetime      = Field(default_factory=datetime.utcnow)
 
@@ -139,6 +145,10 @@ class User(UserBase, table=True):
     categories: List["Category"] = Relationship(
         back_populates="users",
         link_model=UserCategoryLink,
+        sa_relationship_kwargs={"lazy": "selectin"},
+    )
+    user_level: Optional["UserLevel"] = Relationship(
+        back_populates="users",
         sa_relationship_kwargs={"lazy": "selectin"},
     )
 
@@ -165,6 +175,7 @@ def get_user_with_roles(session: Session, user_id: int) -> Optional["User"]:
         .options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
+            selectinload(User.user_level),  # type: ignore[arg-type]
         )
     ).first()
     return result
@@ -176,6 +187,7 @@ class UserCreate(UserBase):
     password: str
     role_ids: List[int] = []
     category_ids: List[int] = []
+    user_level_id: Optional[int] = None
 
 
 class UserUpdate(SQLModel):
@@ -184,6 +196,7 @@ class UserUpdate(SQLModel):
     is_active: Optional[bool]      = None
     role_ids:  Optional[List[int]] = None
     category_ids: Optional[List[int]] = None
+    user_level_id: Optional[int]   = None
 
 
 class AssignedCategoryRead(SQLModel):
@@ -200,6 +213,7 @@ class UserRead(UserBase):
     updated_at: datetime
     roles:      List[RoleRead] = []
     categories: List[AssignedCategoryRead] = []
+    user_level: Optional["UserLevelRead"] = None
     model_config = {"from_attributes": True}
 
 
@@ -208,3 +222,7 @@ class UserReadShort(SQLModel):
     full_name: str
     email:     str
     model_config = {"from_attributes": True}
+
+
+# Resolve forward references for Pydantic
+UserRead.model_rebuild()

@@ -1,3 +1,4 @@
+import json
 from io import BytesIO
 from html import escape
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -64,6 +65,7 @@ def test_docx_workspace_preview_and_private_variant_save(client, seeded_data, au
             "title": "Word Workspace",
             "description": "DOCX upload",
             "directory_id": str(seeded_data["finance_directory_id"]),
+            "user_level_ids": json.dumps([seeded_data["high_level_id"], seeded_data["medium_level_id"]]),
         },
         files={
             "file": (
@@ -146,6 +148,7 @@ def test_pdf_workspace_saves_user_specific_strokes_and_exports_variant(client, s
             "title": "Annotated PDF",
             "description": "PDF upload",
             "directory_id": str(seeded_data["finance_directory_id"]),
+            "user_level_ids": json.dumps([seeded_data["high_level_id"], seeded_data["medium_level_id"]]),
         },
         files={
             "file": (

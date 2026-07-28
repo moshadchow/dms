@@ -19,6 +19,11 @@ from core.database import engine
 from core.security import hash_password
 
 # Import all models to ensure SQLModel metadata is populated
+import directories.models  # noqa: F401
+import documents.models    # noqa: F401
+import categories.models   # noqa: F401
+import user_levels.models  # noqa: F401
+from user_levels.models import UserLevel
 from users.models import (
     Permission,
     PermissionAction,
@@ -108,7 +113,41 @@ def seed() -> None:
                 role_map[role_name] = role
                 print(f"  [+] Role: {role_name.value}  ({', '.join(a.value for a in actions)})")
 
-        # ── 3. Default Admin user ─────────────
+        # ── 3. Default User Levels ──────────
+        DEFAULT_LEVELS = [
+            ("High", "High-priority access level"),
+            ("Medium", "Medium-priority access level"),
+            ("Low", "Low-priority access level (default)"),
+        ]
+        level_map: dict[str, UserLevel] = {}
+
+        for level_name, level_desc in DEFAULT_LEVELS:
+            existing = session.exec(
+                select(UserLevel).where(UserLevel.name == level_name)
+            ).first()
+            if existing:
+                level_map[level_name] = existing
+                print(f"  [=] User Level already exists: {level_name}")
+            else:
+                ulvl = UserLevel(name=level_name, description=level_desc, is_active=True)
+                session.add(ulvl)
+                session.flush()
+                level_map[level_name] = ulvl
+                print(f"  [+] User Level: {level_name}")
+
+        # Assign "Low" level to existing users without a level
+        low_level = level_map.get("Low")
+        if low_level:
+            users_without_level = session.exec(
+                select(User).where(User.user_level_id.is_(None))  # type: ignore[union-attr]
+            ).all()
+            for u in users_without_level:
+                u.user_level_id = low_level.id
+                session.add(u)
+            if users_without_level:
+                print(f"  [=] Assigned 'Low' level to {len(users_without_level)} existing user(s)")
+
+        # ── 4. Default Admin user ─────────────
         admin_exists = session.exec(
             select(User).where(User.email == DEFAULT_ADMIN["email"])
         ).first()
@@ -118,6 +157,7 @@ def seed() -> None:
                 full_name=DEFAULT_ADMIN["full_name"],
                 email=DEFAULT_ADMIN["email"],
                 hashed_password=hash_password(DEFAULT_ADMIN["password"]),
+                user_level_id=level_map.get("High", level_map.get("Low")).id if level_map else None,
             )
             session.add(admin_user)
             session.flush()

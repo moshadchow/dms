@@ -28,10 +28,11 @@ def list_users(
     limit:     int            = Query(50, ge=1, le=200),
     search:    Optional[str]  = Query(None, description="Filter by name or email"),
     is_active: Optional[bool] = Query(None),
+    user_level_id: Optional[int] = Query(None, description="Filter by user level ID"),
     _:         AdminUser      = None,
     session:   Session        = Depends(get_session),
 ):
-    users, total = UserService(session).list_users(skip, limit, search, is_active)
+    users, total = UserService(session).list_users(skip, limit, search, is_active, user_level_id)
     return {
         "total": total,
         "skip":  skip,

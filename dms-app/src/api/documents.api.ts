@@ -41,13 +41,15 @@ export const documentsApi = {
     file: File,
     title: string,
     directoryId: number,
-    description?: string
+    description?: string,
+    userLevelIds?: number[]
   ): Promise<Document> => {
     const form = new FormData()
     form.append('file', file)
     form.append('title', title)
     form.append('directory_id', String(directoryId))
     if (description) form.append('description', description)
+    form.append('user_level_ids', JSON.stringify(userLevelIds ?? []))
 
     const res = await apiClient.post<Document>('/documents/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },

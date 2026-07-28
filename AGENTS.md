@@ -1,35 +1,84 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
-This repository has a FastAPI backend at the repo root and a React/Vite frontend in [`dms-app/`](./dms-app). Backend modules are split by feature: `auth/`, `users/`, `categories/`, `directories/`, and `documents/`, with shared infrastructure in `core/` and cross-cutting logic in `middleware/`. Database migrations live in `migrations/`, uploads in `storage/uploads/`, and bootstrap data in `seed.py`.
+## Project Structure
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
-Frontend code lives under `dms-app/src/` and is organized by concern: `api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, and `utils/`.
+## Backend: Key Commands
+```
+alembic upgrade head          # apply DB migrations (required before first run)
+python seed.py                # seed roles, permissions, and admin user (run once after migrate)
+uvicorn main:app --reload     # dev server on :8000
+pytest                        # run all tests
+```
 
-## Build, Test, and Development Commands
-Backend:
+**`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
 
-- `python -m venv venv && .\\venv\\Scripts\\activate` - create and activate a local virtualenv on Windows.
-- `pip install -r requirements.txt` - install FastAPI, SQLModel, Alembic, and test dependencies.
-- `alembic upgrade head` - apply database migrations.
-- `python seed.py` - create default roles, permissions, and the admin user.
-- `uvicorn main:app --reload` - run the API locally at `http://localhost:8000`.
-- `pytest` - run backend tests.
+## Frontend: Key Commands
+```
+cd dms-app && npm install
+npm run dev      # Vite dev server on :5173 (proxies /api to backend :8000)
+npm run build    # tsc + vite build
+npm run lint     # ESLint
+```
 
-Frontend:
+## Testing: SQLite In-Memory
+Tests use `SQLite` + `StaticPool` (in-memory), **not** PostgreSQL. The `conftest.py` fixture monkeypatches the engine in two places:
+- `core.database.engine`
+- `middleware.rbac.engine`
 
-- `cd dms-app && npm install` - install frontend dependencies.
-- `npm run dev` - start the Vite dev server.
-- `npm run build` - type-check and build production assets.
-- `npm run lint` - run ESLint for TypeScript and React files.
+Any new module that imports `engine` directly (e.g., for a new middleware) must be patched in the test fixture or tests will hit the wrong database.
 
-## Coding Style & Naming Conventions
-Use 4-space indentation in Python and 2-space indentation in TypeScript/TSX. Keep backend modules split into `models.py`, `schemas.py`, `service.py`, and `router.py` where that pattern already exists. Use `snake_case` for Python functions and files, `PascalCase` for React components, and `camelCase` for hooks, stores, and utilities.
+## RBAC Middleware: Hardcoded Route Map
+`middleware/rbac.py` has a `ROUTE_PERMISSION_MAP` dict mapping `(HTTP_METHOD, path_prefix)` to a `PermissionAction`. **New endpoints that require permission checks must be added here**, otherwise they are silently unprotected by the middleware (individual endpoint guards via `require_permission()` still apply, but the middleware safety net is bypassed).
 
-## Testing Guidelines
-`pytest` and `pytest-asyncio` are available for backend testing. Add tests under a top-level `tests/` package, with names like `test_auth.py` or `test_documents_api.py`. Prefer focused API and service-layer tests for permission changes, migrations, and document workflows. Run `pytest` before opening a PR and `npm run lint` for frontend changes.
+Paths under `/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, and `/health` bypass RBAC entirely (`PUBLIC_PATH_PREFIXES`).
 
-## Commit & Pull Request Guidelines
-Recent history uses short imperative commit subjects such as `Change password layout`. Keep commit messages concise, present tense, and scoped to one change; for example, `categories: add user-specific permission filter`. PRs should include a clear summary, linked issue or task, migration notes when schema changes are involved, and screenshots for UI updates. Call out any `.env`, storage, or seed-data changes explicitly.
+## Backend Module Convention
+Each feature module follows this pattern:
+- `models.py` — SQLModel ORM models + Pydantic read schemas
+- `schemas.py` — additional request/response schemas
+- `service.py` — business logic (class-based, takes `Session`)
+- `router.py` — FastAPI router
 
-## Security & Configuration Tips
-Copy `.env.example` to `.env` for local setup. Do not commit real secrets, production JWT keys, or uploaded documents containing sensitive data. Treat `storage/uploads/` as runtime data, not source code.
+The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
+
+## Auth & User Injection
+Use the `CurrentUser` annotated type from `core/dependencies.py` to inject the authenticated user into endpoints:
+```python
+from core.dependencies import CurrentUser
+def my_endpoint(current_user: CurrentUser = None): ...
+```
+
+`AdminUser` (also from `core/dependencies.py`) raises 403 for non-admins.
+
+## Frontend Auth Flow
+- Zustand store (`store/authStore.ts`) persists only tokens to localStorage; the `user` object is re-fetched on every page load via `ProtectedRoute` calling `authApi.me()`.
+- Axios client (`api/client.ts`) automatically intercepts 401 responses, attempts a single token refresh, and redirects to `/login` on failure.
+- Frontend `@` path alias resolves to `dms-app/src/`.
+
+## Dependency Pins
+- `bcrypt==4.0.1` — passlib 1.7.4 is incompatible with bcrypt 4.1+. Do not upgrade.
+- Frontend: React 18, Vite 5, Zustand 4, React Router 6.
+
+## Seed Data
+`seed.py` creates four roles with fixed permission matrices:
+| Role    | Permissions |
+|---------|------------|
+| Admin   | view, download, create, update, delete |
+| Maker   | view, download, create, update |
+| Checker | view, download, update |
+| Auditor | view, download |
+
+Default admin: `admin@dms.local` / `Admin@1234`.
+
+## Docker Compose (Stale)
+`docker-compose.yml` references `./backend` and `./frontend` directories that don't match the current repo layout. It may need updating before use.
+
+## Coding Style
+4-space indent in Python, 2-space in TypeScript/TSX. `snake_case` for Python, `PascalCase` for React components, `camelCase` for hooks/stores/utils.
+
+## Commits & PRs
+Short imperative subjects (`Fix archieve & Restore feature`). PRs: clear summary, migration notes for schema changes, screenshots for UI.
+
+## Security
+Copy `.env.example` to `.env` for local setup. Never commit real secrets or production JWT keys. Treat `storage/uploads/` as runtime data.

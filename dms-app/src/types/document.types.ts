@@ -56,6 +56,7 @@ export interface Document {
   status: DocumentStatus
   created_at: string
   updated_at: string
+  user_level_ids: number[]
 }
 
 export interface DocumentListResponse {

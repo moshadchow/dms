@@ -7,6 +7,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from users.models import UserReadShort
+    from user_levels.models import UserLevel
 
 
 class FileType(str, Enum):
@@ -57,6 +58,15 @@ ALLOWED_MIME_TYPES: dict[str, FileType] = {
 MAX_FILE_SIZE_BYTES: int = 50 * 1024 * 1024
 
 
+class DocumentUserLevelLink(SQLModel, table=True):
+    __tablename__ = "document_user_level_links"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    document_id: int = Field(foreign_key="documents.id", index=True)
+    user_level_id: int = Field(foreign_key="user_levels.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class DocumentBase(SQLModel):
     title: str = Field(max_length=255, index=True)
     description: Optional[str] = Field(default=None, max_length=1000)
@@ -86,6 +96,10 @@ class Document(DocumentBase, table=True):
     variants: List["DocumentVariant"] = Relationship(  # type: ignore[assignment]
         back_populates="source_document",
         sa_relationship_kwargs={"lazy": "noload"},
+    )
+    user_levels: List["UserLevel"] = Relationship(  # type: ignore[assignment]
+        link_model=DocumentUserLevelLink,
+        sa_relationship_kwargs={"lazy": "selectin"},
     )
 
 
@@ -165,6 +179,7 @@ class DocumentCreate(DocumentBase):
     mime_type: str
     file_size: int
     storage_path: str
+    user_level_ids: List[int] = []
 
 
 class DocumentUpdate(SQLModel):
@@ -184,6 +199,8 @@ class DocumentRead(DocumentBase):
     status: DocumentStatus
     created_at: datetime
     updated_at: datetime
+    user_level_ids: List[int] = []
+    user_level_names: List[str] = []
 
     model_config = {"from_attributes": True}
 

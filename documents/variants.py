@@ -7,7 +7,7 @@ from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from core.config import settings
-from core.access import ensure_document_access
+from core.access import ensure_document_access, ensure_document_user_level_access
 from directories.models import Directory
 from documents.models import (
     Document,
@@ -69,7 +69,9 @@ class DocumentVariantService:
         )
 
     def _get_workspace_document(self, document_id: int, current_user: User) -> Document:
-        return ensure_document_access(self.session, current_user, document_id)
+        doc = ensure_document_access(self.session, current_user, document_id)
+        ensure_document_user_level_access(self.session, current_user, doc)
+        return doc
 
     def _get_owned_variant(self, variant_id: int, current_user: User) -> DocumentVariant:
         variant = self.session.get(DocumentVariant, variant_id)
@@ -79,8 +81,9 @@ class DocumentVariantService:
         if variant.owner_user_id != current_user.id:
             raise HTTPException(status_code=404, detail=f"Document variant {variant_id} not found")
 
-        # Hidden unless the requester still has category access.
-        ensure_document_access(self.session, current_user, variant.source_document_id)
+        # Hidden unless the requester still has category access and user level access.
+        doc = ensure_document_access(self.session, current_user, variant.source_document_id)
+        ensure_document_user_level_access(self.session, current_user, doc)
         return variant
 
     def _build_preview_html(self, document: Document) -> tuple[Optional[str], Optional[str]]:

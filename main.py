@@ -12,6 +12,7 @@ from directories.router import router as directories_router
 from documents.router   import router as documents_router
 from middleware.rbac    import rbac_middleware
 from users.router       import router as users_router
+from user_levels.router import router as user_levels_router
 
 
 @asynccontextmanager
@@ -68,6 +69,7 @@ app.include_router(users_router,       prefix=f"{API}/users",       tags=["Users
 app.include_router(categories_router,  prefix=f"{API}/categories",  tags=["Categories"])
 app.include_router(directories_router, prefix=f"{API}/directories", tags=["Directories"])
 app.include_router(documents_router,   prefix=f"{API}/documents",   tags=["Documents"])
+app.include_router(user_levels_router, prefix=f"{API}/user-levels", tags=["User Levels"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

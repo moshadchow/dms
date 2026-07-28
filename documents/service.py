@@ -5,7 +5,12 @@ from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from categories.models import Category
-from core.access import ensure_category_access, ensure_directory_access, ensure_document_access
+from core.access import (
+    ensure_category_access,
+    ensure_directory_access,
+    ensure_document_access,
+    ensure_document_user_level_access,
+)
 from directories.models import Directory
 from documents.models import (
     Document,
@@ -13,9 +18,11 @@ from documents.models import (
     DocumentRead,
     DocumentStatus,
     DocumentUpdate,
+    DocumentUserLevelLink,
 )
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
 from users.models import User, UserCategoryLink
+from user_levels.models import UserLevel
 
 
 class DocumentService:
@@ -38,6 +45,7 @@ class DocumentService:
     @staticmethod
     def _to_read(doc: Document) -> DocumentRead:
         """Convert ORM object → Pydantic schema while session is still open."""
+        user_levels = getattr(doc, "user_levels", [])
         return DocumentRead(
             id=doc.id,
             title=doc.title,
@@ -51,6 +59,8 @@ class DocumentService:
             status=doc.status,
             created_at=doc.created_at,
             updated_at=doc.updated_at,
+            user_level_ids=[ul.id for ul in user_levels],
+            user_level_names=[ul.name for ul in user_levels],
         )
 
     # ──────────────────────────────────────────
@@ -58,7 +68,9 @@ class DocumentService:
     # ──────────────────────────────────────────
 
     def get_document(self, document_id: int, current_user: User) -> DocumentRead:
-        return self._to_read(self._get_orm(document_id, current_user))
+        doc = self._get_orm(document_id, current_user)
+        ensure_document_user_level_access(self.session, current_user, doc)
+        return self._to_read(doc)
 
     def list_documents(
         self,
@@ -106,6 +118,18 @@ class DocumentService:
             if category_id is not None:
                 ensure_category_access(self.session, current_user, category_id)
 
+        # User Level visibility filtering for non-admins
+        if not current_user.is_admin():
+            permitted_doc_ids = [
+                link.document_id
+                for link in self.session.exec(
+                    select(DocumentUserLevelLink).where(
+                        DocumentUserLevelLink.user_level_id == current_user.user_level_id,
+                    )
+                ).all()
+            ]
+            query = query.where(Document.id.in_(permitted_doc_ids))
+
         if directory_id is not None:
             query = query.where(Document.directory_id == directory_id)
         if category_id is not None:
@@ -143,9 +167,32 @@ class DocumentService:
         directory_id: int,
         uploaded_by:  int,
         current_user: User,
+        user_level_ids: Optional[list[int]] = None,
     ) -> DocumentRead:
         # Validate directory exists
         directory = ensure_directory_access(self.session, current_user, directory_id)
+
+        # Validate user level IDs
+        if not user_level_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="At least one user level must be selected for document visibility",
+            )
+
+        valid_levels = self.session.exec(
+            select(UserLevel).where(
+                UserLevel.id.in_(user_level_ids),
+                UserLevel.is_active == True,
+            )
+        ).all()
+        valid_level_ids = {ul.id for ul in valid_levels}
+
+        invalid_ids = set(user_level_ids) - valid_level_ids
+        if invalid_ids:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid or inactive user level IDs: {sorted(invalid_ids)}",
+            )
 
         # Validate file type
         file_type = validate_file(file)
@@ -167,6 +214,14 @@ class DocumentService:
             storage_path=storage_path,
         )
         self.session.add(doc)
+        self.session.flush()
+
+        # Create user level links
+        for level_id in valid_level_ids:
+            self.session.add(
+                DocumentUserLevelLink(document_id=doc.id, user_level_id=level_id)
+            )
+
         self.session.commit()
         self.session.refresh(doc)
 
@@ -248,5 +303,6 @@ class DocumentService:
         DocumentRead is used only for mime_type and file_name — no lazy attrs.
         """
         doc = self._get_orm(document_id, current_user)
+        ensure_document_user_level_access(self.session, current_user, doc)
         abs_path = resolve_storage_path(doc.storage_path)
         return abs_path, self._to_read(doc)
