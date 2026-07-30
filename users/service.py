@@ -154,6 +154,23 @@ class UserService:
         self._assign_categories(user.id, data.category_ids)
         self.session.commit()
 
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.CREATE_USER,
+                module=AuditModule.USERS,
+                entity_name="user",
+                entity_id=str(user.id),
+                new_value={"email": data.email, "full_name": data.full_name},
+                description=f"Created user {data.email}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         # Re-fetch with eager load so roles are in memory
         return self.get_user(user.id)
 
@@ -161,6 +178,13 @@ class UserService:
         user = self.session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+        # Capture old values for audit
+        old_values = {
+            "full_name": user.full_name,
+            "email": user.email,
+            "is_active": user.is_active,
+        }
 
         if data.full_name is not None:
             user.full_name = data.full_name
@@ -199,14 +223,56 @@ class UserService:
         user.updated_at = datetime.utcnow()
         self.session.add(user)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            new_values = {
+                "full_name": user.full_name,
+                "email": user.email,
+                "is_active": user.is_active,
+            }
+            svc.log_event(
+                action=AuditAction.UPDATE_USER,
+                module=AuditModule.USERS,
+                entity_name="user",
+                entity_id=str(user_id),
+                old_value=old_values,
+                new_value=new_values,
+                description=f"Updated user {user.email}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return self.get_user(user_id)
 
     def delete_user(self, user_id: int) -> None:
         user = self.session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        email = user.email
         self.session.delete(user)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.DELETE_USER,
+                module=AuditModule.USERS,
+                entity_name="user",
+                entity_id=str(user_id),
+                old_value={"email": email},
+                description=f"Deleted user {email}",
+                is_success=True,
+            )
+        except Exception:
+            pass
 
     def deactivate_user(self, user_id: int) -> UserRead:
         user = self.session.get(User, user_id)
@@ -216,6 +282,25 @@ class UserService:
         user.updated_at = datetime.utcnow()
         self.session.add(user)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.DEACTIVATE_USER,
+                module=AuditModule.USERS,
+                entity_name="user",
+                entity_id=str(user_id),
+                old_value={"is_active": True},
+                new_value={"is_active": False},
+                description=f"Deactivated user {user.email}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return self.get_user(user_id)
 
     def _assign_roles(self, user_id: int, role_ids: List[int]) -> None:
@@ -270,6 +355,24 @@ class UserService:
                 raise HTTPException(status_code=404, detail=f"Permission {perm_id} not found")
             self.session.add(RolePermissionLink(role_id=role.id, permission_id=perm_id))
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.CREATE_ROLE,
+                module=AuditModule.USERS,
+                entity_name="role",
+                entity_id=str(role.id),
+                new_value={"name": data.name.value if hasattr(data.name, "value") else str(data.name)},
+                description=f"Created role {data.name}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return self.get_role(role.id)
 
     # ──────────────────────────────────────────

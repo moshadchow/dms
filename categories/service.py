@@ -73,10 +73,29 @@ class CategoryService:
         self.session.add(cat)
         self.session.commit()
         self.session.refresh(cat)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.CREATE_CATEGORY,
+                module=AuditModule.CATEGORIES,
+                entity_name="category",
+                entity_id=str(cat.id),
+                new_value={"name": data.name},
+                description=f"Created category '{data.name}'",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return cat
 
     def update_category(self, category_id: int, data: CategoryUpdate) -> Category:
         cat = self._get_category_or_404(category_id)
+        old_values = {"name": cat.name, "description": cat.description, "is_active": cat.is_active}
         updates = data.model_dump(exclude_unset=True)
         for field, value in updates.items():
             setattr(cat, field, value)
@@ -84,6 +103,25 @@ class CategoryService:
         self.session.add(cat)
         self.session.commit()
         self.session.refresh(cat)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.UPDATE_CATEGORY,
+                module=AuditModule.CATEGORIES,
+                entity_name="category",
+                entity_id=str(category_id),
+                old_value=old_values,
+                new_value=updates,
+                description=f"Updated category {category_id}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return cat
 
     def delete_category(self, category_id: int) -> None:
@@ -97,8 +135,26 @@ class CategoryService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cannot delete category with existing directories. Archive it instead.",
             )
+        cat_name = cat.name
         self.session.delete(cat)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.DELETE_CATEGORY,
+                module=AuditModule.CATEGORIES,
+                entity_name="category",
+                entity_id=str(category_id),
+                old_value={"name": cat_name},
+                description=f"Deleted category '{cat_name}'",
+                is_success=True,
+            )
+        except Exception:
+            pass
 
     def _get_category_or_404(self, category_id: int) -> Category:
         cat = self.session.get(Category, category_id)

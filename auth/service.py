@@ -25,10 +25,44 @@ class AuthService:
         ).first()
 
         if not user or not user.hashed_password or not verify_password(password, user.hashed_password):
+            # Log failed login attempt
+            try:
+                from audit.service import AuditService
+                from audit.models import AuditAction, AuditModule
+                svc = AuditService(self.session)
+                svc.log_event(
+                    action=AuditAction.FAILED_LOGIN,
+                    module=AuditModule.AUTH,
+                    entity_name="user",
+                    entity_id=str(user.id) if user else None,
+                    description=f"Failed login attempt for {email}",
+                    is_success=False,
+                    failure_reason="Invalid credentials",
+                    user=user,
+                )
+            except Exception:
+                pass
             raise InvalidCredentialsError()
 
         if not user.is_active:
             raise InactiveAccountError()
+
+        # Log successful login
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.LOGIN,
+                module=AuditModule.AUTH,
+                entity_name="user",
+                entity_id=str(user.id),
+                description=f"Local login successful for {email}",
+                is_success=True,
+                user=user,
+            )
+        except Exception:
+            pass
 
         return create_token_pair(user.id)
 
@@ -76,3 +110,20 @@ class AuthService:
         user.hashed_password = hash_password(new_password)
         self.session.add(user)
         self.session.commit()
+
+        # Log password change
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.PASSWORD_CHANGED,
+                module=AuditModule.AUTH,
+                entity_name="user",
+                entity_id=str(user.id),
+                description="Password changed successfully",
+                is_success=True,
+                user=user,
+            )
+        except Exception:
+            pass

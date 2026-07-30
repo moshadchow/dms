@@ -104,10 +104,30 @@ class DirectoryService:
         self.session.add(directory)
         self.session.commit()
         self.session.refresh(directory)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.CREATE_DIRECTORY,
+                module=AuditModule.DIRECTORIES,
+                entity_name="directory",
+                entity_id=str(directory.id),
+                new_value={"name": data.name, "category_id": data.category_id},
+                description=f"Created directory '{data.name}'",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
+
         return directory
 
     def update_directory(self, directory_id: int, data: DirectoryUpdate, current_user: User) -> Directory:
         directory = self.get_directory(directory_id, current_user)
+        old_values = {"name": directory.name}
         updates = data.model_dump(exclude_unset=True)
         for field, value in updates.items():
             setattr(directory, field, value)
@@ -115,6 +135,26 @@ class DirectoryService:
         self.session.add(directory)
         self.session.commit()
         self.session.refresh(directory)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.RENAME_DIRECTORY,
+                module=AuditModule.DIRECTORIES,
+                entity_name="directory",
+                entity_id=str(directory_id),
+                old_value=old_values,
+                new_value=updates,
+                description=f"Updated directory {directory_id}",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
+
         return directory
 
     def delete_directory(self, directory_id: int, current_user: User) -> None:
@@ -156,8 +196,27 @@ class DirectoryService:
 
         self.session.flush()  # remove orphaned docs before deleting directory
 
+        dir_name = directory.name
         self.session.delete(directory)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.DELETE_DIRECTORY,
+                module=AuditModule.DIRECTORIES,
+                entity_name="directory",
+                entity_id=str(directory_id),
+                old_value={"name": dir_name},
+                description=f"Deleted directory '{dir_name}'",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────
     # Helpers

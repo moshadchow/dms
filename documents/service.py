@@ -225,6 +225,24 @@ class DocumentService:
         self.session.commit()
         self.session.refresh(doc)
 
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.UPLOAD_DOCUMENT,
+                module=AuditModule.DOCUMENTS,
+                entity_name="document",
+                entity_id=str(doc.id),
+                new_value={"title": title, "file_name": file.filename},
+                description=f"Uploaded document '{title}'",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
+
         # Convert to Pydantic BEFORE session closes
         return self._to_read(doc)
 
@@ -234,12 +252,33 @@ class DocumentService:
 
     def update_document(self, document_id: int, data: DocumentUpdate, current_user: User) -> DocumentRead:
         doc = self._get_orm(document_id, current_user)
+        old_values = {"title": doc.title, "description": doc.description}
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(doc, field, value)
         doc.updated_at = datetime.utcnow()
         self.session.add(doc)
         self.session.commit()
         self.session.refresh(doc)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.UPDATE_DOCUMENT,
+                module=AuditModule.DOCUMENTS,
+                entity_name="document",
+                entity_id=str(document_id),
+                old_value=old_values,
+                new_value=data.model_dump(exclude_unset=True),
+                description=f"Updated document {document_id}",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
+
         return self._to_read(doc)
 
     # ──────────────────────────────────────────
@@ -253,15 +292,56 @@ class DocumentService:
         self.session.add(doc)
         self.session.commit()
         self.session.refresh(doc)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.ARCHIVE_DOCUMENT,
+                module=AuditModule.DOCUMENTS,
+                entity_name="document",
+                entity_id=str(document_id),
+                old_value={"status": "active"},
+                new_value={"status": "archived"},
+                description=f"Archived document {document_id}",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
+
         return self._to_read(doc)
 
     def restore_document(self, document_id: int, current_user: User) -> DocumentRead:
         doc = ensure_document_access(self.session, current_user, document_id, include_deleted=True)
+        old_status = doc.status.value
         doc.status = DocumentStatus.ACTIVE
         doc.updated_at = datetime.utcnow()
         self.session.add(doc)
         self.session.commit()
         self.session.refresh(doc)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.RESTORE_DOCUMENT,
+                module=AuditModule.DOCUMENTS,
+                entity_name="document",
+                entity_id=str(document_id),
+                old_value={"status": old_status},
+                new_value={"status": "active"},
+                description=f"Restored document {document_id}",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
+
         return self._to_read(doc)
 
     def bulk_restore_documents(self, document_ids: list[int], current_user: User) -> dict:
@@ -284,6 +364,7 @@ class DocumentService:
 
     def delete_document(self, document_id: int, current_user: User, hard: bool = False) -> None:
         doc = self._get_orm(document_id, current_user)
+        old_values = {"status": doc.status.value, "title": doc.title}
         if hard:
             delete_from_disk(doc.storage_path)
             self.session.delete(doc)
@@ -292,6 +373,25 @@ class DocumentService:
             doc.updated_at = datetime.utcnow()
             self.session.add(doc)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.DELETE_DOCUMENT,
+                module=AuditModule.DOCUMENTS,
+                entity_name="document",
+                entity_id=str(document_id),
+                old_value=old_values,
+                new_value={"status": "deleted", "hard_delete": hard},
+                description=f"{'Hard' if hard else 'Soft'} deleted document {document_id}",
+                is_success=True,
+                user=current_user,
+            )
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────
     # Download / Preview — returns ORM for streaming

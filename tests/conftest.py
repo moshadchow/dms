@@ -8,6 +8,7 @@ from sqlmodel import SQLModel, Session, create_engine
 
 import core.database
 import middleware.rbac
+import middleware.audit
 from core.database import get_session
 from core.security import create_access_token, hash_password
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
@@ -39,6 +40,7 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(core.database, "engine", engine)
     monkeypatch.setattr(middleware.rbac, "engine", engine)
+    monkeypatch.setattr(middleware.audit, "engine", engine)
     monkeypatch.setattr(core.database.settings, "DEBUG", False)
     monkeypatch.setattr(core.database.settings, "STORAGE_ROOT", str(tmp_path / "storage"))
 
