@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (57 tests, SQLite in-memory)
+pytest                        # run all tests (82 tests, SQLite in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -24,9 +24,10 @@ npm run lint     # ESLint
 Frontend env: `dms-app/env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`.
 
 ## Testing: SQLite In-Memory
-Tests use `SQLite` + `StaticPool` (in-memory), **not** PostgreSQL. The `conftest.py` fixture monkeypatches the engine in two places:
+Tests use `SQLite` + `StaticPool` (in-memory), **not** PostgreSQL. The `conftest.py` fixture monkeypatches the engine in three places:
 - `core.database.engine`
 - `middleware.rbac.engine`
+- `middleware.audit.engine`
 
 Any new module that imports `engine` directly (e.g., for a new middleware) must be patched in the test fixture or tests will hit the wrong database.
 
@@ -38,11 +39,19 @@ Paths under `/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, and `/health` by
 ## Backend Module Convention
 Each feature module follows this pattern:
 - `models.py` — SQLModel ORM models + Pydantic read schemas
-- `schemas.py` — additional request/response schemas
+- `schemas.py` — additional request/response schemas (optional, some modules keep all schemas in models.py)
 - `service.py` — business logic (class-based, takes `Session`)
 - `router.py` — FastAPI router
 
 The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
+
+## Audit Trail Module
+`audit/` records all significant user and system activities. Key details:
+- **`audit/service.py`** — `AuditService.log_event()` is the single centralized method. It uses its own `Session(engine)` to write audit logs independently of the caller's transaction, ensuring logs are committed even if the outer transaction rolls back. Never raises on failure.
+- **`middleware/audit.py`** — auto-logs auth events, security events (401/403), and document operations from HTTP requests. Registered after RBAC middleware in `main.py`.
+- **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV).
+- **Immutability**: no PUT/PATCH/DELETE endpoints exist for audit records. Users cannot edit or delete audit logs.
+- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py` all call `AuditService.log_event()` after significant operations.
 
 ## Auth & User Injection
 Use the `CurrentUser` annotated type from `core/dependencies.py` to inject the authenticated user into endpoints:
@@ -84,6 +93,9 @@ Azure is enabled when all three of `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and
 - Zustand store (`store/authStore.ts`) persists only tokens to localStorage; the `user` object is re-fetched on every page load via `ProtectedRoute` calling `authApi.me()`.
 - Axios client (`api/client.ts`) automatically intercepts 401 responses, attempts a single token refresh, and redirects to `/login` on failure.
 - Azure AD: `LoginPage.tsx` link → backend `/azure/login` → Azure → callback → `AzureCallbackPage.tsx` stores tokens → fetches user → navigates to dashboard.
+
+## Frontend API Pattern
+All API files import `apiClient` from `./client` (the Axios instance with interceptors), **not** `apiRoot` from `./base` (a plain string). The `apiClient` has `baseURL` set to `/api/v1`, so paths are relative: `apiClient.get('/users')`.
 
 ## User Levels
 `user_levels/` module manages document visibility tiers. Documents are linked to user levels via `DocumentUserLevelLink`. Users can only see documents linked to their level (enforced in `documents/service.py`). Admin bypasses all level restrictions.
