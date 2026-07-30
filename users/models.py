@@ -229,6 +229,7 @@ class UserRead(UserBase):
     roles:         List[RoleRead] = []
     categories:    List[AssignedCategoryRead] = []
     user_level:    Optional["UserLevelRead"] = None
+>>>>>>> main
     model_config = {"from_attributes": True}
 
 
