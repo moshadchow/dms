@@ -115,7 +115,7 @@ async def exchange_code_for_tokens(
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Azure AD token exchange failed",
+            detail=f"Azure AD token exchange failed: {error_detail}",
         )
 
     return resp.json()
@@ -186,8 +186,21 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
         )
 
     # Build the RSA public key from JWK
-    from jose import jwk
-    public_key = jwk.construct(key_data)
+    # python-jose's jwk.construct() fails with Azure AD keys that include x5c fields.
+    # Use the x5c certificate chain via the cryptography library instead.
+    from cryptography import x509
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    import base64 as _b64
+
+    if key_data.get("x5c"):
+        cert_der = _b64.b64decode(key_data["x5c"][0])
+        cert = x509.load_der_x509_certificate(cert_der)
+        public_key = cert.public_key()
+    else:
+        from jose.utils import base64url_decode
+        n = int.from_bytes(base64url_decode(key_data["n"]), "big")
+        e = int.from_bytes(base64url_decode(key_data["e"]), "big")
+        public_key = rsa.RSAPublicNumbers(e, n).public_key()
 
     # Decode and validate
     expected_issuer = f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}/v2.0"

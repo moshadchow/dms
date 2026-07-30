@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     AZURE_REDIRECT_URI:  str = "http://localhost:8000/api/v1/auth/azure/callback"
     AZURE_SCOPES:        List[str] = ["openid", "profile", "email"]
     AZURE_DEFAULT_ROLE_NAME: str = "auditor"  # role assigned to JIT-provisioned users
+    FRONTEND_URL: str = "http://localhost:5173"
 
     @property
     def AZURE_AUTHORITY(self) -> str:

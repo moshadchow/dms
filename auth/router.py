@@ -1,6 +1,8 @@
+import logging
 from base64 import urlsafe_b64decode
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError
 from sqlmodel import Session
@@ -27,6 +29,8 @@ router = APIRouter()
 
 # In-memory store for PKCE/state/nonce (production should use Redis or encrypted cookies)
 _pending_auth: dict[str, dict] = {}
+
+logger = logging.getLogger("dms.auth")
 
 
 def _get_client_ip(request: Request) -> str:
@@ -143,7 +147,6 @@ async def azure_login(request: Request):
     stores them temporarily, and redirects to Azure's authorize endpoint.
     """
     if not settings.AZURE_ENABLED:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Azure AD authentication is not configured",
@@ -193,7 +196,7 @@ async def azure_callback(
             detail=f"Azure returned error: {error} — {error_description}",
         )
         return RedirectResponse(
-            url=f"http://localhost:5173/login?error={error_description or error}",
+            url=f"{settings.FRONTEND_URL}/login?error={error_description or error}",
             status_code=status.HTTP_302_FOUND,
         )
 
@@ -205,7 +208,7 @@ async def azure_callback(
             detail="Invalid or missing state parameter",
         )
         return RedirectResponse(
-            url="http://localhost:5173/login?error=Invalid+state+parameter",
+            url=f"{settings.FRONTEND_URL}/login?error=Invalid+state+parameter",
             status_code=status.HTTP_302_FOUND,
         )
 
@@ -220,7 +223,7 @@ async def azure_callback(
             detail="Missing authorization code in callback",
         )
         return RedirectResponse(
-            url="http://localhost:5173/login?error=Missing+authorization+code",
+            url=f"{settings.FRONTEND_URL}/login?error=Missing+authorization+code",
             status_code=status.HTTP_302_FOUND,
         )
 
@@ -236,7 +239,7 @@ async def azure_callback(
                 detail="No id_token in token response",
             )
             return RedirectResponse(
-                url="http://localhost:5173/login?error=No+ID+token+received",
+                url=f"{settings.FRONTEND_URL}/login?error=No+ID+token+received",
                 status_code=status.HTTP_302_FOUND,
             )
 
@@ -248,7 +251,7 @@ async def azure_callback(
 
         if not user.is_active:
             return RedirectResponse(
-                url="http://localhost:5173/login?error=Account+is+inactive",
+                url=f"{settings.FRONTEND_URL}/login?error=Account+is+inactive",
                 status_code=status.HTTP_302_FOUND,
             )
 
@@ -257,11 +260,24 @@ async def azure_callback(
 
         # Redirect to frontend callback page with tokens
         redirect_url = (
-            f"http://localhost:5173/auth/callback"
+            f"{settings.FRONTEND_URL}/auth/callback"
             f"?access_token={token_pair.access_token}"
             f"&refresh_token={token_pair.refresh_token}"
         )
         return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+    except HTTPException as exc:
+        log_audit_event(
+            AuditEvent.AZURE_LOGIN_FAILED,
+            ip_address=ip_address,
+            detail=f"Azure auth failed: {exc.detail}",
+        )
+        logger.error("Azure callback HTTPException: %s", exc.detail)
+        error_msg = exc.detail if settings.DEBUG else "Authentication failed"
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/login?error={quote(error_msg)}",
+            status_code=status.HTTP_302_FOUND,
+        )
 
     except Exception as exc:
         log_audit_event(
@@ -269,8 +285,10 @@ async def azure_callback(
             ip_address=ip_address,
             detail=f"Unexpected error during Azure authentication: {exc}",
         )
+        logger.exception("Unexpected error during Azure callback")
+        error_msg = str(exc) if settings.DEBUG else "Authentication failed"
         return RedirectResponse(
-            url="http://localhost:5173/login?error=Authentication+failed",
+            url=f"{settings.FRONTEND_URL}/login?error={quote(error_msg)}",
             status_code=status.HTTP_302_FOUND,
         )
 
