@@ -47,10 +47,29 @@ class UserLevelService:
         self.session.add(level)
         self.session.commit()
         self.session.refresh(level)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.CREATE_USER_LEVEL,
+                module=AuditModule.USER_LEVELS,
+                entity_name="user_level",
+                entity_id=str(level.id),
+                new_value={"name": data.name},
+                description=f"Created user level '{data.name}'",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return UserLevelRead.model_validate(level)
 
     def update_user_level(self, level_id: int, data: UserLevelUpdate) -> UserLevelRead:
         level = self._get_or_404(level_id)
+        old_values = {"name": level.name, "description": level.description, "is_active": level.is_active}
         updates = data.model_dump(exclude_unset=True)
         if "name" in updates and updates["name"] != level.name:
             exists = self.session.exec(
@@ -70,6 +89,25 @@ class UserLevelService:
         self.session.add(level)
         self.session.commit()
         self.session.refresh(level)
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.UPDATE_USER_LEVEL,
+                module=AuditModule.USER_LEVELS,
+                entity_name="user_level",
+                entity_id=str(level_id),
+                old_value=old_values,
+                new_value=updates,
+                description=f"Updated user level {level_id}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
         return UserLevelRead.model_validate(level)
 
     def delete_user_level(self, level_id: int) -> None:
@@ -83,8 +121,26 @@ class UserLevelService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cannot delete user level with assigned users. Reassign users first.",
             )
+        level_name = level.name
         self.session.delete(level)
         self.session.commit()
+
+        # Log audit event
+        try:
+            from audit.service import AuditService
+            from audit.models import AuditAction, AuditModule
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.DELETE_USER_LEVEL,
+                module=AuditModule.USER_LEVELS,
+                entity_name="user_level",
+                entity_id=str(level_id),
+                old_value={"name": level_name},
+                description=f"Deleted user level '{level_name}'",
+                is_success=True,
+            )
+        except Exception:
+            pass
 
     def _get_or_404(self, level_id: int) -> UserLevel:
         level = self.session.get(UserLevel, level_id)

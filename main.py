@@ -4,12 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
+from audit.router       import router as audit_router
 from auth.router        import router as auth_router
 from categories.router  import router as categories_router
 from core.config        import settings
 from core.database      import create_db_and_tables
 from directories.router import router as directories_router
 from documents.router   import router as documents_router
+from middleware.audit    import audit_middleware
 from middleware.rbac    import rbac_middleware
 from users.router       import router as users_router
 from user_levels.router import router as user_levels_router
@@ -62,6 +64,9 @@ app.add_middleware(
 # ── RBAC middleware ───────────────────────────
 app.middleware("http")(rbac_middleware)
 
+# ── Audit middleware ─────────────────────────
+app.middleware("http")(audit_middleware)
+
 # ── Routers ───────────────────────────────────
 API = "/api/v1"
 app.include_router(auth_router,        prefix=f"{API}/auth",        tags=["Auth"])
@@ -70,6 +75,7 @@ app.include_router(categories_router,  prefix=f"{API}/categories",  tags=["Categ
 app.include_router(directories_router, prefix=f"{API}/directories", tags=["Directories"])
 app.include_router(documents_router,   prefix=f"{API}/documents",   tags=["Documents"])
 app.include_router(user_levels_router, prefix=f"{API}/user-levels", tags=["User Levels"])
+app.include_router(audit_router,       prefix=f"{API}/audit-logs",  tags=["Audit Trail"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

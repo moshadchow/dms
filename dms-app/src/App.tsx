@@ -9,6 +9,7 @@ const AzureCallbackPage = lazy(() => import('@/pages/AzureCallbackPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const DocumentsPage = lazy(() => import('@/pages/DocumentsPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
+const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
 const NotFoundPage  = lazy(() => import('@/pages/NotFoundPage'))
 const ForbiddenPage = lazy(() => import('@/pages/ForbiddenPage'))
 
@@ -78,6 +79,7 @@ export default function App() {
               <Route path="/dashboard"            element={<DashboardPage />} />
               <Route path="/directory/:directoryId" element={<DocumentsPage />} />
               <Route path="/admin"                element={<AdminPage />} />
+              <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
             </Route>
           </Route>
 
