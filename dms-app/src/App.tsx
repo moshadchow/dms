@@ -5,6 +5,7 @@ import AppLayout from '@/components/layout/AppLayout'
 import Spinner from '@/components/ui/Spinner'
 
 const LoginPage     = lazy(() => import('@/pages/LoginPage'))
+const AzureCallbackPage = lazy(() => import('@/pages/AzureCallbackPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const DocumentsPage = lazy(() => import('@/pages/DocumentsPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
@@ -66,8 +67,9 @@ export default function App() {
       <Suspense fallback={<PageLoader />}>
         <Routes>
           {/* Public */}
-          <Route path="/login"     element={<LoginPage />} />
-          <Route path="/forbidden" element={<ForbiddenPage />} />
+          <Route path="/login"           element={<LoginPage />} />
+          <Route path="/auth/callback"   element={<AzureCallbackPage />} />
+          <Route path="/forbidden"       element={<ForbiddenPage />} />
 
           {/* Authenticated */}
           <Route element={<ProtectedRoute />}>

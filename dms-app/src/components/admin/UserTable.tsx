@@ -78,7 +78,7 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              {['User', 'Email', 'Roles', 'Level', 'Status', 'Joined', 'Actions'].map((h) => (
+              {['User', 'Email', 'Roles', 'Provider', 'Level', 'Status', 'Joined', 'Actions'].map((h) => (
                 <th key={h} style={{ padding: '0.625rem 1rem', textAlign: 'left', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
                   {h}
                 </th>
@@ -117,6 +117,16 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
                         </span>
                       ))}
                     </div>
+                  </td>
+                  {/* Provider */}
+                  <td style={{ padding: '0.75rem 1rem' }}>
+                    <span style={{
+                      fontSize: '0.68rem', fontWeight: 600, padding: '2px 7px', borderRadius: '999px',
+                      backgroundColor: user.auth_provider === 'azure_ad' ? '#eff6ff' : '#f8fafc',
+                      color: user.auth_provider === 'azure_ad' ? '#1d4ed8' : '#64748b',
+                    }}>
+                      {user.auth_provider === 'azure_ad' ? 'Azure AD' : 'Local'}
+                    </span>
                   </td>
                   {/* Level */}
                   <td style={{ padding: '0.75rem 1rem' }}>

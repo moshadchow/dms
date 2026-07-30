@@ -49,6 +49,7 @@ def _user_to_read(user: User) -> UserRead:
         full_name=user.full_name,
         email=user.email,
         is_active=user.is_active,
+        auth_provider=user.auth_provider,
         created_at=user.created_at,
         updated_at=user.updated_at,
         roles=[_role_to_read(r) for r in user.roles],
@@ -125,12 +126,27 @@ class UserService:
             if default_level:
                 level_id = default_level.id
 
+        # Validate: local users must have a password
+        auth_provider = data.auth_provider or "local"
+        hashed_pw = None
+        if auth_provider == "local":
+            if not data.password:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Password is required for local users",
+                )
+            hashed_pw = hash_password(data.password)
+        elif data.azure_object_id:
+            hashed_pw = None
+
         user = User(
             full_name=data.full_name,
             email=data.email,
-            hashed_password=hash_password(data.password),
+            hashed_password=hashed_pw,
             is_active=data.is_active,
             user_level_id=level_id,
+            auth_provider=auth_provider,
+            azure_object_id=data.azure_object_id,
         )
         self.session.add(user)
         self.session.flush()

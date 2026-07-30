@@ -30,6 +30,11 @@ class PermissionAction(str, Enum):
     DELETE   = "delete"
 
 
+class AuthProvider(str, Enum):
+    LOCAL    = "local"
+    AZURE_AD = "azure_ad"
+
+
 # ──────────────────────────────────────────────
 # Link / Association Tables
 # ──────────────────────────────────────────────
@@ -132,10 +137,17 @@ class User(UserBase, table=True):
     __tablename__ = "users"
 
     id:              Optional[int] = Field(default=None, primary_key=True)
-    hashed_password: str           = Field(max_length=255)
+    hashed_password: Optional[str] = Field(default=None, max_length=255)
     user_level_id:   Optional[int] = Field(default=None, foreign_key="user_levels.id")
     created_at:      datetime      = Field(default_factory=datetime.utcnow)
     updated_at:      datetime      = Field(default_factory=datetime.utcnow)
+
+    # ── Azure AD fields ───────────────────────
+    auth_provider:       str           = Field(default="local", max_length=20)
+    azure_object_id:     Optional[str] = Field(default=None, max_length=255, index=True)
+    azure_tenant_id:     Optional[str] = Field(default=None, max_length=255)
+    azure_display_name:  Optional[str] = Field(default=None, max_length=255)
+    azure_last_login_at: Optional[datetime] = Field(default=None)
 
     roles: List[Role] = Relationship(
         back_populates="users",
@@ -184,10 +196,12 @@ def get_user_with_roles(session: Session, user_id: int) -> Optional["User"]:
 # ── Pydantic schemas ──────────────────────────
 
 class UserCreate(UserBase):
-    password: str
+    password: Optional[str] = None
     role_ids: List[int] = []
     category_ids: List[int] = []
     user_level_id: Optional[int] = None
+    auth_provider: str = "local"
+    azure_object_id: Optional[str] = None
 
 
 class UserUpdate(SQLModel):
@@ -208,12 +222,14 @@ class AssignedCategoryRead(SQLModel):
 
 
 class UserRead(UserBase):
-    id:         int
-    created_at: datetime
-    updated_at: datetime
-    roles:      List[RoleRead] = []
-    categories: List[AssignedCategoryRead] = []
-    user_level: Optional["UserLevelRead"] = None
+    id:            int
+    created_at:    datetime
+    updated_at:    datetime
+    auth_provider: str = "local"
+    roles:         List[RoleRead] = []
+    categories:    List[AssignedCategoryRead] = []
+    user_level:    Optional["UserLevelRead"] = None
+>>>>>>> main
     model_config = {"from_attributes": True}
 
 

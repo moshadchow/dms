@@ -36,6 +36,7 @@ export interface User {
   full_name: string
   email: string
   is_active: boolean
+  auth_provider: string
   created_at: string
   updated_at: string
   roles: Role[]
