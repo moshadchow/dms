@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { toast } from 'react-hot-toast'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
@@ -7,9 +7,9 @@ import { createClientId } from '@/utils/ids'
 import { usePermissions } from '@/hooks/usePermissions'
 import PdfAnnotationWorkspace from '@/components/documents/PdfAnnotationWorkspace'
 import type {
-  AnnotationAnchorType,
   Document,
   DocumentWorkspaceResponse,
+  PdfStrokePoint,
 } from '@/types/document.types'
 
 interface Props {
@@ -17,79 +17,160 @@ interface Props {
   onClose: () => void
 }
 
-type WorkspaceMode = 'view' | 'point' | 'text'
+type ToolMode = 'pen' | 'eraser'
 
-interface DraftAnnotation {
+interface StrokeDraft {
   localId: string
-  id?: number
-  variant_id?: number
-  page_number: number | null
-  anchor_type: AnnotationAnchorType
-  anchor_data: Record<string, unknown>
-  note_text: string
   color: string
-  created_at?: string
-  updated_at?: string
-  xPct: number
-  yPct: number
+  thickness: number
+  points: PdfStrokePoint[]
 }
 
-const NOTE_COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#10b981', '#8b5cf6']
+const DEFAULT_COLORS = ['#0f172a', '#ef4444', '#2563eb', '#16a34a', '#d97706']
+
+function cloneStrokes(value: StrokeDraft[]): StrokeDraft[] {
+  return value.map((stroke) => ({
+    ...stroke,
+    points: stroke.points.map((point) => ({ ...point })),
+  }))
+}
+
+function getPointerPoint(
+  event: React.PointerEvent<HTMLCanvasElement>,
+): PdfStrokePoint | null {
+  const canvas = event.currentTarget
+  const rect = canvas.getBoundingClientRect()
+  if (rect.width === 0 || rect.height === 0) return null
+  const x = (event.clientX - rect.left) / rect.width
+  const y = (event.clientY - rect.top) / rect.height
+  if (x < 0 || y < 0 || x > 1 || y > 1) return null
+  return { x, y }
+}
+
+function drawStrokeSet(
+  ctx: CanvasRenderingContext2D,
+  strokes: StrokeDraft[],
+) {
+  const w = ctx.canvas.width
+  const h = ctx.canvas.height
+  ctx.clearRect(0, 0, w, h)
+  for (const stroke of strokes) {
+    if (stroke.points.length < 2) continue
+    ctx.save()
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = stroke.color
+    ctx.lineWidth = stroke.thickness
+    ctx.beginPath()
+    ctx.moveTo(stroke.points[0].x * w, stroke.points[0].y * h)
+    for (let i = 1; i < stroke.points.length; i++) {
+      ctx.lineTo(stroke.points[i].x * w, stroke.points[i].y * h)
+    }
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
+function drawActiveStroke(
+  ctx: CanvasRenderingContext2D,
+  stroke: StrokeDraft,
+) {
+  if (stroke.points.length < 2) return
+  const w = ctx.canvas.width
+  const h = ctx.canvas.height
+  ctx.save()
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = stroke.color
+  ctx.lineWidth = stroke.thickness
+  ctx.beginPath()
+  ctx.moveTo(stroke.points[0].x * w, stroke.points[0].y * h)
+  for (let i = 1; i < stroke.points.length; i++) {
+    ctx.lineTo(stroke.points[i].x * w, stroke.points[i].y * h)
+  }
+  ctx.stroke()
+  ctx.restore()
+}
 
 export default function DocumentViewer({ doc, onClose }: Props) {
   const { canDownload } = usePermissions()
   const viewerRef = useRef<HTMLDivElement>(null)
-  const previewRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const strokesRef = useRef<StrokeDraft[]>([])
+  const activeStrokeRef = useRef<StrokeDraft | null>(null)
+  const eraserSnapshotRef = useRef<StrokeDraft[] | null>(null)
+  const eraserChangedRef = useRef(false)
+
   const [workspace, setWorkspace] = useState<DocumentWorkspaceResponse | null>(null)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [noteMode, setNoteMode] = useState<WorkspaceMode>('view')
-  const [drafts, setDrafts] = useState<DraftAnnotation[]>([])
-  const [activeDraftId, setActiveDraftId] = useState<string | null>(null)
+  const [tool, setTool] = useState<ToolMode>('pen')
+  const [color, setColor] = useState(DEFAULT_COLORS[1])
+  const [thickness, setThickness] = useState(4)
+  const [strokes, setStrokes] = useState<StrokeDraft[]>([])
+  const [undoStack, setUndoStack] = useState<StrokeDraft[][]>([])
+  const [redoStack, setRedoStack] = useState<StrokeDraft[][]>([])
+  const [activeStroke, setActiveStroke] = useState<StrokeDraft | null>(null)
 
   const currentDocument = workspace?.document ?? doc
   const currentVariant = workspace?.variant ?? null
-  const currentViewUrl = useMemo(() => {
-    if (!currentDocument) return null
-    if (currentDocument.file_type === 'pdf') return null
-    if (currentVariant) return documentsApi.getVariantViewUrl(currentVariant.id)
-    return documentsApi.getViewUrl(currentDocument.id)
-  }, [currentDocument, currentVariant])
+
+  useEffect(() => {
+    strokesRef.current = strokes
+  }, [strokes])
 
   useEffect(() => {
     if (!doc) {
-      // Reset local modal state whenever the viewer closes.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setWorkspace(null)
-      setDrafts([])
       setBlobUrl(null)
-      setActiveDraftId(null)
+      setTool('pen')
+      setStrokes([])
+      setUndoStack([])
+      setRedoStack([])
+      setActiveStroke(null)
+      strokesRef.current = []
+      activeStrokeRef.current = null
+      eraserSnapshotRef.current = null
+      eraserChangedRef.current = false
       return
     }
 
     let alive = true
     setLoading(true)
     setWorkspace(null)
-    setDrafts([])
     setBlobUrl(null)
-    setActiveDraftId(null)
-    setNoteMode('view')
+    setTool('pen')
+    setStrokes([])
+    setUndoStack([])
+    setRedoStack([])
+    setActiveStroke(null)
+    strokesRef.current = []
+    activeStrokeRef.current = null
+    eraserSnapshotRef.current = null
+    eraserChangedRef.current = false
 
     documentsApi.getWorkspace(doc.id)
       .then((data) => {
         if (!alive) return
         setWorkspace(data)
-        setDrafts(
-          data.annotations
-            .filter((annotation) => annotation.annotation_type !== 'stroke')
-            .map((annotation) => ({
-            ...annotation,
-            localId: `saved-${annotation.id}`,
-            xPct: Number(annotation.anchor_data?.x_pct ?? annotation.anchor_data?.x ?? 0),
-            yPct: Number(annotation.anchor_data?.y_pct ?? annotation.anchor_data?.y ?? 0),
-            }))
-        )
+        const loaded: StrokeDraft[] = []
+        for (const annotation of data.annotations) {
+          if (annotation.annotation_type === 'stroke' && annotation.drawing_tool === 'pen') {
+            const points = annotation.anchor_data?.points
+            if (Array.isArray(points) && points.length >= 2) {
+              loaded.push({
+                localId: `saved-${annotation.id}`,
+                color: annotation.color,
+                thickness: annotation.thickness ?? 4,
+                points: points as PdfStrokePoint[],
+              })
+            }
+          }
+        }
+        setStrokes(loaded)
+        setUndoStack([])
+        setRedoStack([])
       })
       .catch((err) => {
         if (!alive) return
@@ -106,21 +187,32 @@ export default function DocumentViewer({ doc, onClose }: Props) {
   }, [doc, onClose])
 
   useEffect(() => {
-    if (!currentViewUrl) return
-    if (workspace?.document.file_type === 'pdf') return
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    drawStrokeSet(ctx, strokes)
+    if (activeStroke) {
+      drawActiveStroke(ctx, activeStroke)
+    }
+  }, [strokes, activeStroke])
+
+  useEffect(() => {
+    if (!currentDocument || currentDocument.file_type === 'pdf') return
+    const token = localStorage.getItem('access_token')
+    const url = currentVariant
+      ? documentsApi.getVariantViewUrl(currentVariant.id)
+      : documentsApi.getViewUrl(currentDocument.id)
 
     let alive = true
-    const token = localStorage.getItem('access_token')
-
-    fetch(currentViewUrl, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => {
         if (!response.ok) throw new Error('Failed to load preview')
         return response.blob()
       })
       .then((blob) => {
         if (!alive) return
-        const url = URL.createObjectURL(blob)
-        setBlobUrl(url)
+        setBlobUrl(URL.createObjectURL(blob))
       })
       .catch(() => {
         if (!alive) return
@@ -134,144 +226,178 @@ export default function DocumentViewer({ doc, onClose }: Props) {
         return null
       })
     }
-  }, [currentViewUrl, workspace?.document.file_type])
+  }, [currentDocument, currentVariant])
 
-  const addDraft = (draft: Omit<DraftAnnotation, 'localId'>) => {
-    const localId = createClientId()
-    setDrafts((previous) => [
-      ...previous,
-      {
-        ...draft,
-        localId,
-      },
-    ])
-    setActiveDraftId(localId)
-  }
-
-  const handleViewerClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (!workspace || noteMode !== 'point') return
-    if (!viewerRef.current) return
-
-    const rect = viewerRef.current.getBoundingClientRect()
-    const xPct = ((event.clientX - rect.left) / rect.width) * 100
-    const yPct = ((event.clientY - rect.top) / rect.height) * 100
-    if (xPct < 0 || yPct < 0 || xPct > 100 || yPct > 100) return
-
-    addDraft({
-      page_number: workspace.document.file_type === 'pdf' ? 1 : null,
-      anchor_type: 'point',
-      anchor_data: {
-        x_pct: xPct,
-        y_pct: yPct,
-      },
-      note_text: '',
-      color: NOTE_COLORS[drafts.length % NOTE_COLORS.length],
-      xPct,
-      yPct,
-    })
-  }
-
-  const findParagraphIndex = (node: Node | null): number | null => {
-    let current: Node | null = node
-    while (current) {
-      if (current instanceof HTMLElement) {
-        const paragraph = current.closest('[data-paragraph-index]')
-        if (paragraph) {
-          const raw = paragraph.getAttribute('data-paragraph-index')
-          const parsed = raw ? Number(raw) : NaN
-          return Number.isFinite(parsed) ? parsed : null
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const parent = canvas.parentElement
+    if (!parent) return
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect
+        if (width > 0 && height > 0) {
+          canvas.width = width
+          canvas.height = height
         }
       }
-      current = current.parentNode
-    }
-    return null
-  }
-
-  const handleDocxMouseUp = () => {
-    if (!workspace || workspace.document.file_type !== 'docx' || noteMode !== 'text') return
-    if (!previewRef.current) return
-
-    const selection = window.getSelection()
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return
-
-    const range = selection.getRangeAt(0)
-    if (!previewRef.current.contains(range.commonAncestorContainer)) return
-
-    const selectedText = selection.toString().trim()
-    if (!selectedText) return
-
-    const rect = range.getBoundingClientRect()
-    const previewRect = previewRef.current.getBoundingClientRect()
-    const centerX = rect.left + rect.width / 2
-    const centerY = rect.top + rect.height / 2
-    const xPct = ((centerX - previewRect.left) / previewRect.width) * 100
-    const yPct = ((centerY - previewRect.top) / previewRect.height) * 100
-
-    addDraft({
-      page_number: null,
-      anchor_type: 'text_range',
-      anchor_data: {
-        paragraph_index: findParagraphIndex(range.startContainer),
-        selected_text: selectedText,
-        start_offset: range.startOffset,
-        end_offset: range.endOffset,
-        x_pct: xPct,
-        y_pct: yPct,
-      },
-      note_text: '',
-      color: NOTE_COLORS[drafts.length % NOTE_COLORS.length],
-      xPct,
-      yPct,
     })
+    ro.observe(parent)
+    return () => ro.disconnect()
+  }, [])
 
-    selection.removeAllRanges()
+  const commitStrokes = (next: StrokeDraft[]) => {
+    setUndoStack((previous) => [...previous, cloneStrokes(strokesRef.current)])
+    setRedoStack([])
+    setStrokes(next)
   }
 
-  const updateDraft = (localId: string, patch: Partial<DraftAnnotation>) => {
-    setDrafts((previous) => previous.map((draft) => (
-      draft.localId === localId ? { ...draft, ...patch } : draft
-    )))
+  const handleUndo = () => {
+    const previous = undoStack[undoStack.length - 1]
+    if (!previous) return
+    setUndoStack((stack) => stack.slice(0, -1))
+    setRedoStack((stack) => [...stack, cloneStrokes(strokesRef.current)])
+    setStrokes(previous)
   }
 
-  const deleteDraft = (localId: string) => {
-    setDrafts((previous) => previous.filter((draft) => draft.localId !== localId))
-    if (activeDraftId === localId) setActiveDraftId(null)
+  const handleRedo = () => {
+    const next = redoStack[redoStack.length - 1]
+    if (!next) return
+    setRedoStack((stack) => stack.slice(0, -1))
+    setUndoStack((stack) => [...stack, cloneStrokes(strokesRef.current)])
+    setStrokes(next)
+  }
+
+  const eraseAtPoint = (point: PdfStrokePoint) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const radius = Math.max(thickness * 1.8 / canvas.width, 0.01)
+    const filtered = strokesRef.current.filter((stroke) =>
+      !stroke.points.some((candidate) => {
+        const dx = candidate.x - point.x
+        const dy = candidate.y - point.y
+        return Math.sqrt(dx * dx + dy * dy) <= radius
+      }),
+    )
+    if (filtered.length !== strokesRef.current.length) {
+      eraserChangedRef.current = true
+      setStrokes(filtered)
+    }
+  }
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const point = getPointerPoint(event)
+    if (!point) return
+
+    event.currentTarget.setPointerCapture(event.pointerId)
+
+    if (tool === 'eraser') {
+      eraserSnapshotRef.current = cloneStrokes(strokesRef.current)
+      eraserChangedRef.current = false
+      eraseAtPoint(point)
+      return
+    }
+
+    const stroke: StrokeDraft = {
+      localId: createClientId(),
+      color,
+      thickness,
+      points: [point],
+    }
+    activeStrokeRef.current = stroke
+    setActiveStroke(stroke)
+  }
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const point = getPointerPoint(event)
+    if (!point) return
+
+    if (tool === 'eraser' && eraserSnapshotRef.current) {
+      eraseAtPoint(point)
+      return
+    }
+
+    if (tool !== 'pen') return
+    const stroke = activeStrokeRef.current
+    if (!stroke) return
+
+    const nextStroke: StrokeDraft = {
+      ...stroke,
+      points: [...stroke.points, point],
+    }
+    activeStrokeRef.current = nextStroke
+    setActiveStroke(nextStroke)
+  }
+
+  const handlePointerUp = () => {
+    if (tool === 'eraser') {
+      if (eraserChangedRef.current && eraserSnapshotRef.current) {
+        setUndoStack((previous) => [...previous, eraserSnapshotRef.current as StrokeDraft[]])
+        setRedoStack([])
+      } else if (eraserSnapshotRef.current) {
+        setStrokes(eraserSnapshotRef.current)
+      }
+      eraserSnapshotRef.current = null
+      eraserChangedRef.current = false
+      return
+    }
+
+    if (tool !== 'pen') return
+    const stroke = activeStrokeRef.current
+    if (!stroke) return
+    activeStrokeRef.current = null
+    setActiveStroke(null)
+    if (stroke.points.length < 2) return
+    commitStrokes([...strokesRef.current, stroke])
   }
 
   const handleSave = async () => {
     if (!workspace || !currentDocument) return
 
-    const payload = drafts.map((draft) => ({
-      page_number: draft.page_number,
-      anchor_type: draft.anchor_type,
-      anchor_data: draft.anchor_data,
-      note_text: draft.note_text.trim(),
-      color: draft.color,
-    }))
+    const canvas = canvasRef.current
+    const canvasWidth = canvas?.width ?? 1
 
-    if (payload.length === 0) {
-      toast.error('Add at least one note before saving')
-      return
-    }
-    if (payload.some((note) => !note.note_text)) {
-      toast.error('Each note needs text before saving')
+    const strokePayload = strokes
+      .filter((stroke) => stroke.points.length >= 2)
+      .map((stroke) => ({
+        page_number: null,
+        annotation_type: 'stroke' as const,
+        drawing_tool: 'pen' as const,
+        thickness: stroke.thickness,
+        anchor_data: {
+          points: stroke.points,
+          thickness_ratio: stroke.thickness / canvasWidth,
+        },
+        note_text: null,
+        color: stroke.color,
+      }))
+
+    if (strokePayload.length === 0) {
+      toast.error('Draw at least one stroke before saving')
       return
     }
 
     setSaving(true)
     try {
-      const response = await documentsApi.saveVariant(currentDocument.id, { annotations: payload })
+      const response = await documentsApi.saveVariant(currentDocument.id, { annotations: strokePayload })
       setWorkspace(response)
-      setDrafts(
-        response.annotations
-          .filter((annotation) => annotation.annotation_type !== 'stroke')
-          .map((annotation) => ({
-          ...annotation,
-          localId: `saved-${annotation.id}`,
-          xPct: Number(annotation.anchor_data?.x_pct ?? 0),
-          yPct: Number(annotation.anchor_data?.y_pct ?? 0),
-          }))
-      )
+      const loaded: StrokeDraft[] = []
+      for (const annotation of response.annotations) {
+        if (annotation.annotation_type === 'stroke' && annotation.drawing_tool === 'pen') {
+          const points = annotation.anchor_data?.points
+          if (Array.isArray(points) && points.length >= 2) {
+            loaded.push({
+              localId: `saved-${annotation.id}`,
+              color: annotation.color,
+              thickness: annotation.thickness ?? 4,
+              points: points as PdfStrokePoint[],
+            })
+          }
+        }
+      }
+      setStrokes(loaded)
+      setUndoStack([])
+      setRedoStack([])
       toast.success('Private copy saved')
     } catch (err) {
       toast.error(getErrorMessage(err))
@@ -292,10 +418,6 @@ export default function DocumentViewer({ doc, onClose }: Props) {
       toast.error(getErrorMessage(err))
     }
   }
-
-  const visibleNotes = drafts
-    .map((draft, index) => ({ draft, index }))
-    .sort((a, b) => a.index - b.index)
 
   if (!doc) return null
   if (!loading && workspace?.document.file_type === 'pdf') {
@@ -342,175 +464,128 @@ export default function DocumentViewer({ doc, onClose }: Props) {
         <div style={styles.toolbar}>
           <div style={styles.toolbarGroup}>
             <button
-              onClick={() => setNoteMode((previous) => previous === 'point' ? 'view' : 'point')}
-              style={noteMode === 'point' ? styles.activeToggle : styles.toggle}
+              onClick={() => setTool('pen')}
+              style={tool === 'pen' ? styles.activeToggle : styles.toggle}
             >
-              Point
+              Pen
             </button>
-            {workspace?.document.file_type === 'docx' && (
+            <button
+              onClick={() => setTool('eraser')}
+              style={tool === 'eraser' ? styles.activeToggle : styles.toggle}
+            >
+              Eraser
+            </button>
+          </div>
+          <div style={styles.toolbarGroup}>
+            {DEFAULT_COLORS.map((swatch) => (
               <button
-                onClick={() => setNoteMode((previous) => previous === 'text' ? 'view' : 'text')}
-                style={noteMode === 'text' ? styles.activeToggle : styles.toggle}
-              >
-                Text
-              </button>
-            )}
+                key={swatch}
+                onClick={() => setColor(swatch)}
+                style={{
+                  ...styles.colorSwatch,
+                  backgroundColor: swatch,
+                  outline: color === swatch ? '2px solid #0f172a' : 'none',
+                }}
+                aria-label="Set pen color"
+              />
+            ))}
+            <input
+              type="color"
+              value={color}
+              onChange={(event) => setColor(event.target.value)}
+              style={styles.colorInput}
+              aria-label="Custom pen color"
+            />
+          </div>
+          <div style={styles.toolbarGroup}>
+            <label style={styles.label}>Size</label>
+            <input
+              type="range"
+              min={2}
+              max={18}
+              step={1}
+              value={thickness}
+              onChange={(event) => setThickness(Number(event.target.value))}
+            />
+            <span style={styles.toolbarValue}>{thickness}px</span>
+          </div>
+          <div style={styles.toolbarGroup}>
+            <button onClick={handleUndo} disabled={undoStack.length === 0} style={styles.toggle}>Undo</button>
+            <button onClick={handleRedo} disabled={redoStack.length === 0} style={styles.toggle}>Redo</button>
           </div>
           <button
             onClick={handleSave}
-            disabled={saving || drafts.length === 0 || drafts.some((draft) => !draft.note_text.trim())}
+            disabled={saving || strokes.length === 0}
             style={styles.primaryButton}
           >
-            {saving ? 'Saving...' : `Save private copy (${drafts.length})`}
+            {saving ? 'Saving...' : 'Save private copy'}
           </button>
         </div>
 
         <div style={styles.body}>
-          <div style={styles.viewerColumn}>
-            {loading ? (
-              <div style={styles.centerState}>
-                <div style={styles.spinner} />
-                <p style={styles.mutedText}>Loading workspace...</p>
-              </div>
-            ) : workspace?.document.file_type === 'docx' ? (
-              workspace.preview_html ? (
+          {loading ? (
+            <div style={styles.centerState}>
+              <div style={styles.spinner} />
+              <p style={styles.mutedText}>Loading workspace...</p>
+            </div>
+          ) : workspace?.preview_html ? (
+              <div ref={viewerRef} style={styles.previewShell}>
                 <div
-                  ref={viewerRef}
-                  style={styles.previewShell}
-                  onClick={handleViewerClick}
-                  onMouseUp={handleDocxMouseUp}
-                >
-                  <div
-                    ref={previewRef}
-                    style={styles.docxPreview}
-                    dangerouslySetInnerHTML={{ __html: workspace.preview_html }}
-                  />
-                  <AnnotationLayer notes={drafts} activeDraftId={activeDraftId} onSelect={setActiveDraftId} />
-                </div>
-              ) : (
-                <div style={styles.centerState}>
-                  <p style={styles.mutedText}>{workspace.preview_error ?? 'Preview unavailable for this Word file.'}</p>
-                </div>
-              )
-            ) : blobUrl ? (
-              <div ref={viewerRef} style={styles.previewShell} onClick={handleViewerClick}>
-                <iframe
-                  src={blobUrl}
-                  title={workspace?.document.title ?? doc.title}
-                  style={styles.pdfFrame}
+                  style={styles.docxPreview}
+                  dangerouslySetInnerHTML={{ __html: workspace.preview_html }}
                 />
-                {noteMode === 'point' && (
-                  <div
-                    style={styles.clickCatcher}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      handleViewerClick(event)
-                    }}
-                  />
-                )}
-                <AnnotationLayer notes={drafts} activeDraftId={activeDraftId} onSelect={setActiveDraftId} />
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    position: 'absolute',
+                    inset: '1rem',
+                    width: 'calc(100% - 2rem)',
+                    height: 'calc(100% - 2rem)',
+                    pointerEvents: tool === 'pen' || tool === 'eraser' ? 'auto' : 'none',
+                    cursor: tool === 'pen' ? 'crosshair' : tool === 'eraser' ? 'cell' : 'default',
+                    zIndex: 2,
+                    touchAction: 'none',
+                  }}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                />
               </div>
-            ) : (
-              <div style={styles.centerState}>
-                <p style={styles.mutedText}>Unable to load preview</p>
-              </div>
-            )}
-          </div>
-
-          <div style={styles.sidePanel}>
-            <div style={styles.sidePanelHeader}>
-              <div>
-                <p style={styles.sidePanelTitle}>Notes</p>
-                <p style={styles.sidePanelSubtitle}>{drafts.length} item{drafts.length === 1 ? '' : 's'}</p>
-              </div>
+          ) : workspace?.preview_error ? (
+            <div style={styles.centerState}>
+              <p style={styles.mutedText}>{workspace.preview_error}</p>
             </div>
-            <div style={styles.noteList}>
-              {visibleNotes.length === 0 ? (
-                <div style={styles.emptyNotes}>
-                  <p style={styles.mutedText}>No annotations yet</p>
-                </div>
-              ) : visibleNotes.map(({ draft }) => (
-                <div
-                  key={draft.localId}
-                  style={activeDraftId === draft.localId ? styles.noteCardActive : styles.noteCard}
-                  onClick={() => setActiveDraftId(draft.localId)}
-                >
-                  <div style={styles.noteCardTop}>
-                    <span style={{ ...styles.notePill, backgroundColor: draft.color }}>{draft.anchor_type === 'text_range' ? 'Text' : 'Point'}</span>
-                    <button onClick={(event) => { event.stopPropagation(); deleteDraft(draft.localId) }} style={styles.noteDelete}>
-                      ×
-                    </button>
-                  </div>
-                  <textarea
-                    value={draft.note_text}
-                    onChange={(event) => updateDraft(draft.localId, { note_text: event.target.value })}
-                    placeholder="Write a note"
-                    rows={4}
-                    style={styles.noteTextarea}
-                  />
-                  <div style={styles.noteMetaRow}>
-                    <span style={styles.noteMeta}>
-                      {draft.anchor_type === 'text_range'
-                        ? `Text range ${typeof draft.anchor_data?.paragraph_index === 'number' ? `#${draft.anchor_data.paragraph_index}` : ''}`
-                        : 'Point note'}
-                    </span>
-                    <input
-                      type="color"
-                      value={draft.color}
-                      onChange={(event) => updateDraft(draft.localId, { color: event.target.value })}
-                      style={styles.colorInput}
-                    />
-                  </div>
-                  <div style={styles.swatchRow}>
-                    {NOTE_COLORS.map((color) => (
-                      <button
-                        key={color}
-                        onClick={(event) => { event.stopPropagation(); updateDraft(draft.localId, { color }) }}
-                        style={{ ...styles.swatch, backgroundColor: color, outline: draft.color === color ? '2px solid #0f172a' : 'none' }}
-                        aria-label="Set note color"
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
+          ) : blobUrl ? (
+            <div ref={viewerRef} style={styles.previewShell}>
+              <iframe
+                src={blobUrl}
+                title={workspace?.document.title ?? doc.title}
+                style={styles.pdfFrame}
+              />
+              <canvas
+                ref={canvasRef}
+                style={{
+                  position: 'absolute',
+                  inset: '1rem',
+                  width: 'calc(100% - 2rem)',
+                  height: 'calc(100% - 2rem)',
+                  pointerEvents: tool === 'pen' || tool === 'eraser' ? 'auto' : 'none',
+                  cursor: tool === 'pen' ? 'crosshair' : tool === 'eraser' ? 'cell' : 'default',
+                  zIndex: 2,
+                  touchAction: 'none',
+                }}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+              />
             </div>
-          </div>
+          ) : (
+            <div style={styles.centerState}>
+              <p style={styles.mutedText}>Unable to load preview</p>
+            </div>
+          )}
         </div>
       </div>
-    </div>
-  )
-}
-
-function AnnotationLayer({
-  notes,
-  activeDraftId,
-  onSelect,
-}: {
-  notes: DraftAnnotation[]
-  activeDraftId: string | null
-  onSelect: (id: string) => void
-}) {
-  return (
-    <div style={styles.annotationLayer}>
-      {notes.map((note) => (
-        <button
-          key={note.localId}
-          onClick={(event) => {
-            event.stopPropagation()
-            onSelect(note.localId)
-          }}
-          style={{
-            ...styles.annotationMarker,
-            left: `${note.xPct}%`,
-            top: `${note.yPct}%`,
-            borderColor: activeDraftId === note.localId ? '#0f172a' : note.color,
-            backgroundColor: note.color,
-          }}
-          aria-label="Annotation marker"
-        >
-          <span style={styles.annotationDot} />
-        </button>
-      ))}
     </div>
   )
 }
@@ -621,6 +696,7 @@ const styles: Record<string, CSSProperties> = {
   toolbarGroup: {
     display: 'flex',
     gap: '0.4rem',
+    alignItems: 'center',
   },
   toggle: {
     border: '1px solid #cbd5e1',
@@ -642,6 +718,33 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
   },
+  colorSwatch: {
+    width: '22px',
+    height: '22px',
+    borderRadius: '999px',
+    border: '1px solid rgba(15,23,42,0.15)',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  colorInput: {
+    width: '28px',
+    height: '28px',
+    border: 'none',
+    padding: 0,
+    cursor: 'pointer',
+  },
+  label: {
+    fontSize: '0.78rem',
+    color: '#64748b',
+    fontWeight: 600,
+  },
+  toolbarValue: {
+    fontSize: '0.78rem',
+    color: '#334155',
+    fontWeight: 600,
+    minWidth: '2.5rem',
+    textAlign: 'center',
+  },
   primaryButton: {
     border: 'none',
     backgroundColor: '#0f172a',
@@ -653,15 +756,10 @@ const styles: Record<string, CSSProperties> = {
     cursor: 'pointer',
   },
   body: {
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) 340px',
-    minHeight: 0,
     flex: 1,
-  },
-  viewerColumn: {
-    minWidth: 0,
-    backgroundColor: '#f8fafc',
+    minHeight: 0,
     overflow: 'auto',
+    backgroundColor: '#f8fafc',
     position: 'relative',
   },
   previewShell: {
@@ -686,160 +784,6 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 'calc(100vh - 220px)',
     color: '#0f172a',
     lineHeight: 1.65,
-  },
-  annotationLayer: {
-    position: 'absolute',
-    inset: '1rem',
-    pointerEvents: 'none',
-    zIndex: 2,
-  },
-  clickCatcher: {
-    position: 'absolute',
-    inset: '1rem',
-    zIndex: 1,
-    cursor: 'crosshair',
-  },
-  annotationMarker: {
-    position: 'absolute',
-    transform: 'translate(-50%, -50%)',
-    width: '24px',
-    height: '24px',
-    borderRadius: '6px',
-    border: '2px solid',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    pointerEvents: 'auto',
-    boxShadow: '0 4px 12px rgba(15,23,42,0.18)',
-    padding: 0,
-  },
-  annotationDot: {
-    width: '8px',
-    height: '8px',
-    borderRadius: '999px',
-    backgroundColor: '#fff',
-  },
-  sidePanel: {
-    borderLeft: '1px solid #e2e8f0',
-    backgroundColor: '#fff',
-    display: 'flex',
-    flexDirection: 'column',
-    minHeight: 0,
-  },
-  sidePanelHeader: {
-    padding: '0.9rem 1rem',
-    borderBottom: '1px solid #e2e8f0',
-    flexShrink: 0,
-  },
-  sidePanelTitle: {
-    margin: 0,
-    fontSize: '0.9rem',
-    fontWeight: 700,
-    color: '#0f172a',
-  },
-  sidePanelSubtitle: {
-    margin: '0.15rem 0 0',
-    fontSize: '0.75rem',
-    color: '#64748b',
-  },
-  noteList: {
-    padding: '0.85rem',
-    overflow: 'auto',
-    minHeight: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.75rem',
-  },
-  emptyNotes: {
-    padding: '1rem',
-    textAlign: 'center',
-    border: '1px dashed #cbd5e1',
-    borderRadius: '10px',
-  },
-  noteCard: {
-    border: '1px solid #e2e8f0',
-    borderRadius: '10px',
-    padding: '0.75rem',
-    backgroundColor: '#fff',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.65rem',
-    cursor: 'pointer',
-  },
-  noteCardActive: {
-    border: '1px solid #0f172a',
-    borderRadius: '10px',
-    padding: '0.75rem',
-    backgroundColor: '#f8fafc',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.65rem',
-    cursor: 'pointer',
-  },
-  noteCardTop: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.5rem',
-  },
-  notePill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    borderRadius: '999px',
-    padding: '0.18rem 0.5rem',
-    color: '#fff',
-    fontSize: '0.68rem',
-    fontWeight: 700,
-  },
-  noteDelete: {
-    width: '24px',
-    height: '24px',
-    border: 'none',
-    backgroundColor: 'transparent',
-    color: '#64748b',
-    fontSize: '1rem',
-    cursor: 'pointer',
-  },
-  noteTextarea: {
-    width: '100%',
-    border: '1px solid #cbd5e1',
-    borderRadius: '8px',
-    minHeight: '88px',
-    padding: '0.6rem',
-    fontFamily: 'inherit',
-    fontSize: '0.82rem',
-    resize: 'vertical',
-    outline: 'none',
-  },
-  noteMetaRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '0.5rem',
-  },
-  noteMeta: {
-    fontSize: '0.72rem',
-    color: '#64748b',
-  },
-  colorInput: {
-    width: '32px',
-    height: '28px',
-    border: 'none',
-    backgroundColor: 'transparent',
-    padding: 0,
-  },
-  swatchRow: {
-    display: 'flex',
-    gap: '0.35rem',
-    flexWrap: 'wrap',
-  },
-  swatch: {
-    width: '18px',
-    height: '18px',
-    borderRadius: '999px',
-    border: '1px solid rgba(15,23,42,0.15)',
-    cursor: 'pointer',
   },
   centerState: {
     minHeight: '100%',

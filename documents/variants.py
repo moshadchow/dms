@@ -24,7 +24,7 @@ from documents.models import (
     FileType,
 )
 from documents.pdf_annotations import export_annotated_pdf
-from documents.utils import build_variant_storage_path, copy_into_storage, extract_docx_preview_html, resolve_storage_path
+from documents.utils import build_variant_storage_path, copy_into_storage, extract_docx_preview_html, extract_xlsx_preview_html, resolve_storage_path
 from users.models import User
 
 
@@ -87,15 +87,23 @@ class DocumentVariantService:
         return variant
 
     def _build_preview_html(self, document: Document) -> tuple[Optional[str], Optional[str]]:
-        if document.file_type != FileType.DOCX:
-            return None, None
+        if document.file_type == FileType.DOCX:
+            try:
+                return extract_docx_preview_html(resolve_storage_path(document.storage_path)), None
+            except Exception as exc:
+                if isinstance(exc, HTTPException):
+                    return None, str(exc.detail)
+                return None, "DOCX preview is unavailable for this file"
 
-        try:
-            return extract_docx_preview_html(resolve_storage_path(document.storage_path)), None
-        except Exception as exc:
-            if isinstance(exc, HTTPException):
-                return None, str(exc.detail)
-            return None, "DOCX preview is unavailable for this file"
+        if document.file_type == FileType.EXCEL:
+            try:
+                return extract_xlsx_preview_html(resolve_storage_path(document.storage_path)), None
+            except Exception as exc:
+                if isinstance(exc, HTTPException):
+                    return None, str(exc.detail)
+                return None, "Excel preview is unavailable for this file"
+
+        return None, None
 
     def get_workspace(self, document_id: int, current_user: User) -> DocumentWorkspaceRead:
         document = self._get_workspace_document(document_id, current_user)
