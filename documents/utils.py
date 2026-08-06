@@ -172,6 +172,70 @@ def extract_docx_preview_html(abs_path: Path) -> str:
     )
 
 
+def extract_xlsx_preview_html(abs_path: Path) -> str:
+    """
+    Render a lightweight HTML preview from an XLSX file.
+
+    Extracts the first worksheet's cell data and renders it as an HTML table.
+    This intentionally shows plain cell values only. The frontend uses it as a
+    stable DOM surface for sticky-note anchors.
+    """
+    ss_ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+
+    try:
+        with zipfile.ZipFile(abs_path) as archive:
+            # Parse shared string table (if present)
+            shared_strings: list[str] = []
+            if "xl/sharedStrings.xml" in archive.namelist():
+                ss_xml = archive.read("xl/sharedStrings.xml")
+                ss_root = ET.fromstring(ss_xml)
+                for si in ss_root.findall(".//s:si", ss_ns):
+                    texts = si.findall(".//s:t", ss_ns)
+                    shared_strings.append("".join(t.text or "" for t in texts))
+
+            # Find the first worksheet
+            sheet_files = sorted(
+                f
+                for f in archive.namelist()
+                if f.startswith("xl/worksheets/sheet") and f.endswith(".xml")
+            )
+            if not sheet_files:
+                return (
+                    '<table class="xlsx-preview-root" data-xlsx-preview="true">'
+                    "<tbody><tr><td>No worksheet data found</td></tr></tbody></table>"
+                )
+
+            sheet_xml = archive.read(sheet_files[0])
+            sheet_root = ET.fromstring(sheet_xml)
+
+            rows_html: list[str] = []
+            for row in sheet_root.findall(".//s:sheetData/s:row", ss_ns):
+                cells_html: list[str] = []
+                for cell in row.findall("s:c", ss_ns):
+                    cell_type = cell.get("t", "")
+                    value_elem = cell.find("s:v", ss_ns)
+                    value = value_elem.text if value_elem is not None else ""
+
+                    if cell_type == "s" and value:
+                        idx = int(value)
+                        value = shared_strings[idx] if idx < len(shared_strings) else ""
+
+                    cells_html.append(f"<td>{html.escape(str(value))}</td>")
+                rows_html.append(f"<tr>{''.join(cells_html)}</tr>")
+
+            body = "".join(rows_html) or "<tr><td>No data</td></tr>"
+            return (
+                '<table class="xlsx-preview-root" data-xlsx-preview="true">'
+                f"<tbody>{body}</tbody></table>"
+            )
+
+    except (zipfile.BadZipFile, KeyError, FileNotFoundError, ET.ParseError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Excel preview is unavailable for this file",
+        ) from exc
+
+
 # ──────────────────────────────────────────────
 # Resolve
 # ──────────────────────────────────────────────

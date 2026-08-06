@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'react-hot-toast'
+import { Pen, Eraser } from 'lucide-react'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -25,27 +26,22 @@ const FILE_ICONS: Record<string, React.ReactNode> = {
     </svg>
   ),
   docx: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/>
-      <path d="M8 13h8"/>
-      <path d="M8 17h6"/>
-    </svg>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
+      <Pen size={14} color="#2563eb" strokeWidth={2} />
+      <Eraser size={14} color="#2563eb" strokeWidth={2} />
+    </div>
   ),
   excel: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-      <polyline points="14 2 14 8 20 8"/>
-      <line x1="8" y1="13" x2="16" y2="17"/>
-      <line x1="16" y1="13" x2="8" y2="17"/>
-    </svg>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
+      <Pen size={14} color="#16a34a" strokeWidth={2} />
+      <Eraser size={14} color="#16a34a" strokeWidth={2} />
+    </div>
   ),
   image: (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="2">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-      <circle cx="8.5" cy="8.5" r="1.5"/>
-      <polyline points="21 15 16 10 5 21"/>
-    </svg>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '1px' }}>
+      <Pen size={14} color="#8b5cf6" strokeWidth={2} />
+      <Eraser size={14} color="#8b5cf6" strokeWidth={2} />
+    </div>
   ),
 }
 
