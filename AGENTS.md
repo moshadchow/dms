@@ -21,7 +21,7 @@ npm run build    # tsc + vite build
 npm run lint     # ESLint
 ```
 
-Frontend env: `dms-app/env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`.
+Frontend env: `dms-app/.env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`.
 
 ## Testing: SQLite In-Memory
 Tests use `SQLite` + `StaticPool` (in-memory), **not** PostgreSQL. The `conftest.py` fixture monkeypatches the engine in three places:
@@ -128,3 +128,81 @@ Short imperative subjects (`Fix archieve & Restore feature`). PRs: clear summary
 
 ## Security
 Copy `.env.example` to `.env` for local setup. Never commit `.env` (it contains Azure AD client secrets). GitHub secret scanning will reject pushes containing Azure secrets. Treat `storage/uploads/` as runtime data. Ensure `__pycache__/` and `*.pyc` are in `.gitignore` before committing.
+
+---
+
+## Approval Workflow System
+
+Generic, document-type-agnostic approval engine. Reuses `auth/`, RBAC, `users/`, `user_levels/`, `audit/`, `documents/`, `directories/`. No new auth, permission, or audit mechanisms — extend the existing ones.
+
+### New Module: `workflow/`
+Follows the standard module convention:
+- `models.py` — SQLModel ORM + read schemas
+- `schemas.py` — request/response schemas
+- `service.py` — business logic (class-based, takes `Session`)
+- `router.py` — FastAPI router
+
+Service classes:
+- `WorkflowDefinitionService` — CRUD for workflow templates (admin-configured, not hardcoded)
+- `WorkflowInstanceService` — starts/tracks a workflow run against a document
+- `ApprovalActionService` — approve / reject / return / clarify / forward
+- `SignatureService` — stores e-signature (uploaded image) or wet-signature (canvas capture) as a file reference, never mutates the source document
+
+### Database Tables
+All new tables live under Alembic migrations in `migrations/`. Reuse `documents`, `users`, `categories` — no duplication.
+
+- `workflow_definitions` — id, name, document_category_id (FK → categories), is_active, created_by, created_at
+- `workflow_steps` — id, workflow_definition_id (FK), step_order (int, configurable count), step_name, approval_mode (`sequential` | `parallel`), is_active
+- `workflow_step_approvers` — id, workflow_step_id (FK), user_id (FK → users) OR role_id (FK → roles), priority (int, ordering within a step), is_active
+- `workflow_instances` — id, document_id (FK → documents), workflow_definition_id (FK), current_step_order, status (enum, see below), submitted_by (FK → users), submitted_at
+- `workflow_actions` — id, workflow_instance_id (FK), workflow_step_id (FK), acted_by (FK → users), action (`approve`|`reject`|`return`|`clarify`|`forward`), remarks, acted_at, signature_id (FK → signatures, nullable)
+- `signatures` — id, user_id (FK), type (`e_signature`|`wet_signature`), file_path (storage/uploads pattern), created_at
+- `workflow_history` — id, workflow_instance_id (FK), event_type, actor_id, designation_snapshot, remarks, status_snapshot, occurred_at — **append-only, no PUT/PATCH/DELETE**, mirrors `audit/` immutability pattern
+
+`workflow_history` is the approval-specific ledger (level, designation, signature ref); `audit/` remains the system-wide event log. Every `workflow_actions` write must also call `AuditService.log_event()` — do not build a second audit mechanism.
+
+### Workflow Status Enum
+`draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved`) → `published` (optional) → `archived`
+
+### RBAC Integration
+Add new prefixes to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`:
+- `(POST, /api/v1/workflows)` → admin-only config actions
+- `(POST, /api/v1/workflow-instances)` → create (Maker)
+- `(POST, /api/v1/workflow-instances/{id}/actions)` → update (Checker/approver tiers)
+- `(GET, /api/v1/workflow-instances/pending)` and `/mine` → view
+
+Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `delete`) — do not invent new permission verbs. Approver eligibility is enforced via `workflow_step_approvers`, on top of RBAC, not instead of it.
+
+### User Level Integration
+`workflow_instances` inherits the visibility rules already enforced in `documents/service.py` via `DocumentUserLevelLink`. Admin bypass still applies. Approval never overrides a User Level restriction — an approver who cannot view the underlying document per their level must not appear as a valid approver for that instance.
+
+### API Endpoints (new router: `workflow/router.py`, mounted at `/api/v1/workflows` and `/api/v1/workflow-instances`)
+- `POST /api/v1/workflows` — create workflow definition (admin)
+- `PUT /api/v1/workflows/{id}` — update steps/approvers/priority (admin)
+- `GET /api/v1/workflows` — list definitions
+- `POST /api/v1/workflow-instances` — submit a document for approval
+- `GET /api/v1/workflow-instances/pending` — pending approvals for current user
+- `GET /api/v1/workflow-instances/mine` — instances submitted by current user
+- `POST /api/v1/workflow-instances/{id}/actions` — approve/reject/return/clarify/forward, with optional remarks + signature_id
+- `POST /api/v1/signatures` — upload e-signature or wet-signature capture, returns signature_id
+- `GET /api/v1/workflow-instances/{id}/history` — immutable approval history
+- `GET /api/v1/workflow-instances/dashboard` — admin monitoring view
+
+### Frontend Additions (`dms-app/src/`)
+- `pages/`: `WorkflowConfigPage.tsx` (admin), `ApprovalMatrixPage.tsx` (admin), `MyDraftsPage.tsx`, `SubmittedDocumentsPage.tsx`, `PendingApprovalPage.tsx`, `MyApprovalsPage.tsx`, `ApprovalHistoryPage.tsx`
+- `components/`: `SignaturePad.tsx` (canvas wet-signature capture), `SignatureUpload.tsx` (e-signature image), `ApprovalActionBar.tsx`
+- `api/`: `workflowApi.ts` — uses `apiClient`, not `apiRoot`, per existing pattern
+- `store/`: optional `workflowStore.ts` (Zustand) for pending-count badges, mirrors `authStore.ts` conventions
+
+### Test Fixture Impact
+Any new module importing `engine` directly (e.g. a workflow-specific middleware, if added) must be patched in `conftest.py` alongside `core.database.engine`, `middleware.rbac.engine`, `middleware.audit.engine`.
+
+### Explicitly Out of Scope
+AI-based approval recommendations, blockchain, external BPM engines, cross-organization workflows. Watermarking, redaction, OCR, and retention policy are Phase 4/5 items layered onto `documents/` — do not build them into the core `workflow/` module.
+
+### Phase Plan
+1. **Foundation** — `workflow/` module, migrations, `WorkflowDefinitionService`, admin config UI
+2. **Submission** — submit-for-approval, pending queue, `ApprovalActionService`
+3. **Signature & History** — `SignatureService`, `workflow_history`, remarks
+4. **Compliance** — `audit/` instrumentation, User Level enforcement checks, watermarking on preview/download
+5. **Enterprise** — OCR hooks, retention policy fields on `categories`, dashboard/reports
