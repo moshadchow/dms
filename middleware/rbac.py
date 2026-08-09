@@ -34,6 +34,13 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     ("PATCH",  "/api/v1/documents"):          PermissionAction.UPDATE,
     ("DELETE", "/api/v1/documents"):          PermissionAction.DELETE,
     ("DELETE", "/api/v1/directories"):        PermissionAction.DELETE,
+    # Workflow definitions (admin config)
+    ("POST",   "/api/v1/workflows"):          PermissionAction.CREATE,
+    ("PUT",    "/api/v1/workflows"):          PermissionAction.UPDATE,
+    ("DELETE", "/api/v1/workflows"):          PermissionAction.DELETE,
+    # Workflow instances
+    ("POST",   "/api/v1/workflow-instances"): PermissionAction.CREATE,
+    ("POST",   "/api/v1/workflow-instances/"): PermissionAction.UPDATE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)

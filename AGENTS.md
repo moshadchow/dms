@@ -8,7 +8,7 @@ FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature 
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (82 tests, SQLite in-memory)
+pytest                        # run all tests (131 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -44,6 +44,8 @@ Each feature module follows this pattern:
 - `router.py` — FastAPI router
 
 The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
+
+The `workflow/` module has two router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`) and `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`).
 
 ## Audit Trail Module
 `audit/` records all significant user and system activities. Key details:
@@ -173,10 +175,23 @@ Add new prefixes to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`:
 
 Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `delete`) — do not invent new permission verbs. Approver eligibility is enforced via `workflow_step_approvers`, on top of RBAC, not instead of it.
 
+**RBAC gap on PATCH /activate:** `PATCH /api/v1/workflows/{id}/activate` has no `ROUTE_PERMISSION_MAP` entry — it is protected solely by the `AdminUser` dependency. This has no practical impact since admin bypasses RBAC anyway, but for defense-in-depth an entry could be added.
+
 ### User Level Integration
 `workflow_instances` inherits the visibility rules already enforced in `documents/service.py` via `DocumentUserLevelLink`. Admin bypass still applies. Approval never overrides a User Level restriction — an approver who cannot view the underlying document per their level must not appear as a valid approver for that instance.
 
-### API Endpoints (new router: `workflow/router.py`, mounted at `/api/v1/workflows` and `/api/v1/workflow-instances`)
+### Instance Snapshot & Lifecycle
+- **Instance snapshot:** `WorkflowInstanceService.submit_instance()` snapshots the workflow definition's steps at creation time. Definition changes (step order, approvers, approval mode) do **not** affect running instances — only future submissions use the updated definition.
+- **Deactivation:** Deactivating a definition (`DELETE /api/v1/workflows/{id}`) blocks new submissions only. Existing instances continue through their approval chain to completion.
+- **Multiple active workflows per category:** The system allows multiple active workflow definitions for the same document category. The Phase 2 submission UI should present a dropdown when multiple definitions exist for a document's category.
+
+### API Endpoints (`workflow/router.py`, mounted at `/api/v1/workflows` and `/api/v1/workflow-instances`)
+
+`workflow/router.py` exports **two router objects**: `router` (workflow definitions) and `instance_router` (workflow instances). In `main.py`, they are mounted separately:
+- `router` → `/api/v1/workflows`
+- `instance_router` → `/api/v1/workflow-instances`
+
+**Definition endpoints** (admin config):
 - `POST /api/v1/workflows` — create workflow definition (admin)
 - `PUT /api/v1/workflows/{id}` — update steps/approvers/priority (admin)
 - `GET /api/v1/workflows` — list definitions
@@ -200,9 +215,14 @@ Any new module importing `engine` directly (e.g. a workflow-specific middleware,
 ### Explicitly Out of Scope
 AI-based approval recommendations, blockchain, external BPM engines, cross-organization workflows. Watermarking, redaction, OCR, and retention policy are Phase 4/5 items layered onto `documents/` — do not build them into the core `workflow/` module.
 
+### Design Decisions (Implementation Notes)
+- **Activation validation:** Activating a workflow (`PATCH /{id}/activate`) does **not** validate that steps/approvers exist. A workflow with no steps can be activated. Production systems may want to add this check.
+- **Step order uniqueness:** Enforced by a DB unique constraint on `(workflow_definition_id, step_order)`. The service does not pre-check for duplicates — a raw DB integrity error would surface if violated. Consider adding service-level validation.
+- **Step ordering in detail response:** `GET /api/v1/workflows/{id}` returns steps in DB fetch order, not explicitly sorted by `step_order`. For deterministic ordering, add `.order_by(WorkflowStep.step_order)` to the query.
+
 ### Phase Plan
-1. **Foundation** — `workflow/` module, migrations, `WorkflowDefinitionService`, admin config UI
-2. **Submission** — submit-for-approval, pending queue, `ApprovalActionService`
+1. **Foundation** — ✅ `workflow/` module, migrations, `WorkflowDefinitionService`, admin config UI
+2. **Submission** — ✅ submit-for-approval, pending queue, `ApprovalActionService`
 3. **Signature & History** — `SignatureService`, `workflow_history`, remarks
 4. **Compliance** — `audit/` instrumentation, User Level enforcement checks, watermarking on preview/download
 5. **Enterprise** — OCR hooks, retention policy fields on `categories`, dashboard/reports

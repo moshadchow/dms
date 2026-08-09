@@ -59,6 +59,16 @@ class AuditAction(str, Enum):
     UNAUTHORIZED_ACCESS = "unauthorized_access"
     PERMISSION_DENIED = "permission_denied"
 
+    # Workflow
+    CREATE_WORKFLOW = "create_workflow"
+    UPDATE_WORKFLOW = "update_workflow"
+    DELETE_WORKFLOW = "delete_workflow"
+    ACTIVATE_WORKFLOW = "activate_workflow"
+    SUBMIT_WORKFLOW = "submit_workflow"
+    APPROVE_WORKFLOW = "approve_workflow"
+    REJECT_WORKFLOW = "reject_workflow"
+    RETURN_WORKFLOW = "return_workflow"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"
@@ -68,6 +78,7 @@ class AuditModule(str, Enum):
     CATEGORIES = "categories"
     USER_LEVELS = "user_levels"
     SECURITY = "security"
+    WORKFLOW = "workflow"
 
 
 # ──────────────────────────────────────────────

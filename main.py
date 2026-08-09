@@ -4,17 +4,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-from audit.router       import router as audit_router
-from auth.router        import router as auth_router
-from categories.router  import router as categories_router
-from core.config        import settings
-from core.database      import create_db_and_tables
-from directories.router import router as directories_router
-from documents.router   import router as documents_router
-from middleware.audit    import audit_middleware
-from middleware.rbac    import rbac_middleware
-from users.router       import router as users_router
-from user_levels.router import router as user_levels_router
+from audit.router        import router as audit_router
+from auth.router         import router as auth_router
+from categories.router   import router as categories_router
+from core.config         import settings
+from core.database       import create_db_and_tables
+from directories.router  import router as directories_router
+from documents.router    import router as documents_router
+from middleware.audit     import audit_middleware
+from middleware.rbac     import rbac_middleware
+from users.router        import router as users_router
+from user_levels.router  import router as user_levels_router
+from workflow.router     import router as workflow_router, instance_router as workflow_instance_router
 
 
 @asynccontextmanager
@@ -76,6 +77,8 @@ app.include_router(directories_router, prefix=f"{API}/directories", tags=["Direc
 app.include_router(documents_router,   prefix=f"{API}/documents",   tags=["Documents"])
 app.include_router(user_levels_router, prefix=f"{API}/user-levels", tags=["User Levels"])
 app.include_router(audit_router,       prefix=f"{API}/audit-logs",  tags=["Audit Trail"])
+app.include_router(workflow_router,          prefix=f"{API}/workflows",           tags=["Workflows"])
+app.include_router(workflow_instance_router, prefix=f"{API}/workflow-instances",  tags=["Workflow Instances"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

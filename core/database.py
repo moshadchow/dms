@@ -34,6 +34,7 @@ def create_db_and_tables() -> None:
     import documents.models    # noqa: F401
     import users.models        # noqa: F401
     import user_levels.models  # noqa: F401
+    import workflow.models     # noqa: F401
 
     SQLModel.metadata.create_all(engine)
 
