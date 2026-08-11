@@ -1,12 +1,15 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlmodel import Session
 
 from core.database import get_session
 from core.dependencies import AdminUser, CurrentUser, require_permission
 from users.models import PermissionAction
 from workflow.models import (
+    SignatureRead,
+    SignatureType,
     WorkflowActionRead,
     WorkflowDefinitionDetailRead,
     WorkflowDefinitionListResponse,
@@ -25,12 +28,14 @@ from workflow.schemas import (
 )
 from workflow.service import (
     ApprovalActionService,
+    SignatureService,
     WorkflowDefinitionService,
     WorkflowInstanceService,
 )
 
 router = APIRouter()
 instance_router = APIRouter()
+signature_router = APIRouter()
 
 
 # ══════════════════════════════════════════════
@@ -193,6 +198,7 @@ def get_workflow_instance(
     "/{instance_id}/actions",
     response_model=WorkflowInstanceRead,
     summary="Act on a workflow instance (approve/reject/return/clarify)",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
 )
 def act_on_workflow_instance(
     instance_id:  int,
@@ -201,3 +207,90 @@ def act_on_workflow_instance(
     session:      Session     = Depends(get_session),
 ):
     return ApprovalActionService(session).act_on_instance(instance_id, payload, current_user)
+
+
+@instance_router.post(
+    "/{instance_id}/cancel",
+    response_model=WorkflowInstanceRead,
+    summary="Cancel a submitted workflow instance (submitter only)",
+)
+def cancel_workflow_instance(
+    instance_id:  int,
+    current_user: CurrentUser = None,
+    session:      Session     = Depends(get_session),
+):
+    return WorkflowInstanceService(session).cancel_instance(instance_id, current_user)
+
+
+# ══════════════════════════════════════════════
+# Signature Endpoints
+# ══════════════════════════════════════════════
+
+
+@signature_router.post(
+    "",
+    response_model=SignatureRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a signature image",
+)
+def upload_signature(
+    file:    UploadFile = File(..., description="Signature image (JPEG or PNG)"),
+    sig_type: str       = Form(..., description="Signature type: e_signature or wet_signature"),
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    # Convert string to enum
+    try:
+        sig_type_enum = SignatureType(sig_type)
+    except ValueError:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid sig_type '{sig_type}'. Must be 'e_signature' or 'wet_signature'",
+        )
+    return SignatureService(session).upload_signature(file, current_user, sig_type_enum)
+
+
+@signature_router.get(
+    "/{signature_id}",
+    response_model=SignatureRead,
+    summary="Get signature metadata",
+)
+def get_signature(
+    signature_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return SignatureService(session).get_signature(signature_id, current_user)
+
+
+@signature_router.get(
+    "/{signature_id}/file",
+    summary="Serve signature file",
+)
+def get_signature_file(
+    signature_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    svc = SignatureService(session)
+    file_path = svc.get_signature_file(signature_id, current_user)
+    sig = svc.get_signature(signature_id, current_user)
+    return FileResponse(
+        path=str(file_path),
+        media_type=sig.mime_type,
+        filename=sig.file_name,
+    )
+
+
+@signature_router.delete(
+    "/{signature_id}",
+    response_model=SignatureRead,
+    summary="Soft-delete a signature",
+)
+def delete_signature(
+    signature_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return SignatureService(session).soft_delete_signature(signature_id, current_user)

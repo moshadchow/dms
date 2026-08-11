@@ -15,7 +15,7 @@ from middleware.audit     import audit_middleware
 from middleware.rbac     import rbac_middleware
 from users.router        import router as users_router
 from user_levels.router  import router as user_levels_router
-from workflow.router     import router as workflow_router, instance_router as workflow_instance_router
+from workflow.router import router as workflow_router, instance_router as workflow_instance_router, signature_router as workflow_signature_router
 
 
 @asynccontextmanager
@@ -79,6 +79,7 @@ app.include_router(user_levels_router, prefix=f"{API}/user-levels", tags=["User 
 app.include_router(audit_router,       prefix=f"{API}/audit-logs",  tags=["Audit Trail"])
 app.include_router(workflow_router,          prefix=f"{API}/workflows",           tags=["Workflows"])
 app.include_router(workflow_instance_router, prefix=f"{API}/workflow-instances",  tags=["Workflow Instances"])
+app.include_router(workflow_signature_router, prefix=f"{API}/signatures",         tags=["Signatures"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

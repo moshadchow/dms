@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from workflow.models import ApprovalMode, ApprovalAction
+from workflow.models import ApprovalMode, ApprovalAction, SignatureType
 
 
 # ══════════════════════════════════════════════
@@ -110,3 +110,19 @@ class WorkflowActionCreate(BaseModel):
     action: ApprovalAction = Field(..., description="Action to perform")
     remarks: Optional[str] = Field(None, max_length=2000, description="Optional remarks")
     signature_id: Optional[int] = Field(None, description="FK → signatures.id (Phase 3)")
+
+
+# ══════════════════════════════════════════════
+# Phase 3 — Signature
+# ══════════════════════════════════════════════
+
+
+class SignatureCreate(BaseModel):
+    """
+    Metadata for signature upload. The actual file is sent as multipart form data.
+    """
+
+    sig_type: SignatureType = Field(
+        ...,
+        description="Type of signature: 'e_signature' for uploaded image, 'wet_signature' for canvas capture",
+    )

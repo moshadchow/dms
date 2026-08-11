@@ -26,6 +26,7 @@ class WorkflowStatus(str, Enum):
     RETURNED = "returned"
     REJECTED = "rejected"
     APPROVED = "approved"
+    CANCELLED = "cancelled"
     PUBLISHED = "published"
     ARCHIVED = "archived"
 
@@ -134,6 +135,11 @@ class ApprovalAction(str, Enum):
     FORWARD = "forward"
 
 
+class SignatureType(str, Enum):
+    E_SIGNATURE = "e_signature"
+    WET_SIGNATURE = "wet_signature"
+
+
 # ──────────────────────────────────────────────
 # Workflow Instance
 # ──────────────────────────────────────────────
@@ -181,7 +187,7 @@ class WorkflowActionBase(SQLModel):
     acted_by: int = Field(foreign_key="users.id", nullable=False)
     action: ApprovalAction = Field(nullable=False)
     remarks: Optional[str] = Field(default=None, max_length=2000)
-    signature_id: Optional[int] = Field(default=None)
+    signature_id: Optional[int] = Field(default=None, foreign_key="signatures.id")
 
 
 class WorkflowAction(WorkflowActionBase, table=True):
@@ -200,6 +206,9 @@ class WorkflowAction(WorkflowActionBase, table=True):
     )
     workflow_step: WorkflowStep = Relationship(
         sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[WorkflowAction.workflow_step_id]"}
+    )
+    signature: Optional["Signature"] = Relationship(
+        sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[WorkflowAction.signature_id]"}
     )
 
 
@@ -228,6 +237,32 @@ class WorkflowHistory(WorkflowHistoryBase, table=True):
     )
     actor: "User" = Relationship(
         sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[WorkflowHistory.actor_id]"}
+    )
+
+
+# ──────────────────────────────────────────────
+# Signature
+# ──────────────────────────────────────────────
+
+class SignatureBase(SQLModel):
+    user_id: int = Field(foreign_key="users.id", nullable=False, index=True)
+    file_name: str = Field(max_length=255, nullable=False)
+    file_path: str = Field(max_length=512, nullable=False)
+    mime_type: str = Field(max_length=127, nullable=False)
+    file_size: int = Field(nullable=False, ge=0)
+    sig_type: SignatureType = Field(nullable=False)
+    is_active: bool = Field(default=True, nullable=False)
+
+
+class Signature(SignatureBase, table=True):
+    __tablename__ = "signatures"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    user: "User" = Relationship(
+        sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[Signature.user_id]"}
     )
 
 
@@ -338,3 +373,17 @@ class WorkflowInstanceListResponse(SQLModel):
     page: int
     limit: int
     items: List[WorkflowInstanceRead]
+
+
+class SignatureRead(SQLModel):
+    id: int
+    user_id: int
+    file_name: str
+    file_path: str
+    mime_type: str
+    file_size: int
+    sig_type: SignatureType
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}

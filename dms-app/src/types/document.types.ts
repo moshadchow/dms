@@ -57,6 +57,7 @@ export interface Document {
   created_at: string
   updated_at: string
   user_level_ids: number[]
+  workflow_status?: string
 }
 
 export interface DocumentListResponse {

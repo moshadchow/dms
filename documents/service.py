@@ -23,6 +23,7 @@ from documents.models import (
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
 from users.models import User, UserCategoryLink
 from user_levels.models import UserLevel
+from workflow.models import WorkflowInstance, WorkflowStatus
 
 
 class DocumentService:
@@ -43,7 +44,7 @@ class DocumentService:
         )
 
     @staticmethod
-    def _to_read(doc: Document) -> DocumentRead:
+    def _to_read(doc: Document, workflow_status: Optional[str] = None) -> DocumentRead:
         """Convert ORM object → Pydantic schema while session is still open."""
         user_levels = getattr(doc, "user_levels", [])
         return DocumentRead(
@@ -61,16 +62,35 @@ class DocumentService:
             updated_at=doc.updated_at,
             user_level_ids=[ul.id for ul in user_levels],
             user_level_names=[ul.name for ul in user_levels],
+            workflow_status=workflow_status,
         )
 
     # ──────────────────────────────────────────
     # Public — returns Pydantic schemas only
     # ──────────────────────────────────────────
 
+    def _get_workflow_statuses(self, doc_ids: list[int]) -> dict[int, str]:
+        """Return {document_id: latest_workflow_status} for the given document IDs."""
+        if not doc_ids:
+            return {}
+        instances = self.session.exec(
+            select(WorkflowInstance)
+            .where(WorkflowInstance.document_id.in_(doc_ids))
+            .order_by(WorkflowInstance.document_id, WorkflowInstance.submitted_at.desc())
+        ).all()
+        statuses: dict[int, str] = {}
+        seen: set[int] = set()
+        for inst in instances:
+            if inst.document_id not in seen:
+                statuses[inst.document_id] = inst.status.value
+                seen.add(inst.document_id)
+        return statuses
+
     def get_document(self, document_id: int, current_user: User) -> DocumentRead:
         doc = self._get_orm(document_id, current_user)
         ensure_document_user_level_access(self.session, current_user, doc)
-        return self._to_read(doc)
+        wf_statuses = self._get_workflow_statuses([document_id])
+        return self._to_read(doc, workflow_status=wf_statuses.get(document_id))
 
     def list_documents(
         self,
@@ -148,11 +168,14 @@ class DocumentService:
             query.order_by(Document.created_at.desc()).offset(skip).limit(limit)
         ).all()
 
+        doc_ids = [d.id for d in page_docs]
+        wf_statuses = self._get_workflow_statuses(doc_ids)
+
         return DocumentListResponse(
             total=total,
             page=skip // limit + 1,
             limit=limit,
-            items=[self._to_read(d) for d in page_docs],
+            items=[self._to_read(d, workflow_status=wf_statuses.get(d.id)) for d in page_docs],
         )
 
     # ──────────────────────────────────────────

@@ -68,6 +68,7 @@ class AuditAction(str, Enum):
     APPROVE_WORKFLOW = "approve_workflow"
     REJECT_WORKFLOW = "reject_workflow"
     RETURN_WORKFLOW = "return_workflow"
+    CANCEL_WORKFLOW = "cancel_workflow"
 
 
 class AuditModule(str, Enum):

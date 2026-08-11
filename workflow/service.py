@@ -1,18 +1,24 @@
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional
+import uuid
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from sqlmodel import Session, func, select
 
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from categories.models import Category
 from core.access import ensure_document_access, ensure_document_user_level_access
+from core.config import settings
 from documents.models import Document, DocumentUserLevelLink
 from users.models import Role, RoleName, User, UserRoleLink
 from workflow.models import (
     ApprovalAction,
     ApprovalMode,
+    Signature,
+    SignatureRead,
+    SignatureType,
     WorkflowAction,
     WorkflowActionRead,
     WorkflowDefinition,
@@ -579,6 +585,19 @@ class WorkflowInstanceService:
         document = ensure_document_access(self.session, current_user, data.document_id)
         ensure_document_user_level_access(self.session, current_user, document)
 
+        # Prevent re-submission of already-approved documents
+        approved_instance = self.session.exec(
+            select(WorkflowInstance).where(
+                WorkflowInstance.document_id == data.document_id,
+                WorkflowInstance.status == WorkflowStatus.APPROVED,
+            )
+        ).first()
+        if approved_instance:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Document is already approved and cannot be resubmitted",
+            )
+
         # Validate workflow definition exists and is active
         wf_def = self.session.get(WorkflowDefinition, data.workflow_definition_id)
         if not wf_def:
@@ -761,6 +780,63 @@ class WorkflowInstanceService:
             items=[self._to_instance_read(i) for i in page_instances],
         )
 
+    def cancel_instance(
+        self,
+        instance_id: int,
+        current_user: User,
+    ) -> WorkflowInstanceRead:
+        instance = self._get_instance_or_404(instance_id)
+
+        # Only the original submitter can cancel
+        if instance.submitted_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the original submitter can cancel this workflow instance",
+            )
+
+        # Cannot cancel terminal states
+        if instance.status in (
+            WorkflowStatus.APPROVED,
+            WorkflowStatus.REJECTED,
+            WorkflowStatus.CANCELLED,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Instance is in '{instance.status.value}' state and cannot be cancelled",
+            )
+
+        instance.status = WorkflowStatus.CANCELLED
+        instance.updated_at = datetime.utcnow()
+        self.session.add(instance)
+
+        # Record history
+        self._record_history(
+            instance,
+            event_type="cancelled",
+            actor_id=current_user.id,
+            status_snapshot=WorkflowStatus.CANCELLED,
+        )
+
+        # Audit
+        try:
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=AuditAction.CANCEL_WORKFLOW,
+                module=AuditModule.WORKFLOW,
+                entity_name="workflow_instance",
+                entity_id=str(instance.id),
+                new_value={"status": "cancelled"},
+                description=f"User {current_user.id} cancelled workflow instance {instance.id}",
+                is_success=True,
+            )
+        except Exception:
+            pass
+
+        self.session.commit()
+        self.session.refresh(instance)
+
+        return self._to_instance_read(instance)
+
 
 # ══════════════════════════════════════════════
 # Approval Action Service
@@ -917,6 +993,16 @@ class ApprovalActionService:
                 detail="Submitter cannot approve their own workflow instance",
             )
 
+        # Validate signature if provided
+        if data.signature_id is not None:
+            sig_svc = SignatureService(self.session)
+            sig = sig_svc.validate_signature_exists(data.signature_id)
+            if sig.user_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only use your own signatures",
+                )
+
         # Record the action
         action_record = WorkflowAction(
             workflow_instance_id=instance.id,
@@ -1028,3 +1114,210 @@ class ApprovalActionService:
                 instance, "approved", actor.id,
                 WorkflowStatus.APPROVED,
             )
+
+
+# ══════════════════════════════════════════════
+# Signature Service
+# ══════════════════════════════════════════════
+
+# Allowed MIME types for signature images
+ALLOWED_SIGNATURE_MIME_TYPES = {"image/jpeg", "image/png"}
+
+
+class SignatureService:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _to_read(self, sig: Signature) -> SignatureRead:
+        return SignatureRead(
+            id=sig.id,
+            user_id=sig.user_id,
+            file_name=sig.file_name,
+            file_path=sig.file_path,
+            mime_type=sig.mime_type,
+            file_size=sig.file_size,
+            sig_type=sig.sig_type,
+            is_active=sig.is_active,
+            created_at=sig.created_at,
+            updated_at=sig.updated_at,
+        )
+
+    def _log_audit(
+        self,
+        action: AuditAction,
+        signature: Signature,
+        description: str,
+    ) -> None:
+        try:
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=action,
+                module=AuditModule.WORKFLOW,
+                entity_name="signature",
+                entity_id=str(signature.id),
+                new_value={
+                    "sig_type": signature.sig_type.value,
+                    "file_name": signature.file_name,
+                },
+                description=description,
+                is_success=True,
+            )
+        except Exception:
+            pass
+
+    def upload_signature(
+        self,
+        file: UploadFile,
+        current_user: User,
+        sig_type: SignatureType,
+    ) -> SignatureRead:
+        """Upload a signature image (e-signature or wet-signature capture)."""
+        # Validate MIME type
+        mime = file.content_type or ""
+        if mime not in ALLOWED_SIGNATURE_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"File type '{mime}' is not supported. Allowed types: JPEG, PNG",
+            )
+
+        # Read file content
+        content = file.file.read()
+        file_size = len(content)
+
+        # Validate file size (max 5MB for signatures)
+        max_bytes = 5 * 1024 * 1024
+        if file_size > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Signature file size exceeds the 5 MB limit",
+            )
+
+        # Generate safe filename
+        storage_root = Path(settings.STORAGE_ROOT)
+        dest_dir = storage_root / "signatures" / str(current_user.id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = f"{uuid.uuid4().hex}_{Path(file.filename or 'signature').name}"
+        dest_path = dest_dir / safe_name
+        dest_path.write_bytes(content)
+
+        relative_path = str(dest_path.relative_to(storage_root))
+
+        # Create DB record
+        sig = Signature(
+            user_id=current_user.id,
+            file_name=file.filename or safe_name,
+            file_path=relative_path,
+            mime_type=mime,
+            file_size=file_size,
+            sig_type=sig_type,
+            is_active=True,
+        )
+        self.session.add(sig)
+        self.session.commit()
+        self.session.refresh(sig)
+
+        self._log_audit(
+            AuditAction.CREATE_WORKFLOW,
+            sig,
+            f"User {current_user.id} uploaded {sig_type.value}",
+        )
+
+        return self._to_read(sig)
+
+    def get_signature(self, signature_id: int, current_user: User) -> SignatureRead:
+        """Get signature metadata. Users can view their own; admins can view all."""
+        sig = self.session.get(Signature, signature_id)
+        if not sig:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        if not sig.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        # Check ownership or admin
+        if sig.user_id != current_user.id and not current_user.is_admin():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view your own signatures",
+            )
+        return self._to_read(sig)
+
+    def get_signature_file(self, signature_id: int, current_user: User) -> Path:
+        """Get the file path for serving a signature image."""
+        sig = self.session.get(Signature, signature_id)
+        if not sig or not sig.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        # Check ownership or admin
+        if sig.user_id != current_user.id and not current_user.is_admin():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only view your own signatures",
+            )
+
+        storage_root = Path(settings.STORAGE_ROOT).resolve()
+        abs_path = (storage_root / sig.file_path).resolve()
+
+        # Path-traversal guard
+        if not str(abs_path).startswith(str(storage_root)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file path",
+            )
+
+        if not abs_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Signature file not found on disk",
+            )
+
+        return abs_path
+
+    def soft_delete_signature(self, signature_id: int, current_user: User) -> SignatureRead:
+        """Soft-delete a signature (set is_active=False). Users can delete their own; admins can delete all."""
+        sig = self.session.get(Signature, signature_id)
+        if not sig:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        if not sig.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        # Check ownership or admin
+        if sig.user_id != current_user.id and not current_user.is_admin():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only delete your own signatures",
+            )
+
+        sig.is_active = False
+        sig.updated_at = datetime.utcnow()
+        self.session.commit()
+        self.session.refresh(sig)
+
+        self._log_audit(
+            AuditAction.DELETE_WORKFLOW,
+            sig,
+            f"User {current_user.id} deleted signature {signature_id}",
+        )
+
+        return self._to_read(sig)
+
+    def validate_signature_exists(self, signature_id: int) -> Signature:
+        """Validate that a signature exists and is active. Used by act_on_instance."""
+        sig = self.session.get(Signature, signature_id)
+        if not sig or not sig.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found or is inactive",
+            )
+        return sig

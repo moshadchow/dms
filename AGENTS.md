@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (131 tests, SQLite-in-memory)
+pytest                        # run all tests (143 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -45,7 +45,7 @@ Each feature module follows this pattern:
 
 The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
 
-The `workflow/` module has two router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`) and `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`).
+The `workflow/` module has three router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`), `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`), and `signature_router` (signatures, mounted at `/api/v1/signatures`).
 
 ## Audit Trail Module
 `audit/` records all significant user and system activities. Key details:
@@ -164,7 +164,7 @@ All new tables live under Alembic migrations in `migrations/`. Reuse `documents`
 `workflow_history` is the approval-specific ledger (level, designation, signature ref); `audit/` remains the system-wide event log. Every `workflow_actions` write must also call `AuditService.log_event()` — do not build a second audit mechanism.
 
 ### Workflow Status Enum
-`draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved`) → `published` (optional) → `archived`
+`draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved` | `cancelled`) → `published` (optional) → `archived`
 
 ### RBAC Integration
 Add new prefixes to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`:
@@ -187,7 +187,7 @@ Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `
 
 ### API Endpoints (`workflow/router.py`, mounted at `/api/v1/workflows` and `/api/v1/workflow-instances`)
 
-`workflow/router.py` exports **two router objects**: `router` (workflow definitions) and `instance_router` (workflow instances). In `main.py`, they are mounted separately:
+`workflow/router.py` exports **three router objects**: `router` (workflow definitions), `instance_router` (workflow instances), and `signature_router` (signatures). In `main.py`, they are mounted separately:
 - `router` → `/api/v1/workflows`
 - `instance_router` → `/api/v1/workflow-instances`
 
@@ -204,10 +204,12 @@ Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `
 - `GET /api/v1/workflow-instances/dashboard` — admin monitoring view
 
 ### Frontend Additions (`dms-app/src/`)
-- `pages/`: `WorkflowConfigPage.tsx` (admin), `ApprovalMatrixPage.tsx` (admin), `MyDraftsPage.tsx`, `SubmittedDocumentsPage.tsx`, `PendingApprovalPage.tsx`, `MyApprovalsPage.tsx`, `ApprovalHistoryPage.tsx`
-- `components/`: `SignaturePad.tsx` (canvas wet-signature capture), `SignatureUpload.tsx` (e-signature image), `ApprovalActionBar.tsx`
-- `api/`: `workflowApi.ts` — uses `apiClient`, not `apiRoot`, per existing pattern
-- `store/`: optional `workflowStore.ts` (Zustand) for pending-count badges, mirrors `authStore.ts` conventions
+- `pages/`: `PendingApprovalPage.tsx`, `ApprovalHistoryPage.tsx`
+- `components/admin/`: `WorkflowConfigPanel.tsx`, `WorkflowFormModal.tsx`
+- `components/workflow/`: `SignaturePad.tsx` (canvas wet-signature capture), `SignatureUpload.tsx` (e-signature image), `SubmitForApprovalModal.tsx`
+- `api/workflow.api.ts` — uses `apiClient`, not `apiRoot`, per existing pattern
+- `store/workflowStore.ts` (Zustand) for pending-count badges, mirrors `authStore.ts` conventions
+- `types/workflow.types.ts` — shared TypeScript types for workflow entities
 
 ### Test Fixture Impact
 Any new module importing `engine` directly (e.g. a workflow-specific middleware, if added) must be patched in `conftest.py` alongside `core.database.engine`, `middleware.rbac.engine`, `middleware.audit.engine`.
@@ -219,10 +221,3 @@ AI-based approval recommendations, blockchain, external BPM engines, cross-organ
 - **Activation validation:** Activating a workflow (`PATCH /{id}/activate`) does **not** validate that steps/approvers exist. A workflow with no steps can be activated. Production systems may want to add this check.
 - **Step order uniqueness:** Enforced by a DB unique constraint on `(workflow_definition_id, step_order)`. The service does not pre-check for duplicates — a raw DB integrity error would surface if violated. Consider adding service-level validation.
 - **Step ordering in detail response:** `GET /api/v1/workflows/{id}` returns steps in DB fetch order, not explicitly sorted by `step_order`. For deterministic ordering, add `.order_by(WorkflowStep.step_order)` to the query.
-
-### Phase Plan
-1. **Foundation** — ✅ `workflow/` module, migrations, `WorkflowDefinitionService`, admin config UI
-2. **Submission** — ✅ submit-for-approval, pending queue, `ApprovalActionService`
-3. **Signature & History** — `SignatureService`, `workflow_history`, remarks
-4. **Compliance** — `audit/` instrumentation, User Level enforcement checks, watermarking on preview/download
-5. **Enterprise** — OCR hooks, retention policy fields on `categories`, dashboard/reports

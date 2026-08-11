@@ -10,6 +10,8 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const DocumentsPage = lazy(() => import('@/pages/DocumentsPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
 const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
+const PendingApprovalPage = lazy(() => import('@/pages/PendingApprovalPage'))
+const ApprovalHistoryPage = lazy(() => import('@/pages/ApprovalHistoryPage'))
 const NotFoundPage  = lazy(() => import('@/pages/NotFoundPage'))
 const ForbiddenPage = lazy(() => import('@/pages/ForbiddenPage'))
 
@@ -80,6 +82,8 @@ export default function App() {
               <Route path="/directory/:directoryId" element={<DocumentsPage />} />
               <Route path="/admin"                element={<AdminPage />} />
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
+              <Route path="/approvals/pending"    element={<PendingApprovalPage />} />
+              <Route path="/approvals/history"    element={<ApprovalHistoryPage />} />
             </Route>
           </Route>
 

@@ -37,6 +37,7 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     # Workflow definitions (admin config)
     ("POST",   "/api/v1/workflows"):          PermissionAction.CREATE,
     ("PUT",    "/api/v1/workflows"):          PermissionAction.UPDATE,
+    ("PATCH",  "/api/v1/workflows"):          PermissionAction.UPDATE,
     ("DELETE", "/api/v1/workflows"):          PermissionAction.DELETE,
     # Workflow instances
     ("POST",   "/api/v1/workflow-instances"): PermissionAction.CREATE,
