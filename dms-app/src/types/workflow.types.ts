@@ -106,6 +106,7 @@ export interface WorkflowAction {
   id: number
   workflow_instance_id: number
   workflow_step_id: number
+  step_name: string | null
   acted_by: number
   acted_by_name: string | null
   action: ApprovalAction

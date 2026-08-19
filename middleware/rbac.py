@@ -42,6 +42,10 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     # Workflow instances
     ("POST",   "/api/v1/workflow-instances"): PermissionAction.CREATE,
     ("POST",   "/api/v1/workflow-instances/"): PermissionAction.UPDATE,
+    # Memos
+    ("GET",    "/api/v1/memos"):               PermissionAction.VIEW,
+    ("POST",   "/api/v1/memos"):               PermissionAction.CREATE,
+    ("PATCH",  "/api/v1/memos"):               PermissionAction.UPDATE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)

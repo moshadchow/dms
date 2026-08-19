@@ -325,6 +325,7 @@ class WorkflowActionRead(SQLModel):
     id: int
     workflow_instance_id: int
     workflow_step_id: int
+    step_name: Optional[str] = None
     acted_by: int
     acted_by_name: Optional[str] = None
     action: ApprovalAction

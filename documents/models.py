@@ -15,6 +15,7 @@ class FileType(str, Enum):
     DOCX = "docx"
     EXCEL = "excel"
     IMAGE = "image"
+    HTML = "html"
 
 
 class DocumentStatus(str, Enum):
@@ -201,7 +202,6 @@ class DocumentRead(DocumentBase):
     updated_at: datetime
     user_level_ids: List[int] = []
     user_level_names: List[str] = []
-    workflow_status: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

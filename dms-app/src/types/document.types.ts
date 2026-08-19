@@ -1,4 +1,4 @@
-export type FileType = 'pdf' | 'docx' | 'excel' | 'image'
+export type FileType = 'pdf' | 'docx' | 'excel' | 'image' | 'html'
 export type DocumentStatus = 'active' | 'archived' | 'deleted'
 export type AnnotationAnchorType = 'point' | 'text_range'
 export type DocumentAnnotationType = 'note' | 'stroke'
@@ -57,7 +57,6 @@ export interface Document {
   created_at: string
   updated_at: string
   user_level_ids: number[]
-  workflow_status?: string
 }
 
 export interface DocumentListResponse {

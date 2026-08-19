@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from core.access import ensure_category_access, ensure_directory_access
 from directories.models import Directory, DirectoryCreate, DirectoryNode, DirectoryUpdate
 from documents.models import Document, DocumentStatus
-from users.models import User
+from users.models import User, UserCategoryLink
 
 
 class DirectoryService:
@@ -42,6 +42,26 @@ class DirectoryService:
             select(Directory).where(Directory.category_id == category_id)
         ).all()
         return self._build_tree(all_dirs, parent_id=None)
+
+    def list_all(self, current_user: User) -> List[Directory]:
+        """Return all directories the user has category access to."""
+        if current_user.is_admin():
+            dirs = list(self.session.exec(
+                select(Directory).order_by(Directory.name)
+            ).all())
+        else:
+            accessible_cat_ids = [
+                link.category_id
+                for link in self.session.exec(
+                    select(UserCategoryLink).where(UserCategoryLink.user_id == current_user.id)
+                ).all()
+            ]
+            dirs = list(self.session.exec(
+                select(Directory)
+                .where(Directory.category_id.in_(accessible_cat_ids))
+                .order_by(Directory.name)
+            ).all())
+        return dirs
 
     def _build_tree(
         self, all_dirs: List[Directory], parent_id: Optional[int]

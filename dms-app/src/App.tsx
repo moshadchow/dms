@@ -8,6 +8,9 @@ const LoginPage     = lazy(() => import('@/pages/LoginPage'))
 const AzureCallbackPage = lazy(() => import('@/pages/AzureCallbackPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const DocumentsPage = lazy(() => import('@/pages/DocumentsPage'))
+const MemoListPage = lazy(() => import('@/pages/MemoListPage'))
+const MemoDraftPage = lazy(() => import('@/pages/MemoDraftPage'))
+const MemoDetailPage = lazy(() => import('@/pages/MemoDetailPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
 const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
 const PendingApprovalPage = lazy(() => import('@/pages/PendingApprovalPage'))
@@ -84,6 +87,10 @@ export default function App() {
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
               <Route path="/approvals/pending"    element={<PendingApprovalPage />} />
               <Route path="/approvals/history"    element={<ApprovalHistoryPage />} />
+              <Route path="/memos"           element={<MemoListPage />} />
+              <Route path="/memos/new"       element={<MemoDraftPage key="new" />} />
+              <Route path="/memos/:id"       element={<MemoDetailPage />} />
+              <Route path="/memos/:id/edit"  element={<MemoDraftPage key="edit" />} />
             </Route>
           </Route>
 

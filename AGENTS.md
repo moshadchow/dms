@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (143 tests, SQLite-in-memory)
+pytest                        # run all tests (169 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -21,7 +21,7 @@ npm run build    # tsc + vite build
 npm run lint     # ESLint
 ```
 
-Frontend env: `dms-app/.env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`.
+Frontend env: `dms-app/.env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`. Frontend uses Tailwind CSS (via `@tailwind` directives in `index.css`); no `tailwind.config.js` exists — utilities are used directly.
 
 ## Testing: SQLite In-Memory
 Tests use `SQLite` + `StaticPool` (in-memory), **not** PostgreSQL. The `conftest.py` fixture monkeypatches the engine in three places:
@@ -47,13 +47,17 @@ The `documents/` module has two service classes: `DocumentService` and `Document
 
 The `workflow/` module has three router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`), `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`), and `signature_router` (signatures, mounted at `/api/v1/signatures`).
 
+The `memos/` module creates document drafts with markdown rendering and workflow integration. Its service uses `core/access.py` helpers (`ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`) for permission checks.
+
+The `memos/` module has a PDF generator (`memos/pdf_generator.py`) for final draft downloads. It converts markdown to reportlab XML. **Gotcha:** Reportlab's `Paragraph` parser is strict about balanced XML tags — the markdown-to-XML conversion (`_apply_inline_formatting`) strips italic markers to plain text (instead of generating `<i>` tags) to avoid malformed nesting. A `_sanitize_for_reportlab()` safety net removes empty/malformed tags before rendering.
+
 ## Audit Trail Module
 `audit/` records all significant user and system activities. Key details:
 - **`audit/service.py`** — `AuditService.log_event()` is the single centralized method. It uses its own `Session(engine)` to write audit logs independently of the caller's transaction, ensuring logs are committed even if the outer transaction rolls back. Never raises on failure.
 - **`middleware/audit.py`** — auto-logs auth events, security events (401/403), and document operations from HTTP requests. Registered after RBAC middleware in `main.py`.
 - **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV).
 - **Immutability**: no PUT/PATCH/DELETE endpoints exist for audit records. Users cannot edit or delete audit logs.
-- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py` all call `AuditService.log_event()` after significant operations.
+- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py` all call `AuditService.log_event()` after significant operations.
 
 ## Auth & User Injection
 Use the `CurrentUser` annotated type from `core/dependencies.py` to inject the authenticated user into endpoints:
@@ -79,17 +83,7 @@ Backend module: `auth/azure_service.py` handles PKCE, token exchange, ID token v
 
 **JWK parsing:** `python-jose`'s `jwk.construct()` fails with Azure AD signing keys that include `x5c` fields. `azure_service.py:188-203` uses the `cryptography` library to build RSA public keys from the X.509 certificate chain instead. Do not revert to `jwk.construct()`.
 
-**Azure env vars** (in `.env`):
-```
-AZURE_CLIENT_ID=
-AZURE_CLIENT_SECRET=
-AZURE_TENANT_ID=
-AZURE_REDIRECT_URI=http://localhost:8000/api/v1/auth/azure/callback
-AZURE_DEFAULT_ROLE_NAME=auditor
-FRONTEND_URL=http://localhost:5173
-```
-
-Azure is enabled when all three of `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are set.
+Azure is enabled when all three of `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are set. Copy `.env.example` to `.env` for local setup.
 
 ## Frontend Auth Flow
 - Zustand store (`store/authStore.ts`) persists only tokens to localStorage; the `user` object is re-fetched on every page load via `ProtectedRoute` calling `authApi.me()`.
@@ -119,8 +113,8 @@ All API files import `apiClient` from `./client` (the Axios instance with interc
 
 Default admin: `admin@dms.local` / `Admin@1234`.
 
-## Docker Compose (Stale)
-`docker-compose.yml` references `./backend` and `./frontend` directories that don't match the current repo layout. It may need updating before use.
+## Docker (Stale)
+`docker-compose.yml` references `./backend` and `./frontend` directories that don't match the current repo layout. There is a root `Dockerfile` but docker-compose needs fixing before use.
 
 ## Coding Style
 4-space indent in Python, 2-space in TypeScript/TSX. `snake_case` for Python, `PascalCase` for React components, `camelCase` for hooks/stores/utils.
@@ -137,31 +131,12 @@ Copy `.env.example` to `.env` for local setup. Never commit `.env` (it contains 
 
 Generic, document-type-agnostic approval engine. Reuses `auth/`, RBAC, `users/`, `user_levels/`, `audit/`, `documents/`, `directories/`. No new auth, permission, or audit mechanisms — extend the existing ones.
 
-### New Module: `workflow/`
-Follows the standard module convention:
-- `models.py` — SQLModel ORM + read schemas
-- `schemas.py` — request/response schemas
-- `service.py` — business logic (class-based, takes `Session`)
-- `router.py` — FastAPI router
-
-Service classes:
+### Workflow Module Structure
+`workflow/` follows the standard module convention. Service classes:
 - `WorkflowDefinitionService` — CRUD for workflow templates (admin-configured, not hardcoded)
 - `WorkflowInstanceService` — starts/tracks a workflow run against a document
 - `ApprovalActionService` — approve / reject / return / clarify / forward
 - `SignatureService` — stores e-signature (uploaded image) or wet-signature (canvas capture) as a file reference, never mutates the source document
-
-### Database Tables
-All new tables live under Alembic migrations in `migrations/`. Reuse `documents`, `users`, `categories` — no duplication.
-
-- `workflow_definitions` — id, name, document_category_id (FK → categories), is_active, created_by, created_at
-- `workflow_steps` — id, workflow_definition_id (FK), step_order (int, configurable count), step_name, approval_mode (`sequential` | `parallel`), is_active
-- `workflow_step_approvers` — id, workflow_step_id (FK), user_id (FK → users) OR role_id (FK → roles), priority (int, ordering within a step), is_active
-- `workflow_instances` — id, document_id (FK → documents), workflow_definition_id (FK), current_step_order, status (enum, see below), submitted_by (FK → users), submitted_at
-- `workflow_actions` — id, workflow_instance_id (FK), workflow_step_id (FK), acted_by (FK → users), action (`approve`|`reject`|`return`|`clarify`|`forward`), remarks, acted_at, signature_id (FK → signatures, nullable)
-- `signatures` — id, user_id (FK), type (`e_signature`|`wet_signature`), file_path (storage/uploads pattern), created_at
-- `workflow_history` — id, workflow_instance_id (FK), event_type, actor_id, designation_snapshot, remarks, status_snapshot, occurred_at — **append-only, no PUT/PATCH/DELETE**, mirrors `audit/` immutability pattern
-
-`workflow_history` is the approval-specific ledger (level, designation, signature ref); `audit/` remains the system-wide event log. Every `workflow_actions` write must also call `AuditService.log_event()` — do not build a second audit mechanism.
 
 ### Workflow Status Enum
 `draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved` | `cancelled`) → `published` (optional) → `archived`
@@ -185,39 +160,13 @@ Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `
 - **Deactivation:** Deactivating a definition (`DELETE /api/v1/workflows/{id}`) blocks new submissions only. Existing instances continue through their approval chain to completion.
 - **Multiple active workflows per category:** The system allows multiple active workflow definitions for the same document category. The Phase 2 submission UI should present a dropdown when multiple definitions exist for a document's category.
 
-### API Endpoints (`workflow/router.py`, mounted at `/api/v1/workflows` and `/api/v1/workflow-instances`)
+### Workflow Audit
+`workflow_history` is the approval-specific ledger (level, designation, signature ref); `audit/` remains the system-wide event log. Every `workflow_actions` write must also call `AuditService.log_event()` — do not build a second audit mechanism.
 
-`workflow/router.py` exports **three router objects**: `router` (workflow definitions), `instance_router` (workflow instances), and `signature_router` (signatures). In `main.py`, they are mounted separately:
-- `router` → `/api/v1/workflows`
-- `instance_router` → `/api/v1/workflow-instances`
-
-**Definition endpoints** (admin config):
-- `POST /api/v1/workflows` — create workflow definition (admin)
-- `PUT /api/v1/workflows/{id}` — update steps/approvers/priority (admin)
-- `GET /api/v1/workflows` — list definitions
-- `POST /api/v1/workflow-instances` — submit a document for approval
-- `GET /api/v1/workflow-instances/pending` — pending approvals for current user
-- `GET /api/v1/workflow-instances/mine` — instances submitted by current user
-- `POST /api/v1/workflow-instances/{id}/actions` — approve/reject/return/clarify/forward, with optional remarks + signature_id
-- `POST /api/v1/signatures` — upload e-signature or wet-signature capture, returns signature_id
-- `GET /api/v1/workflow-instances/{id}/history` — immutable approval history
-- `GET /api/v1/workflow-instances/dashboard` — admin monitoring view
-
-### Frontend Additions (`dms-app/src/`)
-- `pages/`: `PendingApprovalPage.tsx`, `ApprovalHistoryPage.tsx`
-- `components/admin/`: `WorkflowConfigPanel.tsx`, `WorkflowFormModal.tsx`
-- `components/workflow/`: `SignaturePad.tsx` (canvas wet-signature capture), `SignatureUpload.tsx` (e-signature image), `SubmitForApprovalModal.tsx`
-- `api/workflow.api.ts` — uses `apiClient`, not `apiRoot`, per existing pattern
-- `store/workflowStore.ts` (Zustand) for pending-count badges, mirrors `authStore.ts` conventions
-- `types/workflow.types.ts` — shared TypeScript types for workflow entities
-
-### Test Fixture Impact
+### Workflow Test Fixture Impact
 Any new module importing `engine` directly (e.g. a workflow-specific middleware, if added) must be patched in `conftest.py` alongside `core.database.engine`, `middleware.rbac.engine`, `middleware.audit.engine`.
 
-### Explicitly Out of Scope
-AI-based approval recommendations, blockchain, external BPM engines, cross-organization workflows. Watermarking, redaction, OCR, and retention policy are Phase 4/5 items layered onto `documents/` — do not build them into the core `workflow/` module.
-
 ### Design Decisions (Implementation Notes)
-- **Activation validation:** Activating a workflow (`PATCH /{id}/activate`) does **not** validate that steps/approvers exist. A workflow with no steps can be activated. Production systems may want to add this check.
-- **Step order uniqueness:** Enforced by a DB unique constraint on `(workflow_definition_id, step_order)`. The service does not pre-check for duplicates — a raw DB integrity error would surface if violated. Consider adding service-level validation.
+- **Activation validation:** Activating a workflow (`PATCH /{id}/activate`) does **not** validate that steps/approvers exist. A workflow with no steps can be activated.
+- **Step order uniqueness:** Enforced by a DB unique constraint on `(workflow_definition_id, step_order)`. The service does not pre-check for duplicates — a raw DB integrity error would surface if violated.
 - **Step ordering in detail response:** `GET /api/v1/workflows/{id}` returns steps in DB fetch order, not explicitly sorted by `step_order`. For deterministic ordering, add `.order_by(WorkflowStep.step_order)` to the query.

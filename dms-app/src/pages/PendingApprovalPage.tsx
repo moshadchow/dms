@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
+import { memoApi } from '@/api/memo.api'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkflowStore } from '@/store/workflowStore'
 import Button from '@/components/ui/Button'
@@ -10,6 +11,7 @@ import type {
   WorkflowInstance,
   ApprovalAction,
 } from '@/types/workflow.types'
+import type { MemoDetail } from '@/types/memo.types'
 
 const LIMIT = 20
 
@@ -52,6 +54,8 @@ export default function PendingApprovalPage() {
   const [remarks, setRemarks] = useState('')
   const [signatureBlob, setSignatureBlob] = useState<Blob | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [memoDetail, setMemoDetail] = useState<MemoDetail | null>(null)
+  const [memoLoading, setMemoLoading] = useState(false)
 
   const loadPending = useCallback(async () => {
     setLoading(true)
@@ -73,12 +77,23 @@ export default function PendingApprovalPage() {
 
   const totalPages = Math.ceil(total / LIMIT) || 1
 
-  const openActionModal = (instance: WorkflowInstance, action: ApprovalAction) => {
+  const openActionModal = async (instance: WorkflowInstance, action: ApprovalAction) => {
     setSelectedInstance(instance)
     setSelectedAction(action)
     setRemarks('')
     setSignatureBlob(null)
+    setMemoDetail(null)
     setModalOpen(true)
+
+    setMemoLoading(true)
+    try {
+      const memo = await memoApi.getByDocument(instance.document_id)
+      setMemoDetail(memo)
+    } catch {
+      // Memo may not exist for non-memo documents; fail silently
+    } finally {
+      setMemoLoading(false)
+    }
   }
 
   const closeModal = () => {
@@ -86,6 +101,7 @@ export default function PendingApprovalPage() {
     setSelectedInstance(null)
     setRemarks('')
     setSignatureBlob(null)
+    setMemoDetail(null)
   }
 
   const handleSubmit = async () => {
@@ -279,7 +295,7 @@ export default function PendingApprovalPage() {
         }} onClick={(e) => { if (e.target === e.currentTarget) closeModal() }}>
           <div style={{
             backgroundColor: 'var(--surface)', borderRadius: '1rem', border: '1px solid var(--border)',
-            width: '100%', maxWidth: '520px', maxHeight: '90vh', overflow: 'auto',
+            width: '100%', maxWidth: '720px', maxHeight: '90vh', overflow: 'auto',
             boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
           }}>
             {/* Modal header */}
@@ -313,6 +329,71 @@ export default function PendingApprovalPage() {
                   {selectedInstance.document_title || `Document #${selectedInstance.document_id}`}
                 </p>
               </div>
+
+              {/* Memo Content */}
+              {memoLoading ? (
+                <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
+                  Loading memo content…
+                </div>
+              ) : memoDetail ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Subject</p>
+                    <p style={{ fontSize: '0.88rem', color: 'var(--text)', fontWeight: 600, margin: 0 }}>{memoDetail.subject}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Content</p>
+                    <div
+                      style={{
+                        padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)',
+                        backgroundColor: 'var(--bg, #f8fafc)', maxHeight: '300px', overflowY: 'auto',
+                        lineHeight: 1.7, fontSize: '0.88rem', color: '#1e293b', whiteSpace: 'pre-wrap',
+                      }}
+                      dangerouslySetInnerHTML={{
+                        __html: memoDetail.body
+                          .replace(/&/g, '&')
+                          .replace(/</g, '<')
+                          .replace(/>/g, '>')
+                          .replace(/\n/g, '<br>')
+                          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                          .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                          .replace(/`(.+?)`/g, '<code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:0.9em">$1</code>')
+                      }}
+                    />
+                  </div>
+                  {memoDetail.attachments.length > 0 && (
+                    <div>
+                      <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>
+                        Attachments ({memoDetail.attachments.length})
+                      </p>
+                      <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+                        {memoDetail.attachments.map((a) => (
+                          <li key={a.id} style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid var(--border)',
+                            backgroundColor: 'var(--bg, #f8fafc)', marginBottom: '0.35rem',
+                          }}>
+                            <span style={{ fontSize: '0.82rem' }}>
+                              <strong>{a.document_title || a.file_name}</strong>{' '}
+                              <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
+                                ({a.file_type?.toUpperCase()}, {(a.file_size || 0) / 1024} KB)
+                              </span>
+                            </span>
+                            <a
+                              href={`/api/v1/documents/${a.document_id}/download`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ fontSize: '0.78rem', color: '#4f46e5', textDecoration: 'none' }}
+                            >
+                              Download
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               {/* Remarks */}
               <div>

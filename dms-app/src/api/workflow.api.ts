@@ -90,6 +90,11 @@ export const workflowApi = {
     return res.data
   },
 
+  getInstanceByDocument: async (documentId: number): Promise<WorkflowInstanceDetail> => {
+    const res = await apiClient.get<WorkflowInstanceDetail>(`/workflow-instances/by-document/${documentId}`)
+    return res.data
+  },
+
   actOnInstance: async (id: number, data: WorkflowActionCreate): Promise<WorkflowInstance> => {
     const res = await apiClient.post<WorkflowInstance>(`/workflow-instances/${id}/actions`, data)
     return res.data
@@ -101,6 +106,11 @@ export const workflowApi = {
   },
 
   // ── Signatures ──────────────────────────────────
+
+  listSignatures: async (): Promise<Signature[]> => {
+    const res = await apiClient.get<Signature[]>('/signatures')
+    return res.data
+  },
 
   uploadSignature: async (
     file: File,

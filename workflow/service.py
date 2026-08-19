@@ -528,6 +528,47 @@ class WorkflowInstanceService:
             updated_at=instance.updated_at,
         )
 
+    def _to_instance_detail(self, instance: WorkflowInstance) -> WorkflowInstanceDetailRead:
+        """Build a detailed read (instance + actions + history)."""
+        instance = self.session.get(WorkflowInstance, instance.id)
+        read = self._to_instance_read(instance)
+
+        actions_read = []
+        for action in instance.actions:
+            step_name = action.workflow_step.step_name if action.workflow_step else None
+            actions_read.append(WorkflowActionRead(
+                id=action.id,
+                workflow_instance_id=action.workflow_instance_id,
+                workflow_step_id=action.workflow_step_id,
+                step_name=step_name,
+                acted_by=action.acted_by,
+                acted_by_name=action.acted_by_user.full_name if action.acted_by_user else None,
+                action=action.action,
+                remarks=action.remarks,
+                signature_id=action.signature_id,
+                acted_at=action.acted_at,
+            ))
+
+        history_read = []
+        for h in instance.history:
+            history_read.append(WorkflowHistoryRead(
+                id=h.id,
+                workflow_instance_id=h.workflow_instance_id,
+                event_type=h.event_type,
+                actor_id=h.actor_id,
+                actor_name=h.actor.full_name if h.actor else None,
+                designation_snapshot=h.designation_snapshot,
+                remarks=h.remarks,
+                status_snapshot=h.status_snapshot,
+                occurred_at=h.occurred_at,
+            ))
+
+        return WorkflowInstanceDetailRead(
+            **read.model_dump(),
+            actions=actions_read,
+            history=history_read,
+        )
+
     def _log_audit_instance(
         self,
         action: AuditAction,
@@ -674,45 +715,29 @@ class WorkflowInstanceService:
 
     def get_instance(self, instance_id: int) -> WorkflowInstanceDetailRead:
         instance = self._get_instance_or_404(instance_id)
+        return self._to_instance_detail(instance)
 
-        # Reload with relationships
-        instance = self.session.get(WorkflowInstance, instance_id)
+    def get_by_document(
+        self,
+        document_id: int,
+        current_user: User,
+    ) -> WorkflowInstanceDetailRead:
+        """Return the most recent workflow instance for a document (with access check)."""
+        document = ensure_document_access(self.session, current_user, document_id)
+        ensure_document_user_level_access(self.session, current_user, document)
 
-        read = self._to_instance_read(instance)
+        instance = self.session.exec(
+            select(WorkflowInstance)
+            .where(WorkflowInstance.document_id == document_id)
+            .order_by(WorkflowInstance.submitted_at.desc())
+        ).first()
+        if not instance:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No workflow instance found for document {document_id}",
+            )
 
-        actions_read = []
-        for action in instance.actions:
-            actions_read.append(WorkflowActionRead(
-                id=action.id,
-                workflow_instance_id=action.workflow_instance_id,
-                workflow_step_id=action.workflow_step_id,
-                acted_by=action.acted_by,
-                acted_by_name=action.acted_by_user.full_name if action.acted_by_user else None,
-                action=action.action,
-                remarks=action.remarks,
-                signature_id=action.signature_id,
-                acted_at=action.acted_at,
-            ))
-
-        history_read = []
-        for h in instance.history:
-            history_read.append(WorkflowHistoryRead(
-                id=h.id,
-                workflow_instance_id=h.workflow_instance_id,
-                event_type=h.event_type,
-                actor_id=h.actor_id,
-                actor_name=h.actor.full_name if h.actor else None,
-                designation_snapshot=h.designation_snapshot,
-                remarks=h.remarks,
-                status_snapshot=h.status_snapshot,
-                occurred_at=h.occurred_at,
-            ))
-
-        return WorkflowInstanceDetailRead(
-            **read.model_dump(),
-            actions=actions_read,
-            history=history_read,
-        )
+        return self._to_instance_detail(instance)
 
     def list_my_instances(
         self,
@@ -958,6 +983,13 @@ class ApprovalActionService:
     ) -> WorkflowInstanceRead:
         instance_svc = WorkflowInstanceService(self.session)
         instance = instance_svc._get_instance_or_404(instance_id)
+
+        # Makers cannot perform approval actions
+        if any(r.name == RoleName.MAKER for r in current_user.roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Makers cannot perform approval actions",
+            )
 
         # Validate instance is in an actionable state
         if instance.status not in (
@@ -1224,6 +1256,19 @@ class SignatureService:
         )
 
         return self._to_read(sig)
+
+    def list_signatures(self, current_user: User) -> List[SignatureRead]:
+        """List the current user's active signatures (newest first). Admins see their own."""
+        query = (
+            select(Signature)
+            .where(
+                Signature.user_id == current_user.id,
+                Signature.is_active == True,
+            )
+            .order_by(Signature.created_at.desc())
+        )
+        signatures = self.session.exec(query).all()
+        return [self._to_read(s) for s in signatures]
 
     def get_signature(self, signature_id: int, current_user: User) -> SignatureRead:
         """Get signature metadata. Users can view their own; admins can view all."""

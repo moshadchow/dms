@@ -19,6 +19,19 @@ router = APIRouter()
 
 
 @router.get(
+    "",
+    response_model=List[DirectoryRead],
+    summary="List all directories the user has access to",
+)
+def list_all_directories(
+    current_user: CurrentUser,
+    session: Session = Depends(get_session),
+):
+    """Flat list of all directories across categories the user can access."""
+    return DirectoryService(session).list_all(current_user)
+
+
+@router.get(
     "/category/{category_id}",
     response_model=List[DirectoryRead],
     summary="List root directories for a category",

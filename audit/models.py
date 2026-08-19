@@ -70,6 +70,12 @@ class AuditAction(str, Enum):
     RETURN_WORKFLOW = "return_workflow"
     CANCEL_WORKFLOW = "cancel_workflow"
 
+    # Memos
+    CREATE_MEMO = "create_memo"
+    UPDATE_MEMO = "update_memo"
+    SUBMIT_MEMO = "submit_memo"
+    DOWNLOAD_FINAL_DRAFT = "download_final_draft"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"

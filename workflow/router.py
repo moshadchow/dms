@@ -182,6 +182,19 @@ def list_my_instances(
 
 
 @instance_router.get(
+    "/by-document/{document_id}",
+    response_model=WorkflowInstanceDetailRead,
+    summary="Get the latest workflow instance for a document",
+)
+def get_workflow_instance_by_document(
+    document_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return WorkflowInstanceService(session).get_by_document(document_id, current_user)
+
+
+@instance_router.get(
     "/{instance_id}",
     response_model=WorkflowInstanceDetailRead,
     summary="Get workflow instance detail",
@@ -249,6 +262,18 @@ def upload_signature(
             detail=f"Invalid sig_type '{sig_type}'. Must be 'e_signature' or 'wet_signature'",
         )
     return SignatureService(session).upload_signature(file, current_user, sig_type_enum)
+
+
+@signature_router.get(
+    "",
+    response_model=List[SignatureRead],
+    summary="List current user's signatures",
+)
+def list_signatures(
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return SignatureService(session).list_signatures(current_user)
 
 
 @signature_router.get(

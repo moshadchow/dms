@@ -13,7 +13,6 @@ import DocumentCard from '@/components/documents/DocumentCard'
 import DocumentViewer from '@/components/documents/DocumentViewer'
 import UploadModal from '@/components/documents/UploadModal'
 import EditDocumentModal from '@/components/documents/EditDocumentModal'
-import SubmitForApprovalModal from '@/components/workflow/SubmitForApprovalModal'
 import type { Category } from '@/types/category.types'
 import type { DirectoryNode } from '@/types/directory.types'
 import type { Document, DocumentListResponse } from '@/types/document.types'
@@ -51,7 +50,6 @@ export default function DocumentsPage() {
   const [viewingDoc, setViewingDoc]   = useState<Document | null>(null)
   const [editingDoc, setEditingDoc]   = useState<Document | null>(null)
   const [uploadOpen, setUploadOpen]   = useState(false)
-  const [submittingDoc, setSubmittingDoc] = useState<Document | null>(null)
 
   // ── Resolve category/directory from URL ───────────────────────
   useEffect(() => {
@@ -360,7 +358,6 @@ export default function DocumentsPage() {
                           doc={doc}
                           onView={setViewingDoc}
                           onRefresh={loadDocuments}
-                          onSubmitForApproval={setSubmittingDoc}
                           selectable={showArchived && isAdmin}
                           selected={selectedIds.has(doc.id)}
                           onSelect={handleSelectDoc}
@@ -412,15 +409,6 @@ export default function DocumentsPage() {
         onClose={() => setEditingDoc(null)}
         onSuccess={loadDocuments}
       />
-
-      {submittingDoc && resolvedCategoryId != null && (
-        <SubmitForApprovalModal
-          doc={submittingDoc}
-          categoryId={resolvedCategoryId}
-          onClose={() => setSubmittingDoc(null)}
-          onSuccess={() => { setSubmittingDoc(null); loadDocuments() }}
-        />
-      )}
     </>
   )
 }

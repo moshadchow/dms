@@ -771,8 +771,8 @@ class TestApprovalActionService:
             action = WorkflowActionCreate(action=ApprovalAction.APPROVE)
             with pytest.raises(HTTPException) as exc_info:
                 action_svc.act_on_instance(instance.id, action, current_user=maker)
-            assert exc_info.value.status_code == 422
-            assert "cannot approve their own" in str(exc_info.value.detail)
+            assert exc_info.value.status_code == 403
+            assert "Makers cannot perform approval actions" in str(exc_info.value.detail)
 
     def test_ineligible_user_blocked(self, seeded_data, client):
         _, engine, _ = client

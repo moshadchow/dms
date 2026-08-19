@@ -11,7 +11,6 @@ interface Props {
   doc:        Document
   onView:     (doc: Document) => void
   onRefresh:  () => void
-  onSubmitForApproval?: (doc: Document) => void
   selectable?: boolean
   selected?:   boolean
   onSelect?:   (id: number, checked: boolean) => void
@@ -59,7 +58,7 @@ const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }>
   deleted:  { bg: '#fef2f2', color: '#dc2626', label: 'Deleted' },
 }
 
-export default function DocumentCard({ doc, onView, onRefresh, onSubmitForApproval, selectable, selected, onSelect }: Props) {
+export default function DocumentCard({ doc, onView, onRefresh, selectable, selected, onSelect }: Props) {
   const { canUpdate, canDelete, canDownload, isAdmin } = usePermissions()
   const [menuOpen, setMenuOpen]   = useState(false)
   const [loading, setLoading]     = useState(false)
@@ -173,13 +172,6 @@ export default function DocumentCard({ doc, onView, onRefresh, onSubmitForApprov
               <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', width: '170px', backgroundColor: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.1)', zIndex: 50, padding: '0.3rem', overflow: 'hidden' }}>
                 <MenuItem icon="eye"      label="Preview"  onClick={() => { setMenuOpen(false); onView(doc) }} />
                 {canDownload && <MenuItem icon="download"  label="Download" onClick={() => { setMenuOpen(false); handleDownload() }} />}
-                {doc.workflow_status === 'approved' ? (
-                  <MenuItem icon="check-circle" label="Approved" onClick={() => {}} disabled />
-                ) : (
-                  canUpdate && doc.status === 'active' && onSubmitForApproval && (
-                    <MenuItem icon="send" label="Submit for Approval" onClick={() => { setMenuOpen(false); onSubmitForApproval(doc) }} />
-                  )
-                )}
                 {canUpdate && doc.status === 'active'   && <MenuItem icon="archive"  label="Archive"  onClick={handleArchive} />}
                 {isAdmin    && doc.status !== 'active'  && <MenuItem icon="restore"  label="Restore"  onClick={handleRestore} />}
                 {canDelete  && (
@@ -223,11 +215,9 @@ function MenuItem({ icon, label, onClick, danger, disabled }: { icon: string; la
   const icons: Record<string, React.ReactNode> = {
     eye:      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
     download: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
-    send:     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>,
     archive:  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>,
     restore:  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>,
     trash:    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>,
-    'check-circle': <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
   }
   return (
     <button onClick={onClick} disabled={disabled} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', border: 'none', borderRadius: '7px', backgroundColor: 'transparent', cursor: disabled ? 'default' : 'pointer', fontSize: '0.83rem', fontWeight: 500, color: danger ? '#dc2626' : disabled ? 'var(--text-muted)' : 'var(--text-secondary)', textAlign: 'left', fontFamily: 'inherit', opacity: disabled ? 0.6 : 1 }}>

@@ -594,6 +594,11 @@ function ActionWithSignature({ action }: { action: WorkflowAction }) {
         >
           {action.action}
         </span>
+        {action.step_name && (
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+            Step: {action.step_name}
+          </span>
+        )}
         <span style={{ fontSize: 13, color: "var(--text)" }}>
           {action.acted_by_name ?? `User #${action.acted_by}`}
         </span>

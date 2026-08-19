@@ -11,6 +11,7 @@ from core.config         import settings
 from core.database       import create_db_and_tables
 from directories.router  import router as directories_router
 from documents.router    import router as documents_router
+from memos.router        import router as memos_router
 from middleware.audit     import audit_middleware
 from middleware.rbac     import rbac_middleware
 from users.router        import router as users_router
@@ -80,6 +81,7 @@ app.include_router(audit_router,       prefix=f"{API}/audit-logs",  tags=["Audit
 app.include_router(workflow_router,          prefix=f"{API}/workflows",           tags=["Workflows"])
 app.include_router(workflow_instance_router, prefix=f"{API}/workflow-instances",  tags=["Workflow Instances"])
 app.include_router(workflow_signature_router, prefix=f"{API}/signatures",         tags=["Signatures"])
+app.include_router(memos_router,             prefix=f"{API}/memos",               tags=["Memos"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────
