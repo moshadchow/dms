@@ -8,6 +8,7 @@ import type { WorkflowInstanceDetail, ApprovalAction, WorkflowActionCreate } fro
 import Button from '@/components/ui/Button'
 import SignaturePad from '@/components/workflow/SignaturePad'
 import { useAuthStore } from '@/store/authStore'
+import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   draft: { bg: '#f1f5f9', color: '#475569' },
@@ -197,21 +198,14 @@ export default function MemoDetailPage() {
             </div>
             <hr style={{ border: 'none', borderTop: '1px solid #e2e8f0', margin: '1rem 0' }} />
             <div
+              className="memo-body"
               style={{
                 lineHeight: 1.7,
                 fontSize: '0.95rem',
                 color: '#1e293b',
-                whiteSpace: 'pre-wrap',
               }}
               dangerouslySetInnerHTML={{
-                __html: memo.body
-                  .replace(/&/g, '&')
-                  .replace(/</g, '<')
-                  .replace(/>/g, '>')
-                  .replace(/\n/g, '<br>')
-                  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                  .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                  .replace(/`(.+?)`/g, '<code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:0.9em">$1</code>')
+                __html: sanitizeHtml(memo.body)
               }}
             />
           </div>

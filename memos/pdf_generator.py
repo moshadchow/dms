@@ -4,13 +4,14 @@ memos/pdf_generator.py
 Generates a PDF document containing the memo content with embedded
 signatures from the maker and all approvers in workflow order.
 
-Uses reportlab for PDF generation.
+Uses reportlab for PDF generation and html.parser for HTML-to-ReportLab conversion.
 """
 
 from __future__ import annotations
 
 import re
 import tempfile
+from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -41,7 +42,7 @@ from core.config import settings
 def _sanitize_for_reportlab(text: str) -> str:
     """Remove any malformed XML tags that could break reportlab's parser.
 
-    This is a safety net to catch edge cases in markdown-to-XML conversion.
+    This is a safety net to catch edge cases in HTML-to-XML conversion.
     """
     # Remove empty tags
     text = re.sub(r"<([a-zA-Z]+)>\s*</\1>", "", text)
@@ -49,8 +50,6 @@ def _sanitize_for_reportlab(text: str) -> str:
     text = re.sub(r"<([a-zA-Z]+)>\s+</\1>", "", text)
     # Fix mismatched nesting: <b><i></b> -> <b></b>
     text = re.sub(r"<([a-zA-Z]+)><([a-zA-Z]+)></\1>", r"<\1></\1>", text)
-    # Remove any remaining orphaned closing tags that don't match
-    # This is a last resort - just strip any tag-like content that's not valid
     return text
 
 
@@ -141,135 +140,35 @@ def _build_styles():
         textColor=colors.HexColor("#94a3b8"),
     ))
 
+    styles.add(ParagraphStyle(
+        name="Blockquote",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=14,
+        leftIndent=20,
+        textColor=colors.HexColor("#64748b"),
+        fontName="Helvetica-Oblique",
+    ))
+
+    styles.add(ParagraphStyle(
+        name="CodeBlock",
+        parent=styles["Normal"],
+        fontSize=8,
+        leading=11,
+        fontName="Courier",
+        textColor=colors.HexColor("#334155"),
+        backColor=colors.HexColor("#f8fafc"),
+        borderWidth=1,
+        borderColor=colors.HexColor("#e2e8f0"),
+        borderPadding=8,
+    ))
+
     return styles
 
 
 # ──────────────────────────────────────────────
-# Markdown helpers
+# HTML-to-ReportLab converter
 # ──────────────────────────────────────────────
-
-def _strip_markdown(body: str) -> str:
-    """Convert markdown body to plain text with basic formatting preserved."""
-    text = body
-
-    # Remove fenced code blocks
-    text = re.sub(r"```[\s\S]*?```", "", text)
-
-    # Remove inline code
-    text = re.sub(r"`([^`]+)`", r"\1", text)
-
-    # Remove bold/italic markers
-    text = text.replace("**", "").replace("*", "").replace("__", "").replace("_", "")
-
-    # Remove blockquote markers
-    text = re.sub(r"^>\s?", "", text, flags=re.MULTILINE)
-
-    # Remove heading markers but keep text
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-
-    # Remove link markup but keep text
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-
-    # Remove image markup
-    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"[Image: \1]", text)
-
-    # Clean up multiple blank lines
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    return text.strip()
-
-
-def _markdown_to_paragraphs(body: str, styles) -> List:
-    """Convert markdown body to a list of reportlab Paragraph objects."""
-    paragraphs = []
-    lines = body.split("\n")
-    in_code_block = False
-    code_lines = []
-
-    for line in lines:
-        # Fenced code block toggle
-        if line.strip().startswith("```"):
-            if in_code_block:
-                # End of code block
-                code_text = "<br/>".join(code_lines)
-                code_text = code_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                paragraphs.append(Paragraph(
-                    f'<font face="Courier" size="8" color="#334155">{code_text}</font>',
-                    styles["BodyText2"],
-                ))
-                paragraphs.append(Spacer(1, 6))
-                code_lines = []
-                in_code_block = False
-            else:
-                in_code_block = True
-            continue
-
-        if in_code_block:
-            code_lines.append(line)
-            continue
-
-        stripped = line.strip()
-
-        # Empty line
-        if not stripped:
-            paragraphs.append(Spacer(1, 4))
-            continue
-
-        # Heading
-        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
-        if heading_match:
-            level = len(heading_match.group(1))
-            text = heading_match.group(2)
-            text = _escape_xml(text)
-            if level <= 2:
-                paragraphs.append(Paragraph(text, styles["SectionHeader"]))
-            else:
-                paragraphs.append(Paragraph(f"<b>{text}</b>", styles["BodyText2"]))
-            continue
-
-        # Blockquote
-        if stripped.startswith(">"):
-            text = stripped.lstrip("> ").strip()
-            text = _escape_xml(text)
-            paragraphs.append(Paragraph(
-                f'<i>{text}</i>',
-                ParagraphStyle(
-                    "Quote",
-                    parent=styles["BodyText2"],
-                    leftIndent=20,
-                    textColor=colors.HexColor("#64748b"),
-                ),
-            ))
-            continue
-
-        # Unordered list
-        list_match = re.match(r"^[-*+]\s+(.+)$", stripped)
-        if list_match:
-            text = list_match.group(1)
-            text = _escape_xml(text)
-            paragraphs.append(Paragraph(f"\u2022  {text}", styles["BodyText2"]))
-            continue
-
-        # Ordered list
-        ol_match = re.match(r"^\d+[.)]\s+(.+)$", stripped)
-        if ol_match:
-            text = ol_match.group(1)
-            text = _escape_xml(text)
-            paragraphs.append(Paragraph(f"\u2022  {text}", styles["BodyText2"]))
-            continue
-
-        # Horizontal rule
-        if re.match(r"^[-*_]{3,}$", stripped):
-            paragraphs.append(Spacer(1, 4))
-            continue
-
-        # Regular paragraph - apply inline formatting
-        text = _apply_inline_formatting(stripped)
-        text = _sanitize_for_reportlab(text)
-        paragraphs.append(Paragraph(text, styles["BodyText2"]))
-
-    return paragraphs
-
 
 def _escape_xml(text: str) -> str:
     """Escape XML special characters."""
@@ -277,51 +176,249 @@ def _escape_xml(text: str) -> str:
 
 
 def _apply_inline_formatting(text: str) -> str:
-    """Convert markdown inline formatting to reportlab XML markup.
+    """Convert HTML inline tags to ReportLab XML markup.
 
-    Uses a safe approach: escape XML, strip formatting markers, and
-    only apply bold for clearly-delimited cases. Avoids complex nesting
-    that can produce malformed XML for reportlab's parser.
+    The input text may contain HTML tags from the sanitized memo body.
+    We convert supported tags to ReportLab-compatible XML.
     """
     # Escape XML first
     text = _escape_xml(text)
 
-    # Bold: **text** or __text__ (only if non-empty content between markers)
-    # Use a placeholder approach to avoid re-matching
-    bold_parts = []
-    remaining = text
-    for pattern in [r"\*\*(.+?)\*\*", r"__(.+?)__"]:
-        parts = re.split(pattern, remaining)
-        result = []
-        is_content = False
-        for part in parts:
-            if is_content:
-                if part.strip():
-                    result.append(f"<b>{part}</b>")
-                else:
-                    result.append(part)
-            else:
-                result.append(part)
-            is_content = not is_content
-        remaining = "".join(result)
-    text = remaining
+    # Convert HTML inline tags to ReportLab XML
+    # Bold: <strong>, <b>
+    text = re.sub(r"<strong>(.*?)</strong>", r"<b>\1</b>", text)
+    text = re.sub(r"<b>(.*?)</b>", r"<b>\1</b>", text)
 
-    # Inline code: `text` (apply before italic to avoid conflicts)
+    # Italic: <em>, <i>
+    text = re.sub(r"<em>(.*?)</em>", r"<i>\1</i>", text)
+    text = re.sub(r"<i>(.*?)</i>", r"<i>\1</i>", text)
+
+    # Underline: <u>
+    # ReportLab supports <u> tags
+
+    # Strikethrough: <s>, <strike>, <del>
+    text = re.sub(r"<s>(.*?)</s>", r"<strike>\1</strike>", text)
+    text = re.sub(r"<del>(.*?)</del>", r"<strike>\1</strike>", text)
+
+    # Inline code: <code>
     text = re.sub(
-        r"`([^`]+)`",
+        r"<code>(.*?)</code>",
         r'<font face="Courier" size="8" color="#e11d48">\1</font>',
         text,
     )
 
-    # Strip remaining italic markers (*text* and _text_) to plain text
-    # This avoids complex XML nesting issues with reportlab
-    text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", text)
-    text = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"\1", text)
+    # Links: <a href="url">text</a> -> text (strip URL for PDF)
+    text = re.sub(r'<a[^>]*>(.*?)</a>', r"\1", text)
 
-    # Links: [text](url) -> text
-    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Images: <img ...> -> [Image: alt]
+    text = re.sub(r'<img[^>]*alt="([^"]*)"[^>]*/?>', r"[Image: \1]", text)
+    text = re.sub(r'<img[^>]*/?>', "[Image]", text)
+
+    # Font tags: pass through (already ReportLab compatible)
+    # Color: <font color="..."> -> pass through
 
     return text
+
+
+class _HTMLToReportLabParser(HTMLParser):
+    """Parse HTML body and convert to ReportLab Paragraph flowables."""
+
+    def __init__(self, styles):
+        super().__init__()
+        self.styles = styles
+        self.flowables: list = []
+        self._current_text = ""
+        self._tag_stack: list[str] = []
+        self._in_pre = False
+        self._pre_text = ""
+        self._in_table = False
+        self._table_rows: list[list[str]] = []
+        self._current_row: list[str] = []
+        self._current_cell = ""
+        self._in_blockquote = False
+        self._blockquote_text = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]):
+        tag = tag.lower()
+        self._tag_stack.append(tag)
+
+        if tag == "pre":
+            self._flush_text()
+            self._in_pre = True
+            self._pre_text = ""
+        elif tag == "table":
+            self._flush_text()
+            self._in_table = True
+            self._table_rows = []
+        elif tag == "tr":
+            self._current_row = []
+        elif tag in ("td", "th"):
+            self._current_cell = ""
+        elif tag == "blockquote":
+            self._flush_text()
+            self._in_blockquote = True
+            self._blockquote_text = ""
+        elif tag in ("ul", "ol"):
+            self._flush_text()
+        elif tag == "li":
+            self._current_text += "\u2022  "
+        elif tag == "br":
+            self._current_text += "<br/>"
+        elif tag == "hr":
+            self._flush_text()
+            self.flowables.append(Spacer(1, 4))
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self._flush_text()
+        elif tag == "p":
+            self._flush_text()
+
+    def handle_endtag(self, tag: str):
+        tag = tag.lower()
+
+        if tag == "pre" and self._in_pre:
+            self._in_pre = False
+            code_text = _escape_xml(self._pre_text.strip())
+            code_text = code_text.replace("\n", "<br/>")
+            if code_text:
+                self.flowables.append(Paragraph(
+                    f'<font face="Courier" size="8">{code_text}</font>',
+                    self.styles["CodeBlock"],
+                ))
+                self.flowables.append(Spacer(1, 6))
+            self._pre_text = ""
+        elif tag == "table" and self._in_table:
+            self._in_table = False
+            self._render_table()
+        elif tag == "tr" and self._in_table:
+            self._table_rows.append(self._current_row)
+        elif tag in ("td", "th") and self._in_table:
+            self._current_row.append(self._current_cell.strip())
+        elif tag == "blockquote" and self._in_blockquote:
+            self._in_blockquote = False
+            text = self._blockquote_text.strip()
+            if text:
+                text = _apply_inline_formatting(text)
+                text = _sanitize_for_reportlab(text)
+                self.flowables.append(Paragraph(
+                    text,
+                    self.styles["Blockquote"],
+                ))
+            self._blockquote_text = ""
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            text = self._current_text.strip()
+            self._current_text = ""
+            if text:
+                text = _escape_xml(text)
+                level = int(tag[1])
+                if level <= 2:
+                    self.flowables.append(Paragraph(text, self.styles["SectionHeader"]))
+                else:
+                    self.flowables.append(Paragraph(f"<b>{text}</b>", self.styles["BodyText2"]))
+        elif tag == "p":
+            text = self._current_text.strip()
+            self._current_text = ""
+            if text:
+                text = _apply_inline_formatting(text)
+                text = _sanitize_for_reportlab(text)
+                self.flowables.append(Paragraph(text, self.styles["BodyText2"]))
+        elif tag in ("ul", "ol"):
+            self._flush_text()
+        elif tag == "li":
+            # List items are handled via the bullet character prefix
+            pass
+
+        if self._tag_stack and self._tag_stack[-1] == tag:
+            self._tag_stack.pop()
+
+    def handle_data(self, data: str):
+        if self._in_pre:
+            self._pre_text += data
+        elif self._in_blockquote:
+            self._blockquote_text += data
+        elif self._in_table:
+            self._current_cell += data
+        else:
+            self._current_text += data
+
+    def _flush_text(self):
+        """Flush accumulated text as a paragraph."""
+        text = self._current_text.strip()
+        self._current_text = ""
+        if text:
+            text = _apply_inline_formatting(text)
+            text = _sanitize_for_reportlab(text)
+            self.flowables.append(Paragraph(text, self.styles["BodyText2"]))
+
+    def _render_table(self):
+        """Render collected table rows as a ReportLab Table."""
+        if not self._table_rows:
+            return
+
+        # Sanitize all cell content
+        sanitized_rows = []
+        for row in self._table_rows:
+            sanitized_row = []
+            for cell in row:
+                cell_text = _apply_inline_formatting(cell)
+                cell_text = _sanitize_for_reportlab(cell_text)
+                sanitized_row.append(cell_text)
+            sanitized_rows.append(sanitized_row)
+
+        if not sanitized_rows:
+            return
+
+        # Ensure all rows have the same number of columns
+        max_cols = max(len(row) for row in sanitized_rows)
+        for row in sanitized_rows:
+            while len(row) < max_cols:
+                row.append("")
+
+        # Calculate column widths
+        available_width = 480  # approximate A4 width minus margins
+        col_width = available_width / max_cols if max_cols > 0 else available_width
+
+        try:
+            table = Table(sanitized_rows, colWidths=[col_width] * max_cols)
+            table.setStyle(TableStyle([
+                ("GRID", (0, 0), (-1, -1), 1, colors.HexColor("#e2e8f0")),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            self.flowables.append(table)
+            self.flowables.append(Spacer(1, 8))
+        except Exception:
+            # Fallback: render table as text
+            for row in sanitized_rows:
+                text = " | ".join(row)
+                self.flowables.append(Paragraph(text, self.styles["BodyText2"]))
+
+
+def _html_to_paragraphs(body: str, styles) -> List:
+    """Convert HTML body to a list of reportlab Paragraph objects.
+
+    This is the primary conversion function for the new rich-text editor content.
+    """
+    if not body or not body.strip():
+        return [Paragraph("", styles["BodyText2"])]
+
+    parser = _HTMLToReportLabParser(styles)
+    try:
+        parser.feed(body)
+    except Exception:
+        # Fallback: treat as plain text
+        text = _escape_xml(body)
+        text = text.replace("\n", "<br/>")
+        return [Paragraph(text, styles["BodyText2"])]
+
+    parser._flush_text()
+
+    return parser.flowables if parser.flowables else [Paragraph("", styles["BodyText2"])]
 
 
 # ──────────────────────────────────────────────
@@ -382,7 +479,7 @@ def generate_memo_pdf(
 
     Args:
         memo_subject: The memo subject/title.
-        memo_body: The memo body in markdown format.
+        memo_body: The memo body in HTML format (pre-sanitized).
         memo_date: Formatted date string for the memo.
         author_name: Name of the memo author (Maker).
         author_signature_path: Path to the maker's signature image (or None).
@@ -478,7 +575,7 @@ def generate_memo_pdf(
 
     # ── Body content ──
     story.append(Paragraph("CONTENT", styles["SectionHeader"]))
-    body_paragraphs = _markdown_to_paragraphs(memo_body, styles)
+    body_paragraphs = _html_to_paragraphs(memo_body, styles)
     story.extend(body_paragraphs)
     story.append(Spacer(1, 20))
 

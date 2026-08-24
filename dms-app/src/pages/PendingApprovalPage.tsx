@@ -12,6 +12,7 @@ import type {
   ApprovalAction,
 } from '@/types/workflow.types'
 import type { MemoDetail } from '@/types/memo.types'
+import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 const LIMIT = 20
 
@@ -344,20 +345,14 @@ export default function PendingApprovalPage() {
                   <div>
                     <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Content</p>
                     <div
+                      className="memo-body"
                       style={{
                         padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)',
                         backgroundColor: 'var(--bg, #f8fafc)', maxHeight: '300px', overflowY: 'auto',
-                        lineHeight: 1.7, fontSize: '0.88rem', color: '#1e293b', whiteSpace: 'pre-wrap',
+                        lineHeight: 1.7, fontSize: '0.88rem', color: '#1e293b',
                       }}
                       dangerouslySetInnerHTML={{
-                        __html: memoDetail.body
-                          .replace(/&/g, '&')
-                          .replace(/</g, '<')
-                          .replace(/>/g, '>')
-                          .replace(/\n/g, '<br>')
-                          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                          .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                          .replace(/`(.+?)`/g, '<code style="background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:0.9em">$1</code>')
+                        __html: sanitizeHtml(memoDetail.body)
                       }}
                     />
                   </div>

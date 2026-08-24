@@ -49,7 +49,7 @@ export interface MemoCreate {
   user_level_ids: number[]
   memo_date?: string | null
   subject: string
-  body: string
+  body: string  // HTML content from rich-text editor
   attachment_document_ids?: number[]
 }
 

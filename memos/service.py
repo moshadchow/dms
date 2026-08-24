@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+import bleach
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
@@ -142,8 +143,52 @@ def render_markdown(body: str) -> str:
     return "\n".join(out) or "<p></p>"
 
 
+# ──────────────────────────────────────────────
+# HTML sanitization for memo body content
+# ──────────────────────────────────────────────
+
+ALLOWED_TAGS = [
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "p", "br", "hr",
+    "strong", "b", "em", "i", "u", "s", "strike", "del",
+    "code", "pre", "blockquote",
+    "ul", "ol", "li",
+    "a", "img",
+    "table", "thead", "tbody", "tr", "th", "td",
+    "div", "span", "font",
+]
+
+ALLOWED_ATTRS = {
+    "*": ["class", "style", "title"],
+    "a": ["href", "target", "rel"],
+    "img": ["src", "alt", "width", "height"],
+    "td": ["colspan", "rowspan"],
+    "th": ["colspan", "rowspan"],
+    "font": ["color", "size", "face"],
+}
+
+
+def sanitize_memo_html(body: str) -> str:
+    """Sanitize HTML body content for safe storage and rendering.
+
+    Strips dangerous tags (script, iframe, object, etc.) and unsafe attributes.
+    Uses bleach for production-grade sanitization.
+    """
+    if not body:
+        return ""
+    return bleach.clean(
+        body,
+        tags=ALLOWED_TAGS,
+        attributes=ALLOWED_ATTRS,
+        strip=True,
+    )
+
+
 def build_memo_html(subject: str, body: str) -> str:
-    """Build a standalone HTML document from a memo's subject + markdown body."""
+    """Build a standalone HTML document from a memo's subject + HTML body.
+
+    The body parameter is expected to be pre-sanitized HTML content.
+    """
     escaped_subject = html.escape(subject)
     return (
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -157,7 +202,7 @@ def build_memo_html(subject: str, body: str) -> str:
         "color:#64748b}table{border-collapse:collapse}td,th{border:1px solid #e2e8f0;"
         "padding:6px 10px}</style></head><body>"
         f"<h1>{escaped_subject}</h1>"
-        f"{render_markdown(body)}"
+        f"{body}"
         "</body></html>"
     )
 
@@ -382,7 +427,7 @@ class MemoService:
             document_id=0,
             memo_date=memo_date,
             subject=data.subject,
-            body=data.body,
+            body=sanitize_memo_html(data.body),
             created_by=current_user.id,
         )
 
@@ -479,7 +524,7 @@ class MemoService:
         if data.memo_date is not None:
             memo.memo_date = data.memo_date
         if data.body is not None:
-            memo.body = data.body
+            memo.body = sanitize_memo_html(data.body)
 
         body_changed = data.subject is not None or data.body is not None
         if body_changed:

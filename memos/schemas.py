@@ -18,7 +18,7 @@ class MemoCreate(BaseModel):
     )
     memo_date: Optional[datetime] = Field(None, description="Defaults to now")
     subject: str = Field(..., min_length=1, max_length=255)
-    body: str = Field("", max_length=50000, description="Markdown-style body")
+    body: str = Field("", max_length=50000, description="HTML body content from rich-text editor")
     attachment_document_ids: List[int] = Field(
         default_factory=list,
         description="Existing document IDs to attach as supporting evidence",

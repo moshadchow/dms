@@ -7,6 +7,7 @@ import type { Document } from '@/types/document.types'
 import type { MemoCreate, MemoUpdate } from '@/types/memo.types'
 import Button from '@/components/ui/Button'
 import AttachmentUploader from './AttachmentUploader'
+import MemoRichTextEditor from './editor/MemoRichTextEditor'
 
 interface MemoFormProps {
   initialData?: Partial<MemoCreate> | Partial<MemoUpdate>
@@ -149,23 +150,12 @@ export default function MemoForm({
       </div>
 
       <div>
-        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>Body (Markdown)</label>
-        <textarea
+        <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>Body</label>
+        <MemoRichTextEditor
           value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Write your memo here...\n\n# Heading\n\n**Bold** and *italic* text\n\n- Bullet 1\n- Bullet 2"
-          style={{
-            width: '100%',
-            minHeight: 200,
-            padding: '12px',
-            border: '1px solid #cbd5e1',
-            borderRadius: 6,
-            fontSize: '0.85rem',
-            fontFamily: 'monospace',
-            resize: 'vertical',
-          }}
+          onChange={setBody}
+          placeholder="Write your memo here..."
         />
-        <p style={{ margin: '4px 0 0', fontSize: '0.7rem', color: '#94a3b8' }}>Supports headings, bold, italic, lists, code blocks, blockquotes, links</p>
       </div>
 
       <div>
