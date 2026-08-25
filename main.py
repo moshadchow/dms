@@ -17,6 +17,7 @@ from middleware.rbac     import rbac_middleware
 from users.router        import router as users_router
 from user_levels.router  import router as user_levels_router
 from workflow.router import router as workflow_router, instance_router as workflow_instance_router, signature_router as workflow_signature_router
+from storage_usage.router import router as storage_router
 
 
 @asynccontextmanager
@@ -82,6 +83,7 @@ app.include_router(workflow_router,          prefix=f"{API}/workflows",         
 app.include_router(workflow_instance_router, prefix=f"{API}/workflow-instances",  tags=["Workflow Instances"])
 app.include_router(workflow_signature_router, prefix=f"{API}/signatures",         tags=["Signatures"])
 app.include_router(memos_router,             prefix=f"{API}/memos",               tags=["Memos"])
+app.include_router(storage_router,           prefix=f"{API}/storage",              tags=["Storage"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

@@ -57,7 +57,6 @@ class WorkflowDefinitionCreate(BaseModel):
         examples=["Invoice Approval"],
     )
     description: Optional[str] = Field(None, max_length=1000)
-    document_category_id: int = Field(..., description="FK → categories.id")
     steps: List[WorkflowStepCreate] = Field(
         ...,
         min_length=1,
@@ -80,7 +79,6 @@ class WorkflowDefinitionUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
-    document_category_id: Optional[int] = None
     is_active: Optional[bool] = None
     steps: Optional[List[WorkflowStepCreate]] = Field(
         None,

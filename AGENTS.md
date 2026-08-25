@@ -49,6 +49,13 @@ The `workflow/` module has three router objects in `router.py`: `router` (workfl
 
 The `memos/` module creates document drafts with markdown rendering and workflow integration. Its service uses `core/access.py` helpers (`ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`) for permission checks.
 
+**Memo edit access rules** (`memos/service.py` `_check_edit_access`):
+- Admin always bypasses
+- Terminal statuses (`approved`, `published`, `cancelled`, `archived`) → no edits allowed
+- Author can edit in any non-terminal status (`draft`, `submitted`, `pending_approval`, `returned`, `rejected`)
+- Eligible approvers can edit in `draft`, `returned`, `rejected` status only (not `submitted`/`pending_approval`)
+- `MemoUpdate` schema includes optional `signature_id` field for updating the author's signature before approval
+
 The `memos/` module has a PDF generator (`memos/pdf_generator.py`) for final draft downloads. It converts markdown to reportlab XML. **Gotcha:** Reportlab's `Paragraph` parser is strict about balanced XML tags — the markdown-to-XML conversion (`_apply_inline_formatting`) strips italic markers to plain text (instead of generating `<i>` tags) to avoid malformed nesting. A `_sanitize_for_reportlab()` safety net removes empty/malformed tags before rendering.
 
 ## Audit Trail Module
@@ -137,6 +144,8 @@ Generic, document-type-agnostic approval engine. Reuses `auth/`, RBAC, `users/`,
 - `WorkflowInstanceService` — starts/tracks a workflow run against a document
 - `ApprovalActionService` — approve / reject / return / clarify / forward
 - `SignatureService` — stores e-signature (uploaded image) or wet-signature (canvas capture) as a file reference, never mutates the source document
+
+**Note:** Workflow definitions are category-agnostic. The `document_category_id` field was removed from `WorkflowDefinition`. Category filtering is handled at the document level, not the workflow level.
 
 ### Workflow Status Enum
 `draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved` | `cancelled`) → `published` (optional) → `archived`

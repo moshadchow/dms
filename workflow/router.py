@@ -49,7 +49,6 @@ signature_router = APIRouter()
     summary="List workflow definitions",
 )
 def list_workflow_definitions(
-    category_id: Optional[int] = Query(None, description="Filter by category ID"),
     is_active:  Optional[bool] = Query(None, description="Filter by active status"),
     skip:       int            = Query(0, ge=0),
     limit:      int            = Query(50, ge=1, le=200),
@@ -57,7 +56,7 @@ def list_workflow_definitions(
     session:    Session        = Depends(get_session),
 ):
     return WorkflowDefinitionService(session).list_definitions(
-        skip=skip, limit=limit, category_id=category_id, is_active=is_active,
+        skip=skip, limit=limit, is_active=is_active,
     )
 
 

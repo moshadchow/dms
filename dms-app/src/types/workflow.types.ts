@@ -25,8 +25,6 @@ export interface WorkflowDefinition {
   id: number
   name: string
   description: string | null
-  document_category_id: number
-  category_name: string | null
   is_active: boolean
   created_by: number
   created_at: string
@@ -60,14 +58,12 @@ export interface WorkflowStepCreate {
 export interface WorkflowDefinitionCreate {
   name: string
   description?: string
-  document_category_id: number
   steps: WorkflowStepCreate[]
 }
 
 export interface WorkflowDefinitionUpdate {
   name?: string
   description?: string
-  document_category_id?: number
   is_active?: boolean
   steps?: WorkflowStepCreate[]
 }

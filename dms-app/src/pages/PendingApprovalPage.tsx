@@ -91,7 +91,7 @@ export default function PendingApprovalPage() {
       const memo = await memoApi.getByDocument(instance.document_id)
       setMemoDetail(memo)
     } catch {
-      // Memo may not exist for non-memo documents; fail silently
+      toast.error('Unable to load memo content')
     } finally {
       setMemoLoading(false)
     }

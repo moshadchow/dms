@@ -4,13 +4,11 @@ import { workflowApi } from '@/api/workflow.api'
 import { usersApi } from '@/api/users.api'
 import { getErrorMessage } from '@/api/client'
 import type { WorkflowDefinitionDetail, WorkflowStepCreate, ApprovalMode } from '@/types/workflow.types'
-import type { Category } from '@/types/category.types'
 import type { User, Role } from '@/types/user.types'
 
 interface WorkflowFormModalProps {
   isOpen: boolean
   editing: WorkflowDefinitionDetail | null
-  categories: Category[]
   onClose: () => void
   onSuccess: () => void
 }
@@ -39,10 +37,9 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 }
 
-export default function WorkflowFormModal({ isOpen, editing, categories, onClose, onSuccess }: WorkflowFormModalProps) {
+export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess }: WorkflowFormModalProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [categoryId, setCategoryId] = useState('')
   const [steps, setSteps] = useState<StepForm[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
@@ -64,7 +61,6 @@ export default function WorkflowFormModal({ isOpen, editing, categories, onClose
       workflowApi.get(editing.id).then((detail) => {
         setName(detail.name)
         setDescription(detail.description || '')
-        setCategoryId(String(detail.document_category_id))
         setSteps(
           detail.steps.map((s) => ({
             step_name: s.step_name,
@@ -84,7 +80,6 @@ export default function WorkflowFormModal({ isOpen, editing, categories, onClose
     } else {
       setName('')
       setDescription('')
-      setCategoryId('')
       setSteps([])
     }
   }, [editing, isOpen])
@@ -146,7 +141,6 @@ export default function WorkflowFormModal({ isOpen, editing, categories, onClose
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) { setError('Name is required.'); return }
-    if (!categoryId) { setError('Document category is required.'); return }
     if (steps.length === 0) { setError('At least one step is required.'); return }
     for (let i = 0; i < steps.length; i++) {
       if (!steps[i].step_name.trim()) {
@@ -173,7 +167,6 @@ export default function WorkflowFormModal({ isOpen, editing, categories, onClose
         await workflowApi.update(editing.id, {
           name: name.trim(),
           description: description.trim() || undefined,
-          document_category_id: Number(categoryId),
           steps: stepsData,
         })
         toast.success('Workflow updated')
@@ -181,7 +174,6 @@ export default function WorkflowFormModal({ isOpen, editing, categories, onClose
         await workflowApi.create({
           name: name.trim(),
           description: description.trim() || undefined,
-          document_category_id: Number(categoryId),
           steps: stepsData,
         })
         toast.success('Workflow created')
@@ -237,16 +229,6 @@ export default function WorkflowFormModal({ isOpen, editing, categories, onClose
               <div style={{ marginBottom: '0.75rem' }}>
                 <label style={labelStyle}>Description</label>
                 <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" disabled={loading} rows={2} style={{ resize: 'vertical' }} />
-              </div>
-
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={labelStyle}>Document Category <Req /></label>
-                <select className="input" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={loading}>
-                  <option value="">Select category</option>
-                  {categories.filter((c) => c.is_active).map((c) => (
-                    <option key={c.id} value={String(c.id)}>{c.name}</option>
-                  ))}
-                </select>
               </div>
 
               {/* Steps Section */}

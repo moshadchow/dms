@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, List, Optional
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from categories.models import Category
     from documents.models import Document
     from users.models import User, Role
 
@@ -43,7 +42,6 @@ class WorkflowStatus(str, Enum):
 class WorkflowDefinitionBase(SQLModel):
     name: str = Field(max_length=255, index=True)
     description: Optional[str] = Field(default=None, max_length=1000)
-    document_category_id: int = Field(foreign_key="categories.id", index=True)
     is_active: bool = Field(default=True, index=True)
 
 
@@ -55,9 +53,6 @@ class WorkflowDefinition(WorkflowDefinitionBase, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    category: "Category" = Relationship(
-        sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[WorkflowDefinition.document_category_id]"}
-    )
     created_by_user: "User" = Relationship(
         sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[WorkflowDefinition.created_by]"}
     )
@@ -297,8 +292,6 @@ class WorkflowDefinitionRead(SQLModel):
     id: int
     name: str
     description: Optional[str] = None
-    document_category_id: int
-    category_name: Optional[str] = None
     is_active: bool
     created_by: int
     created_at: datetime

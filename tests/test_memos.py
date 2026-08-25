@@ -26,7 +26,6 @@ def _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="M
     payload = {
         "name": name,
         "description": "Memo approval",
-        "document_category_id": seeded_data["finance_category_id"],
         "steps": [{
             "step_order": 1,
             "step_name": "Review",
@@ -289,9 +288,55 @@ class TestMemoAPI:
         assert len(data["attachments"]) == 1
         assert data["attachments"][0]["document_id"] == seeded_data["finance_document_id"]
 
-    def test_approver_can_edit_submitted_memo(self, seeded_data, client, auth_headers):
-        test_client, _, _ = client
-        wf_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, "Approver Edit WF")
+    def test_approver_cannot_edit_submitted_memo(self, seeded_data, client, auth_headers):
+        from sqlmodel import Session as Sess
+        from users.models import User, UserRoleLink, RoleName, Role, RolePermissionLink
+        from core.security import hash_password, create_access_token
+
+        test_client, engine, _ = client
+        # Create a checker user (non-admin) to act as approver
+        with Sess(engine) as session:
+            checker_role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+            if not checker_role:
+                checker_role = Role(name=RoleName.CHECKER, description="Checker")
+                session.add(checker_role)
+                session.flush()
+                maker_role = session.exec(select(Role).where(Role.name == RoleName.MAKER)).first()
+                if maker_role:
+                    perms = session.exec(select(RolePermissionLink).where(RolePermissionLink.role_id == maker_role.id)).all()
+                    for pl in perms:
+                        session.add(RolePermissionLink(role_id=checker_role.id, permission_id=pl.permission_id))
+                session.flush()
+            checker = User(
+                full_name="Checker User",
+                email="checker_edit_test@example.com",
+                hashed_password=hash_password("Checker@1234"),
+                is_active=True,
+                user_level_id=seeded_data["high_level_id"],
+            )
+            session.add(checker)
+            session.flush()
+            session.add(UserRoleLink(user_id=checker.id, role_id=checker_role.id))
+            session.commit()
+            session.refresh(checker)
+            checker_id = checker.id
+
+        checker_headers = {"Authorization": f"Bearer {create_access_token(checker_id)}"}
+
+        # Create workflow with checker as approver
+        wf_payload = {
+            "name": "Checker Edit WF",
+            "description": "Approver edit test",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": checker_id, "priority": 0}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        wf_id = wf_resp.json()["id"]
+
         create_resp = test_client.post(
             "/api/v1/memos", json=_memo_payload(seeded_data), headers=auth_headers["maker"],
         )
@@ -302,14 +347,66 @@ class TestMemoAPI:
             headers=auth_headers["maker"],
         )
 
-        # Admin is the eligible approver → allowed to edit the draft
+        # Checker is the eligible approver but NOT the author -> 403 for submitted memos
         response = test_client.patch(
             f"/api/v1/memos/{memo_id}",
             json={"body": "# Edited by approver"},
-            headers=auth_headers["admin"],
+            headers=checker_headers,
+        )
+        assert response.status_code == 403
+
+    def test_author_can_edit_submitted_memo(self, seeded_data, client, auth_headers):
+        test_client, _, _ = client
+        wf_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, "Author Edit WF")
+        create_resp = test_client.post(
+            "/api/v1/memos", json=_memo_payload(seeded_data), headers=auth_headers["maker"],
+        )
+        memo_id = create_resp.json()["id"]
+        test_client.post(
+            f"/api/v1/memos/{memo_id}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+
+        # Author can edit their own submitted memo
+        response = test_client.patch(
+            f"/api/v1/memos/{memo_id}",
+            json={"body": "# Edited by author"},
+            headers=auth_headers["maker"],
         )
         assert response.status_code == 200
-        assert response.json()["body"] == "# Edited by approver"
+        assert response.json()["body"] == "# Edited by author"
+
+    def test_cannot_edit_approved_memo(self, seeded_data, client, auth_headers):
+        test_client, _, _ = client
+        wf_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, "Approved Edit WF")
+        create_resp = test_client.post(
+            "/api/v1/memos", json=_memo_payload(seeded_data), headers=auth_headers["maker"],
+        )
+        memo_id = create_resp.json()["id"]
+        test_client.post(
+            f"/api/v1/memos/{memo_id}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+        # Approve the memo
+        instance_resp = test_client.get(
+            f"/api/v1/workflow-instances/by-document/{create_resp.json()['document_id']}",
+            headers=auth_headers["admin"],
+        )
+        test_client.post(
+            f"/api/v1/workflow-instances/{instance_resp.json()['id']}/actions",
+            json={"action": "approve", "remarks": "Approved"},
+            headers=auth_headers["admin"],
+        )
+
+        # Author cannot edit an approved memo
+        response = test_client.patch(
+            f"/api/v1/memos/{memo_id}",
+            json={"body": "# Attempt edit"},
+            headers=auth_headers["maker"],
+        )
+        assert response.status_code == 403
 
 
 # ── Final Draft Download Tests ─────────────────

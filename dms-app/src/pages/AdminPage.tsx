@@ -10,9 +10,10 @@ import CategoryPermissionPanel from '@/components/admin/CategoryPermissionPanel'
 import UserLevelTable from '@/components/admin/UserLevelTable'
 import UserLevelFormModal from '@/components/admin/UserLevelFormModal'
 import WorkflowConfigPanel from '@/components/admin/WorkflowConfigPanel'
+import StorageUsagePanel from '@/components/admin/StorageUsagePanel'
 import type { User, Role, Permission, UserLevel } from '@/types/user.types'
 
-type Tab = 'users' | 'roles' | 'category-access' | 'user-levels' | 'workflows'
+type Tab = 'users' | 'roles' | 'category-access' | 'user-levels' | 'workflows' | 'storage'
 
 export default function AdminPage() {
   const navigate    = useNavigate()
@@ -113,6 +114,10 @@ export default function AdminPage() {
     {
       id: 'workflows', label: 'Workflows',
       icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+    },
+    {
+      id: 'storage', label: 'Storage',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
     },
   ]
 
@@ -301,6 +306,13 @@ export default function AdminPage() {
         {/* ── Workflows tab ── */}
         {activeTab === 'workflows' && (
           <WorkflowConfigPanel />
+        )}
+
+        {/* ── Storage tab ── */}
+        {activeTab === 'storage' && (
+          <div style={{ padding: '1.25rem' }}>
+            <StorageUsagePanel />
+          </div>
         )}
       </div>
 

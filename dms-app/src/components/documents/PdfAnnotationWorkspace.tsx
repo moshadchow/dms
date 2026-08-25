@@ -23,7 +23,7 @@ import type {
 
 GlobalWorkerOptions.workerSrc = `${pdfWorkerSrc}?v=pdfjs4`
 
-type ToolMode = 'pen' | 'eraser'
+type ToolMode = 'select' | 'pen' | 'eraser'
 
 interface PageMetric {
   pageNumber: number
@@ -73,7 +73,7 @@ export default function PdfAnnotationWorkspace({
   const [pdfReady, setPdfReady] = useState(false)
   const [loadingPdf, setLoadingPdf] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [tool, setTool] = useState<ToolMode>('pen')
+  const [tool, setTool] = useState<ToolMode>('select')
   const [zoom, setZoom] = useState(1)
   const [color, setColor] = useState(DEFAULT_COLORS[0])
   const [thickness, setThickness] = useState(4)
@@ -436,6 +436,7 @@ export default function PdfAnnotationWorkspace({
 
         <div style={styles.toolbar}>
           <div style={styles.toolbarGroup}>
+            <button onClick={() => setTool('select')} style={tool === 'select' ? styles.activeToggle : styles.toggle}>Select</button>
             <button onClick={() => setTool('pen')} style={tool === 'pen' ? styles.activeToggle : styles.toggle}>Pen</button>
             <button onClick={() => setTool('eraser')} style={tool === 'eraser' ? styles.activeToggle : styles.toggle}>Eraser</button>
           </div>
@@ -531,7 +532,11 @@ export default function PdfAnnotationWorkspace({
                       ref={(node) => {
                         overlayCanvasRefs.current[index] = node
                       }}
-                      style={styles.overlayCanvas}
+                      style={{
+                        ...styles.overlayCanvas,
+                        pointerEvents: tool === 'select' ? 'none' : 'auto',
+                        cursor: tool === 'pen' ? 'crosshair' : tool === 'eraser' ? 'cell' : 'default',
+                      }}
                       onPointerDown={handlePointerDown(metric.pageNumber)}
                       onPointerMove={handlePointerMove(metric.pageNumber)}
                       onPointerUp={handlePointerUp(metric.pageNumber)}

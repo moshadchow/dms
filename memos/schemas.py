@@ -26,10 +26,12 @@ class MemoCreate(BaseModel):
 
 
 class MemoUpdate(BaseModel):
-    """Body for PATCH /memos/{memo_id} — update a draft.
+    """Body for PATCH /memos/{memo_id} — update a memo.
 
     All fields optional. Author may update any field; eligible approvers may
     update the draft body/subject/recipients while the memo is in the workflow.
+    Submitter may also update content/attachments/signature while the memo is
+    in submitted/pending_approval status (before approval).
     """
 
     memo_date: Optional[datetime] = None
@@ -42,6 +44,10 @@ class MemoUpdate(BaseModel):
     attachment_document_ids: Optional[List[int]] = Field(
         None,
         description="If provided, replaces the full attachment set",
+    )
+    signature_id: Optional[int] = Field(
+        None,
+        description="FK → signatures.id — author's signature (e-signature or wet-signature)",
     )
 
 

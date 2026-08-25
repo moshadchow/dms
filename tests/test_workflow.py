@@ -22,7 +22,6 @@ from workflow.service import ApprovalActionService, WorkflowDefinitionService, W
 
 def _create_workflow_payload(
     name: str = "Invoice Approval",
-    category_id: int = 1,
     steps: list | None = None,
 ) -> dict:
     if steps is None:
@@ -37,7 +36,6 @@ def _create_workflow_payload(
     return {
         "name": name,
         "description": "Test workflow",
-        "document_category_id": category_id,
         "steps": steps,
     }
 
@@ -50,9 +48,7 @@ class TestWorkflowDefinitionService:
         _, engine, _ = client
         with Session(engine) as session:
             svc = WorkflowDefinitionService(session)
-            payload = _create_workflow_payload(
-                category_id=seeded_data["finance_category_id"],
-            )
+            payload = _create_workflow_payload()
             # We need to pass current_user; use admin from seeded_data
             from users.models import User
             admin = session.get(User, seeded_data["admin_id"])
@@ -61,7 +57,6 @@ class TestWorkflowDefinitionService:
                 current_user=admin,
             )
             assert result.name == "Invoice Approval"
-            assert result.document_category_id == seeded_data["finance_category_id"]
             assert result.is_active is True
 
     def test_create_definition_rejects_duplicate_name(self, seeded_data, client):
@@ -74,7 +69,6 @@ class TestWorkflowDefinitionService:
 
             payload = _create_workflow_payload(
                 name="Unique Workflow",
-                category_id=seeded_data["finance_category_id"],
             )
             svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
 
@@ -92,7 +86,6 @@ class TestWorkflowDefinitionService:
 
             payload = _create_workflow_payload(
                 name="Get Test WF",
-                category_id=seeded_data["finance_category_id"],
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
             result = svc.get_definition(created.id)
@@ -111,36 +104,12 @@ class TestWorkflowDefinitionService:
             for i in range(3):
                 payload = _create_workflow_payload(
                     name=f"List WF {i}",
-                    category_id=seeded_data["finance_category_id"],
                 )
                 svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
 
             result = svc.list_definitions()
             assert result.total == 3
             assert len(result.items) == 3
-
-    def test_list_definitions_filter_by_category(self, seeded_data, client):
-        _, engine, _ = client
-        with Session(engine) as session:
-            svc = WorkflowDefinitionService(session)
-            from users.models import User
-            from workflow.schemas import WorkflowDefinitionCreate
-            admin = session.get(User, seeded_data["admin_id"])
-
-            payload_finance = _create_workflow_payload(
-                name="Finance WF",
-                category_id=seeded_data["finance_category_id"],
-            )
-            payload_hr = _create_workflow_payload(
-                name="HR WF",
-                category_id=seeded_data["hr_category_id"],
-            )
-            svc.create_definition(WorkflowDefinitionCreate(**payload_finance), current_user=admin)
-            svc.create_definition(WorkflowDefinitionCreate(**payload_hr), current_user=admin)
-
-            result = svc.list_definitions(category_id=seeded_data["finance_category_id"])
-            assert result.total == 1
-            assert result.items[0].name == "Finance WF"
 
     def test_update_definition(self, seeded_data, client):
         _, engine, _ = client
@@ -152,7 +121,6 @@ class TestWorkflowDefinitionService:
 
             payload = _create_workflow_payload(
                 name="Update WF",
-                category_id=seeded_data["finance_category_id"],
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
 
@@ -170,7 +138,6 @@ class TestWorkflowDefinitionService:
 
             payload = _create_workflow_payload(
                 name="Deactivate WF",
-                category_id=seeded_data["finance_category_id"],
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
             result = svc.deactivate_definition(created.id)
@@ -186,7 +153,6 @@ class TestWorkflowDefinitionService:
 
             payload = _create_workflow_payload(
                 name="Activate WF",
-                category_id=seeded_data["finance_category_id"],
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
             svc.deactivate_definition(created.id)
@@ -238,7 +204,6 @@ class TestWorkflowDefinitionService:
 
             payload = _create_workflow_payload(
                 name="Replace Steps WF",
-                category_id=seeded_data["finance_category_id"],
                 steps=[
                     {
                         "step_order": 1,
@@ -280,7 +245,6 @@ class TestWorkflowAPI:
     def test_admin_can_create_workflow(self, seeded_data, client):
         test_client, _, _ = client
         payload = _create_workflow_payload(
-            category_id=seeded_data["finance_category_id"],
         )
         response = test_client.post("/api/v1/workflows", json=payload)
         assert response.status_code == 401  # No auth headers
@@ -289,7 +253,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="API Create WF",
-            category_id=seeded_data["finance_category_id"],
         )
         response = test_client.post(
             "/api/v1/workflows",
@@ -305,7 +268,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Maker WF",
-            category_id=seeded_data["finance_category_id"],
         )
         response = test_client.post(
             "/api/v1/workflows",
@@ -319,7 +281,6 @@ class TestWorkflowAPI:
         # Create one first
         payload = _create_workflow_payload(
             name="List WF",
-            category_id=seeded_data["finance_category_id"],
         )
         test_client.post(
             "/api/v1/workflows",
@@ -336,7 +297,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Detail WF",
-            category_id=seeded_data["finance_category_id"],
         )
         create_resp = test_client.post(
             "/api/v1/workflows",
@@ -355,7 +315,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Update API WF",
-            category_id=seeded_data["finance_category_id"],
         )
         create_resp = test_client.post(
             "/api/v1/workflows",
@@ -376,7 +335,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Deactivate API WF",
-            category_id=seeded_data["finance_category_id"],
         )
         create_resp = test_client.post(
             "/api/v1/workflows",
@@ -396,7 +354,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Activate API WF",
-            category_id=seeded_data["finance_category_id"],
         )
         create_resp = test_client.post(
             "/api/v1/workflows",
@@ -424,7 +381,6 @@ class TestWorkflowAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Duplicate WF",
-            category_id=seeded_data["finance_category_id"],
         )
         test_client.post(
             "/api/v1/workflows",
@@ -462,7 +418,6 @@ def _create_workflow_with_step(
     payload = WorkflowDefinitionCreate(
         name=wf_name,
         description="Test workflow for Phase 2",
-        document_category_id=seeded_data["finance_category_id"],
         steps=[{
             "step_order": 1,
             "step_name": "Manager Review",
@@ -544,38 +499,6 @@ class TestWorkflowInstanceService:
             )
             with pytest.raises(HTTPException) as exc_info:
                 svc.submit_instance(payload, current_user=maker)
-            assert exc_info.value.status_code == 422
-
-    def test_submit_instance_category_mismatch_raises(self, seeded_data, client):
-        _, engine, _ = client
-        with Session(engine) as session:
-            from users.models import User
-            from workflow.schemas import WorkflowDefinitionCreate
-            from fastapi import HTTPException
-
-            admin = session.get(User, seeded_data["admin_id"])
-            maker = session.get(User, seeded_data["maker_id"])
-            wfs = WorkflowDefinitionService(session)
-
-            payload = WorkflowDefinitionCreate(
-                name="HR Only WF",
-                document_category_id=seeded_data["hr_category_id"],
-                steps=[{
-                    "step_order": 1,
-                    "step_name": "Review",
-                    "approval_mode": "sequential",
-                    "approvers": [{"user_id": seeded_data["maker_id"], "priority": 0}],
-                }],
-            )
-            hr_wf = wfs.create_definition(payload, current_user=admin)
-
-            svc = WorkflowInstanceService(session)
-            instance_payload = WorkflowInstanceCreate(
-                document_id=seeded_data["finance_document_id"],
-                workflow_definition_id=hr_wf.id,
-            )
-            with pytest.raises(HTTPException) as exc_info:
-                svc.submit_instance(instance_payload, current_user=maker)
             assert exc_info.value.status_code == 422
 
     def test_get_instance(self, seeded_data, client):
@@ -826,7 +749,6 @@ class TestApprovalActionService:
             wfs = WorkflowDefinitionService(session)
             payload = WorkflowDefinitionCreate(
                 name="Multi-Step WF",
-                document_category_id=seeded_data["finance_category_id"],
                 steps=[
                     {
                         "step_order": 1,
@@ -893,7 +815,6 @@ class TestApprovalActionService:
             wfs = WorkflowDefinitionService(session)
             payload = WorkflowDefinitionCreate(
                 name="Parallel WF",
-                document_category_id=seeded_data["finance_category_id"],
                 steps=[{
                     "step_order": 1,
                     "step_name": "Parallel Review",
@@ -927,7 +848,6 @@ class TestWorkflowInstanceAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="API Instance WF",
-            category_id=seeded_data["finance_category_id"],
             steps=[{
                 "step_order": 1,
                 "step_name": "Review",
@@ -960,7 +880,6 @@ class TestWorkflowInstanceAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Pending List WF",
-            category_id=seeded_data["finance_category_id"],
             steps=[{
                 "step_order": 1,
                 "step_name": "Review",
@@ -988,7 +907,6 @@ class TestWorkflowInstanceAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Mine List WF",
-            category_id=seeded_data["finance_category_id"],
             steps=[{
                 "step_order": 1,
                 "step_name": "Review",
@@ -1016,7 +934,6 @@ class TestWorkflowInstanceAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Detail Instance WF",
-            category_id=seeded_data["finance_category_id"],
             steps=[{
                 "step_order": 1,
                 "step_name": "Review",
@@ -1046,7 +963,6 @@ class TestWorkflowInstanceAPI:
         test_client, _, _ = client
         payload = _create_workflow_payload(
             name="Approve Instance WF",
-            category_id=seeded_data["finance_category_id"],
             steps=[{
                 "step_order": 1,
                 "step_name": "Review",

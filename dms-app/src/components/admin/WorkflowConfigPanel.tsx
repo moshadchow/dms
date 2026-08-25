@@ -1,24 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
-import { categoriesApi } from '@/api/categories.api'
 import Button from '@/components/ui/Button'
 import WorkflowFormModal from '@/components/admin/WorkflowFormModal'
 import type {
   WorkflowDefinition,
   WorkflowDefinitionDetail,
 } from '@/types/workflow.types'
-import type { Category } from '@/types/category.types'
 
 const LIMIT = 20
 
 export default function WorkflowConfigPanel() {
   const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
-  const [categoryFilter, setCategoryFilter] = useState<number | ''>('')
   const [statusFilter, setStatusFilter] = useState<boolean | ''>('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<WorkflowDefinitionDetail | null>(null)
@@ -30,9 +26,8 @@ export default function WorkflowConfigPanel() {
         skip: (page - 1) * LIMIT,
         limit: LIMIT,
       }
-      if (categoryFilter !== '') params.category_id = categoryFilter
       if (statusFilter !== '') params.is_active = statusFilter
-      const data = await workflowApi.list(params as { skip?: number; limit?: number; category_id?: number; is_active?: boolean })
+      const data = await workflowApi.list(params as { skip?: number; limit?: number; is_active?: boolean })
       setDefinitions(data.items)
       setTotal(data.total)
     } catch {
@@ -40,20 +35,10 @@ export default function WorkflowConfigPanel() {
     } finally {
       setLoading(false)
     }
-  }, [page, categoryFilter, statusFilter])
-
-  const loadCategories = useCallback(async () => {
-    try {
-      const data = await categoriesApi.list(true)
-      setCategories(data)
-    } catch {
-      toast.error('Failed to load categories')
-    }
-  }, [])
+  }, [page, statusFilter])
 
   useEffect(() => { loadDefinitions() }, [loadDefinitions])
-  useEffect(() => { loadCategories() }, [loadCategories])
-  useEffect(() => { setPage(1) }, [categoryFilter, statusFilter])
+  useEffect(() => { setPage(1) }, [statusFilter])
 
   const totalPages = Math.ceil(total / LIMIT) || 1
 
@@ -93,11 +78,6 @@ export default function WorkflowConfigPanel() {
     loadDefinitions()
   }
 
-  const getCategoryName = (id: number) => {
-    const cat = categories.find(c => c.id === id)
-    return cat?.name ?? 'Unknown'
-  }
-
   return (
     <div>
       {/* Header */}
@@ -133,24 +113,6 @@ export default function WorkflowConfigPanel() {
           borderBottom: '1px solid var(--border)', flexWrap: 'wrap',
         }}>
           <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-            Category
-          </label>
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value ? Number(e.target.value) : '')}
-            style={{
-              padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)',
-              backgroundColor: 'var(--bg)', color: 'var(--text)', fontSize: '0.82rem',
-              fontFamily: 'inherit', minWidth: '160px',
-            }}
-          >
-            <option value="">All Categories</option>
-            {categories.map((cat) => (
-              <option key={cat.id} value={cat.id}>{cat.name}</option>
-            ))}
-          </select>
-
-          <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)', marginLeft: '0.5rem' }}>
             Status
           </label>
           <select
@@ -170,9 +132,9 @@ export default function WorkflowConfigPanel() {
             <option value="false">Inactive</option>
           </select>
 
-          {(categoryFilter !== '' || statusFilter !== '') && (
+          {statusFilter !== '' && (
             <button
-              onClick={() => { setCategoryFilter(''); setStatusFilter('') }}
+              onClick={() => setStatusFilter('')}
               style={{
                 padding: '5px 10px', borderRadius: '7px', border: '1px solid var(--border)',
                 backgroundColor: 'var(--surface)', color: 'var(--text-secondary)', fontSize: '0.78rem',
@@ -204,7 +166,6 @@ export default function WorkflowConfigPanel() {
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border)' }}>
                   <th style={thStyle}>Name</th>
-                  <th style={thStyle}>Category</th>
                   <th style={{ ...thStyle, textAlign: 'center' }}>Steps</th>
                   <th style={thStyle}>Status</th>
                   <th style={thStyle}>Created</th>
@@ -223,11 +184,6 @@ export default function WorkflowConfigPanel() {
                           </span>
                         )}
                       </div>
-                    </td>
-                    <td style={tdStyle}>
-                      <span style={{ color: 'var(--text-secondary)' }}>
-                        {getCategoryName(def.document_category_id)}
-                      </span>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
                       <span style={{ color: 'var(--text-tertiary)' }}>--</span>
@@ -314,7 +270,6 @@ export default function WorkflowConfigPanel() {
       <WorkflowFormModal
         isOpen={modalOpen}
         editing={editing}
-        categories={categories}
         onClose={() => { setModalOpen(false); setEditing(null) }}
         onSuccess={handleModalSuccess}
       />

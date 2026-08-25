@@ -8,7 +8,6 @@ from sqlmodel import Session, func, select
 
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
-from categories.models import Category
 from core.access import ensure_document_access, ensure_document_user_level_access
 from core.config import settings
 from documents.models import Document, DocumentUserLevelLink
@@ -83,13 +82,10 @@ class WorkflowDefinitionService:
         return wf
 
     def _to_read(self, wf: WorkflowDefinition) -> WorkflowDefinitionRead:
-        cat_name = wf.category.name if wf.category else None
         return WorkflowDefinitionRead(
             id=wf.id,
             name=wf.name,
             description=wf.description,
-            document_category_id=wf.document_category_id,
-            category_name=cat_name,
             is_active=wf.is_active,
             created_by=wf.created_by,
             created_at=wf.created_at,
@@ -172,19 +168,10 @@ class WorkflowDefinitionService:
                 detail=f"Workflow '{data.name}' already exists",
             )
 
-        # Validate category exists
-        cat = self.session.get(Category, data.document_category_id)
-        if not cat:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Category {data.document_category_id} not found",
-            )
-
         # Create definition
         wf = WorkflowDefinition(
             name=data.name,
             description=data.description,
-            document_category_id=data.document_category_id,
             created_by=current_user.id,
         )
         self.session.add(wf)
@@ -237,15 +224,12 @@ class WorkflowDefinitionService:
             .where(WorkflowDefinition.id == definition_id)
         ).first()
 
-        cat_name = wf.category.name if wf.category else None
         steps_read = self._build_steps_read(wf.steps)
 
         return WorkflowDefinitionDetailRead(
             id=wf.id,
             name=wf.name,
             description=wf.description,
-            document_category_id=wf.document_category_id,
-            category_name=cat_name,
             is_active=wf.is_active,
             created_by=wf.created_by,
             created_at=wf.created_at,
@@ -258,20 +242,15 @@ class WorkflowDefinitionService:
         *,
         skip: int = 0,
         limit: int = 50,
-        category_id: Optional[int] = None,
         is_active: Optional[bool] = None,
     ) -> WorkflowDefinitionListResponse:
         query = select(WorkflowDefinition)
 
-        if category_id is not None:
-            query = query.where(WorkflowDefinition.document_category_id == category_id)
         if is_active is not None:
             query = query.where(WorkflowDefinition.is_active == is_active)
 
         # Count total
         count_query = select(func.count(WorkflowDefinition.id))
-        if category_id is not None:
-            count_query = count_query.where(WorkflowDefinition.document_category_id == category_id)
         if is_active is not None:
             count_query = count_query.where(WorkflowDefinition.is_active == is_active)
         total = self.session.exec(count_query).one()
@@ -300,7 +279,6 @@ class WorkflowDefinitionService:
         old_value = {
             "name": wf.name,
             "description": wf.description,
-            "document_category_id": wf.document_category_id,
             "is_active": wf.is_active,
         }
 
@@ -321,21 +299,27 @@ class WorkflowDefinitionService:
         if data.description is not None:
             wf.description = data.description
 
-        if data.document_category_id is not None:
-            cat = self.session.get(Category, data.document_category_id)
-            if not cat:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Category {data.document_category_id} not found",
-                )
-            wf.document_category_id = data.document_category_id
-
         if data.is_active is not None:
             wf.is_active = data.is_active
 
         # Replace steps if provided
         if data.steps is not None:
             self._validate_step_approvers(data.steps)
+
+            # Check if any existing steps have associated workflow actions (running instances)
+            step_ids = [step.id for step in wf.steps]
+            if step_ids:
+                actions_exist = self.session.exec(
+                    select(WorkflowAction.workflow_step_id).where(
+                        WorkflowAction.workflow_step_id.in_(step_ids)
+                    ).limit(1)
+                ).first()
+                if actions_exist is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Cannot modify steps: this workflow has active instances with approval actions. "
+                        "Deactivate or complete existing instances before updating steps.",
+                    )
 
             # Delete existing steps and approvers
             for step in wf.steps:
@@ -377,7 +361,6 @@ class WorkflowDefinitionService:
         new_value = {
             "name": wf.name,
             "description": wf.description,
-            "document_category_id": wf.document_category_id,
             "is_active": wf.is_active,
         }
 
@@ -650,15 +633,6 @@ class WorkflowInstanceService:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Workflow definition is not active",
-            )
-
-        # Validate definition matches document's category
-        from directories.models import Directory
-        directory = self.session.get(Directory, document.directory_id)
-        if not directory or directory.category_id != wf_def.document_category_id:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Workflow definition does not match the document's category",
             )
 
         # Validate definition has steps

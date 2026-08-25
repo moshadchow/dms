@@ -146,7 +146,9 @@ export default function MemoDetailPage() {
     )
   }
 
+  const EDITABLE_STATUSES = ['draft', 'returned', 'submitted', 'pending_approval', 'rejected']
   const isDraft = !memo.workflow_status || ['draft', 'returned'].includes(memo.workflow_status)
+  const canEdit = !memo.workflow_status || EDITABLE_STATUSES.includes(memo.workflow_status)
   const history = instance?.history ?? []
 
   return (
@@ -157,9 +159,9 @@ export default function MemoDetailPage() {
           <h1 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 600 }}>{memo.subject}</h1>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          {isDraft && (
+          {canEdit && (
             <Link to={`/memos/${memo.id}/edit`} style={{ textDecoration: 'none' }}>
-              <Button variant="secondary" size="sm">Edit Draft</Button>
+              <Button variant="secondary" size="sm">{isDraft ? 'Edit Draft' : 'Edit'}</Button>
             </Link>
           )}
           {memo.workflow_status === 'approved' && (

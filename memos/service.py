@@ -266,23 +266,32 @@ class MemoService:
     def _check_view_access(self, memo: Memo, user: User) -> None:
         if user.is_admin() or memo.created_by == user.id:
             return
-        ensure_document_access(self.session, user, memo.document_id)
-        ensure_document_user_level_access(self.session, user, memo.document)
         if self._is_eligible_approver(memo, user):
             return
+        ensure_document_access(self.session, user, memo.document_id)
+        ensure_document_user_level_access(self.session, user, memo.document)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this memo",
         )
 
     def _check_edit_access(self, memo: Memo, user: User) -> None:
-        if user.is_admin() or memo.created_by == user.id:
+        if user.is_admin():
             return
-        if not self._is_eligible_approver(memo, user):
+        wf_status = self._get_workflow_status(memo.document_id)
+        if wf_status in ("approved", "published", "cancelled", "archived"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the author or an eligible approver can edit this memo",
+                detail="This memo cannot be edited in its current state",
             )
+        if memo.created_by == user.id:
+            return
+        if wf_status in (None, "draft", "returned", "rejected") and self._is_eligible_approver(memo, user):
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to edit this memo",
+        )
 
     def _check_author(self, memo: Memo, user: User) -> None:
         if not user.is_admin() and memo.created_by != user.id:
@@ -517,6 +526,7 @@ class MemoService:
         old_values = {
             "subject": memo.subject,
             "body": memo.body,
+            "author_signature_id": memo.author_signature_id,
         }
 
         if data.subject is not None:
@@ -560,6 +570,16 @@ class MemoService:
                     DocumentUserLevelLink(document_id=memo.document_id, user_level_id=level_id)
                 )
 
+        if data.signature_id is not None:
+            from workflow.service import SignatureService
+            sig = SignatureService(self.session).validate_signature_exists(data.signature_id)
+            if sig.user_id != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only attach your own signatures",
+                )
+            memo.author_signature_id = data.signature_id
+
         memo.updated_at = datetime.utcnow()
         memo.document.updated_at = datetime.utcnow()
         self.session.add(memo)
@@ -574,6 +594,7 @@ class MemoService:
             old_value=old_values,
             new_value={
                 "subject": memo.subject,
+                "author_signature_id": memo.author_signature_id,
             },
         )
 
