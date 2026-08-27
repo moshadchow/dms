@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`. Shared infra in `core/`. Middleware in `middleware/`. Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (169 tests, SQLite-in-memory)
+pytest                        # run all tests (176 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -45,7 +45,7 @@ Each feature module follows this pattern:
 
 The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
 
-The `workflow/` module has three router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`), `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`), and `signature_router` (signatures, mounted at `/api/v1/signatures`).
+The `workflow/` module has three router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`), `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`), and `signature_router` (signatures, mounted at `/api/v1/signatures`). Service classes are split into separate files: `definition_service.py`, `instance_service.py`, `approval_service.py`. The old `service.py` is a backward-compatible re-export shim. Shared approver logic lives in `approval_policy.py`.
 
 The `memos/` module creates document drafts with markdown rendering and workflow integration. Its service uses `core/access.py` helpers (`ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`) for permission checks.
 
@@ -65,6 +65,7 @@ The `memos/` module has a PDF generator (`memos/pdf_generator.py`) for final dra
 - **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV).
 - **Immutability**: no PUT/PATCH/DELETE endpoints exist for audit records. Users cannot edit or delete audit logs.
 - **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py` all call `AuditService.log_event()` after significant operations.
+- **Legacy**: `core/audit.py` contains an old logger-based `log_audit_event` helper. It is dead code — all callers now use `AuditService`. Do not add new callers; use `AuditService` directly.
 
 ## Auth & User Injection
 Use the `CurrentUser` annotated type from `core/dependencies.py` to inject the authenticated user into endpoints:

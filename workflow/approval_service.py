@@ -7,7 +7,7 @@ Approval actions: approve, reject, return, clarify on workflow instances.
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlmodel import Session, select
 
 from audit.models import AuditAction, AuditModule
@@ -125,6 +125,7 @@ class ApprovalActionService:
         instance_id: int,
         data: WorkflowActionCreate,
         current_user: User,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> WorkflowInstanceRead:
         instance = self._get_instance_or_404(instance_id)
 
@@ -186,10 +187,17 @@ class ApprovalActionService:
         self.session.flush()
 
         old_status = instance.status
+        step_advanced = False
+        next_step = None
+        final_approved = False
 
         if data.action == ApprovalAction.APPROVE:
             if self._check_step_completion(instance, current_step):
                 self._advance_step(instance, current_step, current_user)
+                step_advanced = True
+                # Check if this was the final step (instance is now APPROVED)
+                if instance.status == WorkflowStatus.APPROVED:
+                    final_approved = True
             else:
                 if instance.status == WorkflowStatus.SUBMITTED:
                     instance.status = WorkflowStatus.PENDING_APPROVAL
@@ -241,6 +249,43 @@ class ApprovalActionService:
 
         self.session.commit()
         self.session.refresh(instance)
+
+        # Enqueue email notifications after commit
+        if background_tasks:
+            from notifications.tasks import send_notification_task
+            document_id = instance.document_id if instance.document else None
+
+            if step_advanced and document_id:
+                # Step advanced - notify next step approvers
+                current_step_orm = self._get_current_step(instance)
+                if current_step_orm:
+                    background_tasks.add_task(
+                        send_notification_task,
+                        notification_type="advance",
+                        instance_id=instance.id,
+                        document_id=document_id,
+                        step_order=instance.current_step_order,
+                    )
+
+            elif data.action in (ApprovalAction.REJECT, ApprovalAction.RETURN) and instance.document_id:
+                # Reject/Return - notify submitter
+                background_tasks.add_task(
+                    send_notification_task,
+                    notification_type="action",
+                    instance_id=instance.id,
+                    document_id=instance.document_id,
+                    step_order=instance.current_step_order,
+                )
+
+            elif final_approved and instance.document_id:
+                # Final approval - notify submitter
+                background_tasks.add_task(
+                    send_notification_task,
+                    notification_type="approved",
+                    instance_id=instance.id,
+                    document_id=instance.document_id,
+                    step_order=instance.current_step_order,
+                )
 
         return self._to_instance_read(instance)
 

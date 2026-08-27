@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     def AZURE_ENABLED(self) -> bool:
         return bool(self.AZURE_CLIENT_ID and self.AZURE_CLIENT_SECRET and self.AZURE_TENANT_ID)
 
+    # ── SMTP / Email ──────────────────────────
+    SMTP_HOST:       str  = ""
+    SMTP_PORT:       int  = 587
+    SMTP_USERNAME:   str  = ""
+    SMTP_PASSWORD:   str  = ""
+    SMTP_FROM_EMAIL: str  = ""
+    SMTP_USE_TLS:    bool = True
+    SMTP_FROM_NAME:  str  = "DMS"
+
     # ── CORS ──────────────────────────────────
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 

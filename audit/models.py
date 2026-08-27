@@ -76,6 +76,10 @@ class AuditAction(str, Enum):
     SUBMIT_MEMO = "submit_memo"
     DOWNLOAD_FINAL_DRAFT = "download_final_draft"
 
+    # Notifications
+    EMAIL_SENT = "email_sent"
+    EMAIL_FAILED = "email_failed"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"

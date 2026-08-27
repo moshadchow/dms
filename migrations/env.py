@@ -29,6 +29,7 @@ import directories.models  # noqa: F401  — Directory (self-referencing)
 import documents.models    # noqa: F401  — Document
 import user_levels.models  # noqa: F401  — UserLevel
 import workflow.models     # noqa: F401  — WorkflowDefinition, WorkflowStep, WorkflowStepApprover
+import notifications.models  # noqa: F401  — EmailNotification
 
 from core.config import settings  # noqa: E402  (after sys.path insert)
 

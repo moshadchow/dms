@@ -7,7 +7,7 @@ Workflow instance lifecycle: submit, list, cancel.
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlmodel import Session, func, select
 
 from audit.models import AuditAction, AuditModule
@@ -178,6 +178,7 @@ class WorkflowInstanceService:
         self,
         data: WorkflowInstanceCreate,
         current_user: User,
+        background_tasks: Optional[BackgroundTasks] = None,
     ) -> WorkflowInstanceRead:
         document = ensure_document_access(self.session, current_user, data.document_id)
         ensure_document_user_level_access(self.session, current_user, document)
@@ -251,6 +252,17 @@ class WorkflowInstanceService:
             f"Submitted document {data.document_id} for approval via workflow '{wf_def.name}'",
             new_value={"document_id": data.document_id, "workflow_name": wf_def.name},
         )
+
+        # Enqueue email notification for submission
+        if background_tasks:
+            from notifications.tasks import send_notification_task
+            background_tasks.add_task(
+                send_notification_task,
+                notification_type="submit",
+                instance_id=instance.id,
+                document_id=document.id,
+                step_order=first_step.step_order,
+            )
 
         return self._to_instance_read(instance)
 

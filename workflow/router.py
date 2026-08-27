@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
@@ -144,8 +144,9 @@ def submit_workflow_instance(
     payload:      WorkflowInstanceCreate,
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
 ):
-    return WorkflowInstanceService(session).submit_instance(payload, current_user)
+    return WorkflowInstanceService(session).submit_instance(payload, current_user, background_tasks)
 
 
 @instance_router.get(
@@ -217,8 +218,9 @@ def act_on_workflow_instance(
     payload:      WorkflowActionCreate,
     current_user: CurrentUser = None,
     session:      Session     = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
 ):
-    return ApprovalActionService(session).act_on_instance(instance_id, payload, current_user)
+    return ApprovalActionService(session).act_on_instance(instance_id, payload, current_user, background_tasks)
 
 
 @instance_router.post(
