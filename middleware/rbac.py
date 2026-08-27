@@ -1,9 +1,19 @@
 """
 RBAC Middleware
 ───────────────
-Enforces route-level permission checks via a route-prefix → action map.
-This acts as a secondary safety net on top of the per-endpoint
-`require_permission` dependency guards.
+Route-level safety net using a prefix → action map. Runs BEFORE the route
+handler and catches coarse permission gaps early (missing token, wrong role).
+
+Per-endpoint ``require_permission`` guards in ``core/dependencies.py`` are
+the **authoritative** authorization layer — they declare the exact permission
+each endpoint requires.  The middleware complements them by:
+
+  1. Blocking unauthenticated / unauthorized requests before handler code runs.
+  2. Catching any endpoint that forgot to add a ``require_permission`` guard.
+
+Routes that rely on ownership checks in the service layer (e.g. document
+detail, memo detail) use only ``CurrentUser`` and are intentionally NOT
+mapped here — the service layer enforces the access rule.
 """
 
 from typing import Callable
@@ -24,25 +34,26 @@ from users.models import PermissionAction, User
 # ──────────────────────────────────────────────
 
 ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
+    # ── Documents ─────────────────────────────
     ("GET",    "/api/v1/documents"):          PermissionAction.VIEW,
-    ("GET",    "/api/v1/directories"):         PermissionAction.VIEW,
     ("POST",   "/api/v1/documents/upload"):   PermissionAction.CREATE,
-    ("POST",   "/api/v1/documents/"):         PermissionAction.VIEW,
     ("POST",   "/api/v1/documents"):          PermissionAction.CREATE,
-    ("POST",   "/api/v1/directories"):        PermissionAction.CREATE,
     ("PUT",    "/api/v1/documents"):          PermissionAction.UPDATE,
     ("PATCH",  "/api/v1/documents"):          PermissionAction.UPDATE,
     ("DELETE", "/api/v1/documents"):          PermissionAction.DELETE,
+    # ── Directories ───────────────────────────
+    ("GET",    "/api/v1/directories"):         PermissionAction.VIEW,
+    ("POST",   "/api/v1/directories"):        PermissionAction.CREATE,
+    ("PATCH",  "/api/v1/directories"):        PermissionAction.UPDATE,
     ("DELETE", "/api/v1/directories"):        PermissionAction.DELETE,
-    # Workflow definitions (admin config)
+    # ── Workflow definitions (admin config) ───
     ("POST",   "/api/v1/workflows"):          PermissionAction.CREATE,
     ("PUT",    "/api/v1/workflows"):          PermissionAction.UPDATE,
     ("PATCH",  "/api/v1/workflows"):          PermissionAction.UPDATE,
     ("DELETE", "/api/v1/workflows"):          PermissionAction.DELETE,
-    # Workflow instances
+    # ── Workflow instances ────────────────────
     ("POST",   "/api/v1/workflow-instances"): PermissionAction.CREATE,
-    ("POST",   "/api/v1/workflow-instances/"): PermissionAction.UPDATE,
-    # Memos
+    # ── Memos ─────────────────────────────────
     ("GET",    "/api/v1/memos"):               PermissionAction.VIEW,
     ("POST",   "/api/v1/memos"):               PermissionAction.CREATE,
     ("PATCH",  "/api/v1/memos"):               PermissionAction.UPDATE,
