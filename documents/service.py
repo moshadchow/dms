@@ -5,6 +5,8 @@ from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from categories.models import Category
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.access import (
     ensure_category_access,
     ensure_directory_access,
@@ -226,22 +228,16 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.UPLOAD_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(doc.id),
-                new_value={"title": title, "file_name": file.filename},
-                description=f"Uploaded document '{title}'",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.UPLOAD_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            entity_name="document",
+            entity_id=str(doc.id),
+            new_value={"title": title, "file_name": file.filename},
+            description=f"Uploaded document '{title}'",
+            is_success=True,
+            user=current_user,
+        )
 
         # Convert to Pydantic BEFORE session closes
         return self._to_read(doc)
@@ -261,23 +257,17 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.UPDATE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value=old_values,
-                new_value=data.model_dump(exclude_unset=True),
-                description=f"Updated document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value=old_values,
+            new_value=data.model_dump(exclude_unset=True),
+            description=f"Updated document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return self._to_read(doc)
 
@@ -294,23 +284,17 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.ARCHIVE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value={"status": "active"},
-                new_value={"status": "archived"},
-                description=f"Archived document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.ARCHIVE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value={"status": "active"},
+            new_value={"status": "archived"},
+            description=f"Archived document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return self._to_read(doc)
 
@@ -324,23 +308,17 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.RESTORE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value={"status": old_status},
-                new_value={"status": "active"},
-                description=f"Restored document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.RESTORE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value={"status": old_status},
+            new_value={"status": "active"},
+            description=f"Restored document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return self._to_read(doc)
 
@@ -375,23 +353,17 @@ class DocumentService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DELETE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value=old_values,
-                new_value={"status": "deleted", "hard_delete": hard},
-                description=f"{'Hard' if hard else 'Soft'} deleted document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DELETE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value=old_values,
+            new_value={"status": "deleted", "hard_delete": hard},
+            description=f"{'Hard' if hard else 'Soft'} deleted document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
     # ──────────────────────────────────────────
     # Download / Preview — returns ORM for streaming

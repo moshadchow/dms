@@ -4,6 +4,8 @@ from typing import List
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from user_levels.models import (
     UserLevel,
     UserLevelCreate,
@@ -49,21 +51,15 @@ class UserLevelService:
         self.session.refresh(level)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.CREATE_USER_LEVEL,
-                module=AuditModule.USER_LEVELS,
-                entity_name="user_level",
-                entity_id=str(level.id),
-                new_value={"name": data.name},
-                description=f"Created user level '{data.name}'",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_USER_LEVEL,
+            module=AuditModule.USER_LEVELS,
+            entity_name="user_level",
+            entity_id=str(level.id),
+            new_value={"name": data.name},
+            description=f"Created user level '{data.name}'",
+            is_success=True,
+        )
 
         return UserLevelRead.model_validate(level)
 
@@ -91,22 +87,16 @@ class UserLevelService:
         self.session.refresh(level)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.UPDATE_USER_LEVEL,
-                module=AuditModule.USER_LEVELS,
-                entity_name="user_level",
-                entity_id=str(level_id),
-                old_value=old_values,
-                new_value=updates,
-                description=f"Updated user level {level_id}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_USER_LEVEL,
+            module=AuditModule.USER_LEVELS,
+            entity_name="user_level",
+            entity_id=str(level_id),
+            old_value=old_values,
+            new_value=updates,
+            description=f"Updated user level {level_id}",
+            is_success=True,
+        )
 
         return UserLevelRead.model_validate(level)
 
@@ -126,21 +116,15 @@ class UserLevelService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DELETE_USER_LEVEL,
-                module=AuditModule.USER_LEVELS,
-                entity_name="user_level",
-                entity_id=str(level_id),
-                old_value={"name": level_name},
-                description=f"Deleted user level '{level_name}'",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DELETE_USER_LEVEL,
+            module=AuditModule.USER_LEVELS,
+            entity_name="user_level",
+            entity_id=str(level_id),
+            old_value={"name": level_name},
+            description=f"Deleted user level '{level_name}'",
+            is_success=True,
+        )
 
     def _get_or_404(self, level_id: int) -> UserLevel:
         level = self.session.get(UserLevel, level_id)

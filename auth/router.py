@@ -18,7 +18,8 @@ from auth.azure_service import (
 )
 from auth.schemas import LoginRequest, PasswordChangeRequest, RefreshRequest, TokenResponse
 from auth.service import AuthService
-from core.audit import AuditEvent, log_audit_event
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.config import settings
 from core.database import get_session
 from core.dependencies import CurrentUser
@@ -190,10 +191,13 @@ async def azure_callback(
 
     # Check for Azure-side errors
     if error:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description=f"Azure returned error: {error} — {error_description}",
             ip_address=ip_address,
-            detail=f"Azure returned error: {error} — {error_description}",
+            is_success=False,
+            failure_reason=f"{error}: {error_description}",
         )
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/login?error={error_description or error}",
@@ -202,10 +206,13 @@ async def azure_callback(
 
     # Validate state
     if not state or state not in _pending_auth:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description="Invalid or missing state parameter",
             ip_address=ip_address,
-            detail="Invalid or missing state parameter",
+            is_success=False,
+            failure_reason="Invalid or missing state parameter",
         )
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/login?error=Invalid+state+parameter",
@@ -217,10 +224,13 @@ async def azure_callback(
     expected_nonce = pending["nonce"]
 
     if not code:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description="Missing authorization code in callback",
             ip_address=ip_address,
-            detail="Missing authorization code in callback",
+            is_success=False,
+            failure_reason="Missing authorization code",
         )
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/login?error=Missing+authorization+code",
@@ -233,10 +243,13 @@ async def azure_callback(
         raw_id_token = token_data.get("id_token")
 
         if not raw_id_token:
-            log_audit_event(
-                AuditEvent.AZURE_LOGIN_FAILED,
+            AuditService(session).log_event(
+                action=AuditAction.FAILED_LOGIN,
+                module=AuditModule.AUTH,
+                description="No id_token in token response",
                 ip_address=ip_address,
-                detail="No id_token in token response",
+                is_success=False,
+                failure_reason="No id_token in token response",
             )
             return RedirectResponse(
                 url=f"{settings.FRONTEND_URL}/login?error=No+ID+token+received",
@@ -267,10 +280,13 @@ async def azure_callback(
         return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
     except HTTPException as exc:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description=f"Azure auth failed: {exc.detail}",
             ip_address=ip_address,
-            detail=f"Azure auth failed: {exc.detail}",
+            is_success=False,
+            failure_reason=str(exc.detail),
         )
         logger.error("Azure callback HTTPException: %s", exc.detail)
         error_msg = exc.detail if settings.DEBUG else "Authentication failed"
@@ -280,10 +296,13 @@ async def azure_callback(
         )
 
     except Exception as exc:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description=f"Unexpected error during Azure authentication: {exc}",
             ip_address=ip_address,
-            detail=f"Unexpected error during Azure authentication: {exc}",
+            is_success=False,
+            failure_reason=str(exc),
         )
         logger.exception("Unexpected error during Azure callback")
         error_msg = str(exc) if settings.DEBUG else "Authentication failed"

@@ -22,7 +22,8 @@ from jose import JWTError, jwt
 from jose.utils import long_to_base64
 from sqlmodel import Session, select
 
-from core.audit import AuditEvent, log_audit_event
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.config import settings
 from core.security import create_token_pair
 from users.models import AuthProvider, Role, RoleName, User, UserRoleLink
@@ -109,10 +110,6 @@ async def exchange_code_for_tokens(
 
     if resp.status_code != 200:
         error_detail = resp.text
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
-            detail=f"Token exchange failed: {error_detail}",
-        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Azure AD token exchange failed: {error_detail}",
@@ -221,10 +218,6 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
             },
         )
     except JWTError as e:
-        log_audit_event(
-            AuditEvent.AZURE_TOKEN_VALIDATION_FAILURE,
-            detail=f"Token validation failed: {e}",
-        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid id_token: {e}",
@@ -233,10 +226,6 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
     # Validate nonce
     token_nonce = claims.get("nonce")
     if token_nonce != expected_nonce:
-        log_audit_event(
-            AuditEvent.AZURE_TOKEN_VALIDATION_FAILURE,
-            detail="Nonce mismatch — possible replay attack",
-        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nonce mismatch in id_token",
@@ -287,12 +276,13 @@ def resolve_azure_user(
         existing.azure_display_name = display_name
         session.add(existing)
         session.commit()
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_SUCCESS,
-            user_id=existing.id,
-            email=existing.email,
-            azure_oid=azure_oid,
+        AuditService(session).log_event(
+            action=AuditAction.LOGIN,
+            module=AuditModule.AUTH,
+            description=f"Azure login success: {email}",
             ip_address=ip_address,
+            user=existing,
+            is_success=True,
         )
         return existing
 
@@ -314,20 +304,13 @@ def resolve_azure_user(
         existing.auth_provider = AuthProvider.AZURE_AD.value
         session.add(existing)
         session.commit()
-        log_audit_event(
-            AuditEvent.AZURE_USER_LINKED,
-            user_id=existing.id,
-            email=existing.email,
-            azure_oid=azure_oid,
+        AuditService(session).log_event(
+            action=AuditAction.LOGIN,
+            module=AuditModule.AUTH,
+            description=f"Linked Azure identity to existing local account: {email}",
             ip_address=ip_address,
-            detail="Linked Azure identity to existing local account",
-        )
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_SUCCESS,
-            user_id=existing.id,
-            email=existing.email,
-            azure_oid=azure_oid,
-            ip_address=ip_address,
+            user=existing,
+            is_success=True,
         )
         return existing
 
@@ -361,20 +344,13 @@ def resolve_azure_user(
 
     session.commit()
 
-    log_audit_event(
-        AuditEvent.AZURE_JIT_PROVISIONING,
-        user_id=new_user.id,
-        email=new_user.email,
-        azure_oid=azure_oid,
+    AuditService(session).log_event(
+        action=AuditAction.CREATE_USER,
+        module=AuditModule.AUTH,
+        description=f"JIT provisioned Azure user: {email} with role: {role.name.value if role else 'none'}",
         ip_address=ip_address,
-        detail=f"JIT provisioned with role: {role.name.value if role else 'none'}",
-    )
-    log_audit_event(
-        AuditEvent.AZURE_LOGIN_SUCCESS,
-        user_id=new_user.id,
-        email=new_user.email,
-        azure_oid=azure_oid,
-        ip_address=ip_address,
+        user=new_user,
+        is_success=True,
     )
 
     # Re-fetch to load relationships

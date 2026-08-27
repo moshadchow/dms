@@ -6,6 +6,8 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from categories.models import Category
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.security import hash_password
 from user_levels.models import UserLevel, UserLevelRead
 from users.models import (
@@ -155,21 +157,15 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.CREATE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user.id),
-                new_value={"email": data.email, "full_name": data.full_name},
-                description=f"Created user {data.email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_USER,
+            module=AuditModule.USERS,
+            entity_name="user",
+            entity_id=str(user.id),
+            new_value={"email": data.email, "full_name": data.full_name},
+            description=f"Created user {data.email}",
+            is_success=True,
+        )
 
         # Re-fetch with eager load so roles are in memory
         return self.get_user(user.id)
@@ -225,27 +221,21 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            new_values = {
-                "full_name": user.full_name,
-                "email": user.email,
-                "is_active": user.is_active,
-            }
-            svc.log_event(
-                action=AuditAction.UPDATE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user_id),
-                old_value=old_values,
-                new_value=new_values,
-                description=f"Updated user {user.email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        new_values = {
+            "full_name": user.full_name,
+            "email": user.email,
+            "is_active": user.is_active,
+        }
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_USER,
+            module=AuditModule.USERS,
+            entity_name="user",
+            entity_id=str(user_id),
+            old_value=old_values,
+            new_value=new_values,
+            description=f"Updated user {user.email}",
+            is_success=True,
+        )
 
         return self.get_user(user_id)
 
@@ -258,21 +248,15 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DELETE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user_id),
-                old_value={"email": email},
-                description=f"Deleted user {email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DELETE_USER,
+            module=AuditModule.USERS,
+            entity_name="user",
+            entity_id=str(user_id),
+            old_value={"email": email},
+            description=f"Deleted user {email}",
+            is_success=True,
+        )
 
     def deactivate_user(self, user_id: int) -> UserRead:
         user = self.session.get(User, user_id)
@@ -284,22 +268,16 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DEACTIVATE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user_id),
-                old_value={"is_active": True},
-                new_value={"is_active": False},
-                description=f"Deactivated user {user.email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DEACTIVATE_USER,
+            module=AuditModule.USERS,
+            entity_name="user",
+            entity_id=str(user_id),
+            old_value={"is_active": True},
+            new_value={"is_active": False},
+            description=f"Deactivated user {user.email}",
+            is_success=True,
+        )
 
         return self.get_user(user_id)
 
@@ -357,21 +335,15 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.CREATE_ROLE,
-                module=AuditModule.USERS,
-                entity_name="role",
-                entity_id=str(role.id),
-                new_value={"name": data.name.value if hasattr(data.name, "value") else str(data.name)},
-                description=f"Created role {data.name}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_ROLE,
+            module=AuditModule.USERS,
+            entity_name="role",
+            entity_id=str(role.id),
+            new_value={"name": data.name.value if hasattr(data.name, "value") else str(data.name)},
+            description=f"Created role {data.name}",
+            is_success=True,
+        )
 
         return self.get_role(role.id)
 

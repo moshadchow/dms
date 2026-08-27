@@ -5,6 +5,8 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from core.access import ensure_category_access, ensure_directory_access
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from directories.models import Directory, DirectoryCreate, DirectoryNode, DirectoryUpdate
 from documents.models import Document, DocumentStatus
 from users.models import User, UserCategoryLink
@@ -126,22 +128,16 @@ class DirectoryService:
         self.session.refresh(directory)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.CREATE_DIRECTORY,
-                module=AuditModule.DIRECTORIES,
-                entity_name="directory",
-                entity_id=str(directory.id),
-                new_value={"name": data.name, "category_id": data.category_id},
-                description=f"Created directory '{data.name}'",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_DIRECTORY,
+            module=AuditModule.DIRECTORIES,
+            entity_name="directory",
+            entity_id=str(directory.id),
+            new_value={"name": data.name, "category_id": data.category_id},
+            description=f"Created directory '{data.name}'",
+            is_success=True,
+            user=current_user,
+        )
 
         return directory
 
@@ -157,23 +153,17 @@ class DirectoryService:
         self.session.refresh(directory)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.RENAME_DIRECTORY,
-                module=AuditModule.DIRECTORIES,
-                entity_name="directory",
-                entity_id=str(directory_id),
-                old_value=old_values,
-                new_value=updates,
-                description=f"Updated directory {directory_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.RENAME_DIRECTORY,
+            module=AuditModule.DIRECTORIES,
+            entity_name="directory",
+            entity_id=str(directory_id),
+            old_value=old_values,
+            new_value=updates,
+            description=f"Updated directory {directory_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return directory
 
@@ -221,22 +211,16 @@ class DirectoryService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DELETE_DIRECTORY,
-                module=AuditModule.DIRECTORIES,
-                entity_name="directory",
-                entity_id=str(directory_id),
-                old_value={"name": dir_name},
-                description=f"Deleted directory '{dir_name}'",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DELETE_DIRECTORY,
+            module=AuditModule.DIRECTORIES,
+            entity_name="directory",
+            entity_id=str(directory_id),
+            old_value={"name": dir_name},
+            description=f"Deleted directory '{dir_name}'",
+            is_success=True,
+            user=current_user,
+        )
 
     # ──────────────────────────────────────────
     # Helpers
