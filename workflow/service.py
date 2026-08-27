@@ -10,8 +10,8 @@ from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from core.access import ensure_document_access, ensure_document_user_level_access
 from core.config import settings
-from documents.models import Document, DocumentUserLevelLink
-from users.models import Role, RoleName, User, UserRoleLink
+from documents.models import Document
+from users.models import Role, RoleName, User
 from workflow.models import (
     ApprovalAction,
     ApprovalMode,
@@ -35,6 +35,7 @@ from workflow.models import (
     WorkflowStepApprover,
     WorkflowStepRead,
 )
+from workflow.approval_policy import resolve_eligible_user_ids
 from workflow.schemas import (
     WorkflowActionCreate,
     WorkflowDefinitionCreate,
@@ -447,46 +448,7 @@ class WorkflowInstanceService:
 
     def _resolve_eligible_user_ids(self, step: WorkflowStep, document: Document) -> List[int]:
         """Return user IDs eligible to act at this step, filtered by user level visibility."""
-        eligible_ids: set[int] = set()
-
-        for approver in step.approvers:
-            if approver.user_id is not None:
-                eligible_ids.add(approver.user_id)
-            elif approver.role_id is not None:
-                # Find all users with this role
-                role_links = self.session.exec(
-                    select(UserRoleLink).where(UserRoleLink.role_id == approver.role_id)
-                ).all()
-                for link in role_links:
-                    eligible_ids.add(link.user_id)
-
-        if not eligible_ids:
-            return []
-
-        # Filter by user level visibility (admin bypasses)
-        user_level_links = self.session.exec(
-            select(DocumentUserLevelLink).where(
-                DocumentUserLevelLink.document_id == document.id,
-            )
-        ).all()
-        permitted_level_ids = {link.user_level_id for link in user_level_links}
-
-        # If no level links, document is only visible to admins
-        if not permitted_level_ids:
-            return []
-
-        result = []
-        for uid in eligible_ids:
-            user = self.session.get(User, uid)
-            if not user or not user.is_active:
-                continue
-            if user.is_admin():
-                result.append(uid)
-                continue
-            if user.user_level_id in permitted_level_ids:
-                result.append(uid)
-
-        return result
+        return resolve_eligible_user_ids(self.session, step, document)
 
     def _to_instance_read(self, instance: WorkflowInstance) -> WorkflowInstanceRead:
         doc_title = instance.document.title if instance.document else None
@@ -913,41 +875,8 @@ class ApprovalActionService:
             return all(eid in approved_ids for eid in eligible_ids)
 
     def _resolve_eligible_user_ids(self, step: WorkflowStep, document) -> List[int]:
-        """Resolve eligible user IDs for a step (same logic as WorkflowInstanceService)."""
-        eligible_ids: set[int] = set()
-        for approver in step.approvers:
-            if approver.user_id is not None:
-                eligible_ids.add(approver.user_id)
-            elif approver.role_id is not None:
-                role_links = self.session.exec(
-                    select(UserRoleLink).where(UserRoleLink.role_id == approver.role_id)
-                ).all()
-                for link in role_links:
-                    eligible_ids.add(link.user_id)
-
-        if not eligible_ids:
-            return []
-
-        from documents.models import DocumentUserLevelLink
-        user_level_links = self.session.exec(
-            select(DocumentUserLevelLink).where(DocumentUserLevelLink.document_id == document.id)
-        ).all()
-        permitted_level_ids = {link.user_level_id for link in user_level_links}
-
-        if not permitted_level_ids:
-            return []
-
-        result = []
-        for uid in eligible_ids:
-            user = self.session.get(User, uid)
-            if not user or not user.is_active:
-                continue
-            if user.is_admin():
-                result.append(uid)
-                continue
-            if user.user_level_id in permitted_level_ids:
-                result.append(uid)
-        return result
+        """Resolve eligible user IDs for a step (delegates to shared policy)."""
+        return resolve_eligible_user_ids(self.session, step, document)
 
     def act_on_instance(
         self,

@@ -259,9 +259,8 @@ class MemoService:
         step = self._get_current_step(memo)
         if not step or not memo.document:
             return False
-        from workflow.service import WorkflowInstanceService
-        svc = WorkflowInstanceService(self.session)
-        return user.id in svc._resolve_eligible_user_ids(step, memo.document)
+        from workflow.approval_policy import resolve_eligible_user_ids
+        return user.id in resolve_eligible_user_ids(self.session, step, memo.document)
 
     def _check_view_access(self, memo: Memo, user: User) -> None:
         if user.is_admin() or memo.created_by == user.id:
