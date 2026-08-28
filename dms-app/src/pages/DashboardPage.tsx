@@ -84,10 +84,10 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Welcome banner */}
-      <div style={{ backgroundColor: 'var(--surface)', borderRadius: '1rem', border: '1px solid var(--border)', padding: '1.25rem 1.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+      <div className="card" style={{ padding: '1.25rem 1.5rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>
-            Welcome back, {user?.full_name} 👋
+            Welcome back, {user?.full_name}
           </h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', margin: '3px 0 0' }}>
             Select a category below to browse documents.
@@ -95,14 +95,14 @@ export default function DashboardPage() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {primaryRole && (
-            <span style={{ padding: '5px 12px', borderRadius: '999px', backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: 600 }}>
+            <span className="badge">
               {ROLE_LABELS[primaryRole.name as RoleName] ?? primaryRole.name}
             </span>
           )}
           {isAdmin() && (
             <button
+              className="btn btn-primary"
               onClick={() => { setEditing(null); setFormOpen(true) }}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.85rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               New category
@@ -118,7 +118,7 @@ export default function DashboardPage() {
           { label: 'Total directories', value: categories.reduce((s, c) => s + (c.directory_count ?? 0), 0), color: 'var(--info)' },
           { label: 'Total documents', value: categories.reduce((s, c) => s + (c.document_count ?? 0), 0), color: 'var(--success)' },
         ].map((stat) => (
-          <div key={stat.label} style={{ backgroundColor: 'var(--surface)', borderRadius: '0.875rem', border: '1px solid var(--border)', padding: '1rem 1.25rem' }}>
+          <div key={stat.label} className="card" style={{ padding: '1rem 1.25rem' }}>
             <p style={{ fontSize: '1.5rem', fontWeight: 700, color: stat.color, margin: 0 }}>{stat.value}</p>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: 500 }}>{stat.label}</p>
           </div>
@@ -135,7 +135,8 @@ export default function DashboardPage() {
 
       {/* Category grid */}
       {loading ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }} aria-busy="true" role="status">
+          <span className="sr-only">Loading categories...</span>
           {[...Array(6)].map((_, i) => (
             <div key={i} style={{ backgroundColor: 'var(--surface)', borderRadius: '0.875rem', border: '1px solid var(--border)', padding: '1.25rem', animation: 'pulse 1.5s ease-in-out infinite' }}>
               <div style={{ width: '40px', height: '40px', backgroundColor: 'var(--surface-2)', borderRadius: '10px', marginBottom: '0.875rem' }} />
@@ -143,18 +144,18 @@ export default function DashboardPage() {
               <div style={{ height: '11px', backgroundColor: 'var(--bg)', borderRadius: '4px', width: '50%' }} />
             </div>
           ))}
-          <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`}</style>
         </div>
       ) : categories.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '4rem 2rem', backgroundColor: 'var(--surface)', borderRadius: '1rem', border: '1px dashed #e2e8f0' }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.5" style={{ margin: '0 auto 1rem' }}>
+        <div style={{ textAlign: 'center', padding: '4rem 2rem' }} className="card">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" style={{ margin: '0 auto 1rem' }}>
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
           </svg>
           <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>No categories yet</p>
           {isAdmin() && (
             <button
+              className="btn btn-primary"
               onClick={() => { setEditing(null); setFormOpen(true) }}
-              style={{ marginTop: '1rem', padding: '8px 18px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ marginTop: '1rem' }}
             >
               Create first category
             </button>

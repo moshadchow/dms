@@ -121,11 +121,19 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
       display: 'flex',
       flexDirection: 'column',
       gap: '0.75rem',
-      transition: 'box-shadow 150ms',
+      transition: 'box-shadow 150ms, border-color 150ms',
       position: 'relative',
+      cursor: 'pointer',
     }}
-      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
-      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+        e.currentTarget.style.borderColor = 'var(--border-soft)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = 'none'
+        e.currentTarget.style.borderColor = 'var(--border)'
+      }}
+      onClick={() => onView(doc)}
     >
       {/* Top row — icon + title + menu */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>

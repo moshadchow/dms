@@ -185,10 +185,9 @@ export default function DocumentsPage() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px' }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ width: '28px', height: '28px', border: '3px solid #e2e8f0', borderTopColor: '#4f46e5', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 0.75rem' }} />
+          <div style={{ width: '28px', height: '28px', border: '3px solid var(--border-soft)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 0.75rem' }} />
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem', margin: 0 }}>Loading…</p>
         </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     )
   }
@@ -204,7 +203,7 @@ export default function DocumentsPage() {
           <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ width: '28px', height: '28px', backgroundColor: 'var(--primary-soft)', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               </div>
               <div style={{ overflow: 'hidden' }}>
                 <p style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -219,8 +218,7 @@ export default function DocumentsPage() {
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {treeLoading ? (
               <div style={{ padding: '2rem', display: 'flex', justifyContent: 'center' }}>
-                <div style={{ width: '20px', height: '20px', border: '2px solid #e2e8f0', borderTopColor: '#4f46e5', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+                <div style={{ width: '20px', height: '20px', border: '2px solid var(--border-soft)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
               </div>
             ) : resolvedCategoryId != null ? (
               <DirectoryTree
@@ -247,8 +245,8 @@ export default function DocumentsPage() {
                 </div>
                 {canCreate && (
                   <button
+                    className="btn btn-primary"
                     onClick={() => setUploadOpen(true)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
                   >
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                     Upload
@@ -297,21 +295,21 @@ export default function DocumentsPage() {
 
               {/* Bulk restore action bar */}
               {showArchived && selectedIds.size > 0 && (
-                <div style={{ padding: '0.6rem 1.25rem', backgroundColor: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.82rem', color: '#1d4ed8', fontWeight: 500 }}>
+                <div style={{ padding: '0.6rem 1.25rem', backgroundColor: 'var(--info-bg)', borderBottom: '1px solid var(--info)', display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--info)', fontWeight: 500 }}>
                     {selectedIds.size} selected
                   </span>
                   <button
                     onClick={handleBulkRestore}
                     disabled={bulkRestoring}
-                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 14px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '0.82rem', fontWeight: 600, cursor: bulkRestoring ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: bulkRestoring ? 0.7 : 1 }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 14px', backgroundColor: 'var(--info)', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '0.82rem', fontWeight: 600, cursor: bulkRestoring ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: bulkRestoring ? 0.7 : 1 }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
                     {bulkRestoring ? 'Restoring…' : 'Restore Selected'}
                   </button>
                   <button
                     onClick={() => setSelectedIds(new Set())}
-                    style={{ padding: '5px 10px', backgroundColor: 'transparent', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '7px', fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                    style={{ padding: '5px 10px', backgroundColor: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-soft)', borderRadius: '7px', fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}
                   >
                     Clear
                   </button>
@@ -321,19 +319,19 @@ export default function DocumentsPage() {
               {/* Document grid */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.25rem' }}>
                 {docLoading ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.875rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.875rem' }} aria-busy="true" role="status">
+                    <span className="sr-only">Loading documents...</span>
                     {[...Array(6)].map((_, i) => (
                       <div key={i} style={{ backgroundColor: 'var(--bg)', borderRadius: '0.875rem', border: '1px solid var(--border)', padding: '1rem', animation: 'pulse 1.5s ease infinite' }}>
                         <div style={{ width: '40px', height: '40px', backgroundColor: 'var(--surface-2)', borderRadius: '10px', marginBottom: '0.75rem' }} />
                         <div style={{ height: '13px', backgroundColor: 'var(--surface-2)', borderRadius: '4px', marginBottom: '6px', width: '80%' }} />
                         <div style={{ height: '10px', backgroundColor: 'var(--bg)', borderRadius: '4px', width: '55%' }} />
-                        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
                       </div>
                     ))}
                   </div>
                 ) : !docData || docData.items.length === 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', textAlign: 'center', padding: '2rem' }}>
-                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
+                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
@@ -342,8 +340,9 @@ export default function DocumentsPage() {
                     </p>
                     {canCreate && !search && !fileTypeFilter && (
                       <button
+                        className="btn btn-primary"
                         onClick={() => setUploadOpen(true)}
-                        style={{ marginTop: '0.75rem', padding: '7px 16px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                        style={{ marginTop: '0.75rem' }}
                       >
                         Upload first document
                       </button>
@@ -380,7 +379,7 @@ export default function DocumentsPage() {
           ) : (
             /* No directory selected */
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                 <polyline points="14 2 14 8 20 8"/>
               </svg>

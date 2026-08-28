@@ -13,19 +13,19 @@ interface Props {
 }
 
 const ROLE_STYLES: Record<RoleName, { bg: string; color: string; label: string }> = {
-  admin:   { bg: '#f3e8ff', color: '#7c3aed', label: 'Admin' },
-  maker:   { bg: '#dbeafe', color: '#1d4ed8', label: 'Maker' },
-  checker: { bg: '#ffedd5', color: '#c2410c', label: 'Checker' },
-  auditor: { bg: '#dcfce7', color: '#15803d', label: 'Auditor' },
+  admin:   { bg: 'var(--primary-soft)', color: 'var(--primary)', label: 'Admin' },
+  maker:   { bg: 'var(--info-bg)', color: 'var(--info)', label: 'Maker' },
+  checker: { bg: 'var(--accent-soft)', color: 'var(--accent)', label: 'Checker' },
+  auditor: { bg: 'var(--success-bg)', color: 'var(--success)', label: 'Auditor' },
 }
 
 const STATUS_STYLES: Record<DocumentStatus, { bg: string; color: string; label: string }> = {
-  active:   { bg: '#f0fdf4', color: '#16a34a', label: 'Active' },
-  archived: { bg: '#fefce8', color: '#ca8a04', label: 'Archived' },
-  deleted:  { bg: '#fef2f2', color: '#dc2626', label: 'Deleted' },
+  active:   { bg: 'var(--success-bg)', color: 'var(--success)', label: 'Active' },
+  archived: { bg: 'var(--warning-bg)', color: 'var(--warning)', label: 'Archived' },
+  deleted:  { bg: 'var(--danger-bg)', color: 'var(--danger)', label: 'Deleted' },
 }
 
-export default function Badge({ variant = 'custom', role, status, label, color = '#475569', bg = '#f1f5f9' }: Props) {
+export default function Badge({ variant = 'custom', role, status, label, color = 'var(--text-secondary)', bg = 'var(--surface-2)' }: Props) {
   let resolvedBg    = bg
   let resolvedColor = color
   let resolvedLabel = label ?? ''

@@ -98,7 +98,7 @@ export default function LoginPage() {
 
         {/* Error */}
         {error && (
-          <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: '0.625rem', color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+          <div role="alert" style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--danger-bg)', border: '1px solid var(--danger)', borderRadius: '0.625rem', color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '1rem' }}>
             {error}
           </div>
         )}
@@ -115,7 +115,7 @@ export default function LoginPage() {
             <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Password</label>
             <div style={{ position: 'relative' }}>
               <input type={showPass ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" disabled={loading} className="input" style={{ paddingRight: '2.5rem' }} />
-              <button type="button" onClick={() => setShowPass(!showPass)} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0, lineHeight: 1 }}>
+              <button type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0, lineHeight: 1 }}>
                 {showPass
                   ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                   : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -125,7 +125,7 @@ export default function LoginPage() {
           </div>
 
           {/* Submit */}
-          <button type="submit" disabled={loading} style={{ width: '100%', padding: '0.75rem', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '0.625rem', fontSize: '0.95rem', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'opacity 150ms', opacity: loading ? 0.7 : 1, fontFamily: 'inherit' }}>
+          <button type="submit" disabled={loading} aria-busy={loading} className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontSize: '0.95rem', fontWeight: 700 }}>
             {loading ? (
               <><span style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'currentColor', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />Signing in…</>
             ) : 'Sign In'}
@@ -142,23 +142,15 @@ export default function LoginPage() {
             </div>
             <a
               href={`${apiRoot}/auth/azure/login`}
+              className="btn btn-secondary"
               style={{
                 width: '100%',
                 padding: '0.75rem',
-                backgroundColor: '#fff',
-                color: '#333',
-                border: '1px solid #d1d1d1',
-                borderRadius: '0.625rem',
                 fontSize: '0.95rem',
                 fontWeight: 600,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
+                textDecoration: 'none',
                 justifyContent: 'center',
                 gap: '0.75rem',
-                textDecoration: 'none',
-                fontFamily: 'inherit',
-                transition: 'background-color 150ms',
               }}
             >
               <svg width="20" height="20" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg">

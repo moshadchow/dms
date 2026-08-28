@@ -7,25 +7,30 @@
 ══════════════════════════════════════════════ */
 :root {
   /* Backgrounds */
-  --bg:        #f8fafc;
+  --bg:        #f0fdfa;
   --surface:   #ffffff;
   --surface-2: #f1f5f9;
   --surface-3: #e2e8f0;
 
   /* Borders */
-  --border:      #f1f5f9;
+  --border:      #5eead4;
   --border-soft: #e2e8f0;
 
   /* Text */
-  --text:           #1e293b;
-  --text-secondary: #64748b;
+  --text:           #134e4a;
+  --text-secondary: #475569;
   --text-tertiary:  #94a3b8;
   --text-muted:     #cbd5e1;
 
-  /* Brand */
-  --primary:       #4f46e5;
-  --primary-soft:  #eef2ff;
-  --primary-hover: #4338ca;
+  /* Brand — Teal primary from skill */
+  --primary:       #0d9488;
+  --primary-soft:  #ccfbf1;
+  --primary-hover: #0f766e;
+
+  /* Accent — Amber CTA from skill */
+  --accent:        #d97706;
+  --accent-soft:   #fef3c7;
+  --accent-hover:  #b45309;
 
   /* Status */
   --success-bg:  #f0fdf4;
@@ -56,25 +61,30 @@
 ══════════════════════════════════════════════ */
 [data-theme="dark"] {
   /* ── Backgrounds ── */
-  --bg:        #0d1117;   /* page background — near black */
-  --surface:   #1c2128;   /* cards, modals, panels — slightly lighter */
-  --surface-2: #22272e;   /* inputs, secondary surfaces */
-  --surface-3: #2d333b;   /* hover states, dividers */
+  --bg:        #0d1117;
+  --surface:   #1c2128;
+  --surface-2: #22272e;
+  --surface-3: #2d333b;
 
   /* ── Borders ── */
-  --border:      #2d333b;   /* more visible borders */
+  --border:      #2dd4bf;
   --border-soft: #373e47;
 
   /* ── Text ── */
-  --text:           #f0f6fc;   /* primary — maximum contrast on dark */
-  --text-secondary: #adbac7;   /* labels, subtitles — clearly readable */
-  --text-tertiary:  #768390;   /* placeholders, timestamps */
-  --text-muted:     #545d68;   /* disabled, very subtle */
+  --text:           #f0fdfa;
+  --text-secondary: #94a3b8;
+  --text-tertiary:  #64748b;
+  --text-muted:     #475569;
 
-  /* ── Brand ── */
-  --primary:       #79c0ff;   /* links, active states — blue that pops on dark */
-  --primary-soft:  #1a2b3c;
-  --primary-hover: #a5d6ff;
+  /* ── Brand — Teal for dark mode ── */
+  --primary:       #2dd4bf;
+  --primary-soft:  #134e4a;
+  --primary-hover: #5eead4;
+
+  /* ── Accent — Amber for dark mode ── */
+  --accent:        #fbbf24;
+  --accent-soft:   #451a03;
+  --accent-hover:  #fcd34d;
 
   /* ── Status ── */
   --success-bg: #1a2e1a;
@@ -90,7 +100,7 @@
   --input-bg:     #21262d;
   --input-border: #30363d;
 
-  /* ── Shadows ── a bit stronger in dark ── */
+  /* ── Shadows ── */
   --shadow-sm: 0 1px 4px rgba(0,0,0,0.5);
   --shadow-md: 0 4px 20px rgba(0,0,0,0.6);
   --shadow-lg: 0 24px 80px rgba(0,0,0,0.8);
@@ -165,6 +175,35 @@ select.input    { appearance: none; cursor: pointer; }
   border-radius: 1rem;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+/* ══════════════════════════════════════════════
+   Badge
+══════════════════════════════════════════════ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background-color: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════
+   Screen reader only
+══════════════════════════════════════════════ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
 }
 
 /* ══════════════════════════════════════════════
