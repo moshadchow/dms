@@ -7,3 +7,4 @@ __pycache__/
 storage/uploads/
 *.pyc
 node_modules/
+*.py[cod]
