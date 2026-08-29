@@ -1,4 +1,6 @@
 from datetime import datetime
+import secrets
+import string
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -52,6 +54,7 @@ def _user_to_read(user: User) -> UserRead:
         email=user.email,
         is_active=user.is_active,
         auth_provider=user.auth_provider,
+        must_change_password=user.must_change_password,
         created_at=user.created_at,
         updated_at=user.updated_at,
         roles=[_role_to_read(r) for r in user.roles],
@@ -280,6 +283,53 @@ class UserService:
         )
 
         return self.get_user(user_id)
+
+    def reset_password(self, user_id: int, current_admin_id: int) -> str:
+        """Admin resets a user's password. Returns the plain-text temp password."""
+        from notifications.service import EmailService
+        from notifications.templates import build_password_reset_email
+
+        user = self.session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+        if user.auth_provider == "azure_ad":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot reset password for Azure AD users",
+            )
+
+        if user.id == current_admin_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin cannot reset their own password",
+            )
+
+        alphabet = string.ascii_letters + string.digits
+        temp_password = "".join(secrets.choice(alphabet) for _ in range(12))
+
+        user.hashed_password = hash_password(temp_password)
+        user.must_change_password = True
+        user.updated_at = datetime.utcnow()
+        self.session.add(user)
+        self.session.commit()
+
+        AuditService(self.session).log_event(
+            action=AuditAction.PASSWORD_RESET,
+            module=AuditModule.USERS,
+            entity_name="user",
+            entity_id=str(user.id),
+            description=f"Admin reset password for user {user.email}",
+            is_success=True,
+        )
+
+        email_service = EmailService(self.session)
+        subject, html_body, text_body = build_password_reset_email(
+            user.full_name, temp_password
+        )
+        email_service._send_smtp(user.email, subject, html_body, text_body)
+
+        return temp_password
 
     def _assign_roles(self, user_id: int, role_ids: List[int]) -> None:
         for role_id in role_ids:

@@ -5,7 +5,6 @@ export interface WorkflowStepApprover {
   workflow_step_id: number
   user_id: number | null
   role_id: number | null
-  priority: number
   is_active: boolean
   user_name: string | null
   role_name: string | null
@@ -45,7 +44,6 @@ export interface WorkflowDefinitionListResponse {
 export interface WorkflowStepApproverCreate {
   user_id?: number | null
   role_id?: number | null
-  priority?: number
 }
 
 export interface WorkflowStepCreate {

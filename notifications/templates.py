@@ -19,7 +19,7 @@ def _build_review_url(instance_id: int, user_id: int) -> str:
         token_type="approval_link",
         expires_delta=timedelta(days=7),
     )
-    return f"{settings.FRONTEND_URL}/approvals/{instance_id}?token={token}"
+    return f"{settings.FRONTEND_URL}/approvals/pending"
 
 
 def _format_datetime(dt: datetime) -> str:
@@ -266,5 +266,48 @@ View Memo: {review_url}
     text = _build_text_template(f"Memo {action_title}", text_content)
 
     subject = f"[DMS] Memo {action_title}: {memo.subject}"
+
+    return subject, html, text
+
+
+def build_password_reset_email(
+    user_name: str,
+    temp_password: str,
+) -> Tuple[str, str, str]:
+    """Build email for admin-initiated password reset with temporary password."""
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Your Password Has Been Reset</h2>
+        <p style="margin: 0 0 24px; color: #475569;">Hello {user_name},</p>
+        <p style="margin: 0 0 24px; color: #475569;">An administrator has reset your password. You can now log in using the temporary password below:</p>
+
+        <div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin-bottom: 24px; text-align: center;">
+            <p style="margin: 0; font-size: 14px; color: #64748b;">Your temporary password:</p>
+            <p style="margin: 8px 0 0; font-size: 20px; font-weight: 700; color: #1e293b; font-family: monospace; letter-spacing: 1px;">{temp_password}</p>
+        </div>
+
+        <p style="margin: 0 0 24px; color: #475569;">For your security, you will be required to change this password upon your next login.</p>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If you did not request this change, please contact your administrator immediately.</p>
+    """
+
+    text_content = f"""
+Your Password Has Been Reset
+
+Hello {user_name},
+
+An administrator has reset your password. You can now log in using the temporary password below:
+
+Temporary password: {temp_password}
+
+For your security, you will be required to change this password upon your next login.
+
+If you did not request this change, please contact your administrator immediately.
+"""
+
+    html = _build_html_template("Password Reset", html_content)
+    text = _build_text_template("Password Reset", text_content)
+
+    subject = "[DMS] Your Password Has Been Reset"
 
     return subject, html, text

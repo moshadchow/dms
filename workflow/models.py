@@ -94,7 +94,6 @@ class WorkflowStep(WorkflowStepBase, table=True):
 # ──────────────────────────────────────────────
 
 class WorkflowStepApproverBase(SQLModel):
-    priority: int = Field(default=0, nullable=False)
     is_active: bool = Field(default=True)
 
 
@@ -270,7 +269,6 @@ class WorkflowStepApproverRead(SQLModel):
     workflow_step_id: int
     user_id: Optional[int] = None
     role_id: Optional[int] = None
-    priority: int
     is_active: bool
     user_name: Optional[str] = None
     role_name: Optional[str] = None

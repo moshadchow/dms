@@ -30,7 +30,7 @@ def _create_workflow_payload(
                 "step_order": 1,
                 "step_name": "Manager Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": 1, "priority": 0}],
+                "approvers": [{"user_id": 1}],
             }
         ]
     return {
@@ -209,7 +209,7 @@ class TestWorkflowDefinitionService:
                         "step_order": 1,
                         "step_name": "Step 1",
                         "approval_mode": "sequential",
-                        "approvers": [{"user_id": 1, "priority": 0}],
+                        "approvers": [{"user_id": 1}],
                     }
                 ],
             )
@@ -220,13 +220,13 @@ class TestWorkflowDefinitionService:
                     step_order=1,
                     step_name="New Step A",
                     approval_mode="parallel",
-                    approvers=[WorkflowStepApproverCreate(user_id=1, priority=0)],
+                    approvers=[WorkflowStepApproverCreate(user_id=1)],
                 ),
                 WorkflowStepCreate(
                     step_order=2,
                     step_name="New Step B",
                     approval_mode="sequential",
-                    approvers=[WorkflowStepApproverCreate(role_id=2, priority=1)],
+                    approvers=[WorkflowStepApproverCreate(role_id=2)],
                 ),
             ]
             update = WorkflowDefinitionUpdate(steps=new_steps)
@@ -422,7 +422,7 @@ def _create_workflow_with_step(
             "step_order": 1,
             "step_name": "Manager Review",
             "approval_mode": "sequential",
-            "approvers": [{"user_id": approver_user_id, "priority": 0}],
+            "approvers": [{"user_id": approver_user_id}],
         }],
     )
     return svc.create_definition(payload, current_user=admin)
@@ -754,13 +754,13 @@ class TestApprovalActionService:
                         "step_order": 1,
                         "step_name": "Step 1",
                         "approval_mode": "sequential",
-                        "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                        "approvers": [{"user_id": seeded_data["admin_id"]}],
                     },
                     {
                         "step_order": 2,
                         "step_name": "Step 2",
                         "approval_mode": "sequential",
-                        "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                        "approvers": [{"user_id": seeded_data["admin_id"]}],
                     },
                 ],
             )
@@ -820,8 +820,8 @@ class TestApprovalActionService:
                     "step_name": "Parallel Review",
                     "approval_mode": "parallel",
                     "approvers": [
-                        {"user_id": seeded_data["admin_id"], "priority": 0},
-                        {"user_id": checker.id, "priority": 1},
+                        {"user_id": seeded_data["admin_id"]},
+                        {"user_id": checker.id},
                     ],
                 }],
             )
@@ -852,7 +852,7 @@ class TestWorkflowInstanceAPI:
                 "step_order": 1,
                 "step_name": "Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
             }],
         )
         wf_resp = test_client.post(
@@ -884,7 +884,7 @@ class TestWorkflowInstanceAPI:
                 "step_order": 1,
                 "step_name": "Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
             }],
         )
         wf_resp = test_client.post(
@@ -911,7 +911,7 @@ class TestWorkflowInstanceAPI:
                 "step_order": 1,
                 "step_name": "Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
             }],
         )
         wf_resp = test_client.post(
@@ -938,7 +938,7 @@ class TestWorkflowInstanceAPI:
                 "step_order": 1,
                 "step_name": "Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
             }],
         )
         wf_resp = test_client.post(
@@ -967,7 +967,7 @@ class TestWorkflowInstanceAPI:
                 "step_order": 1,
                 "step_name": "Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
             }],
         )
         wf_resp = test_client.post(

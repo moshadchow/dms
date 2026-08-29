@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
 import { categoriesApi } from '@/api/categories.api'
 import type { Category } from '@/types/category.types'
-import type { UserLevel } from '@/types/user.types'
+import type { UserLevel, User } from '@/types/user.types'
 import type { Document } from '@/types/document.types'
 import type { MemoCreate, MemoUpdate } from '@/types/memo.types'
 import Button from '@/components/ui/Button'
@@ -18,6 +18,9 @@ interface MemoFormProps {
   submitting?: boolean
   isEdit?: boolean
   existingAttachments?: Document[]
+  error?: string
+  onClearError?: () => void
+  currentUser?: User | null
 }
 
 export default function MemoForm({
@@ -29,6 +32,9 @@ export default function MemoForm({
   submitting = false,
   isEdit = false,
   existingAttachments = [],
+  error,
+  onClearError,
+  currentUser,
 }: MemoFormProps) {
   const [memo_date, setMemoDate] = useState(
     initialData.memo_date ? initialData.memo_date.split('T')[0] : new Date().toISOString().split('T')[0]
@@ -73,17 +79,14 @@ export default function MemoForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    onClearError?.()
     if (!directory_id || !subject.trim()) {
       toast.error('Directory and subject are required')
       return
     }
-    if (!user_level_ids.length) {
-      toast.error('At least one user level is required')
-      return
-    }
     const data = {
       directory_id,
-      user_level_ids,
+      ...(isEdit && { user_level_ids }),
       memo_date: memo_date ? new Date(memo_date).toISOString() : undefined,
       subject,
       body,
@@ -94,6 +97,11 @@ export default function MemoForm({
 
   return (
     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      {error && (
+        <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--danger-bg, #fef2f2)', border: '1px solid var(--danger, #fecaca)', borderRadius: '0.5rem', color: 'var(--danger, #dc2626)', fontSize: '0.85rem' }}>
+          {error}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
         <div>
           <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>Category</label>
@@ -160,23 +168,29 @@ export default function MemoForm({
 
       <div>
         <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 500, marginBottom: '4px', color: '#334155' }}>User Levels (Visibility)</label>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-          {userLevels.map((ul) => (
-            <label
-              key={ul.id}
-              style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}
-            >
-              <input
-                type="checkbox"
-                checked={user_level_ids.includes(ul.id)}
-                onChange={(e) => setUserLevelIds((prev) =>
-                  e.target.checked ? [...prev, ul.id] : prev.filter((id) => id !== ul.id)
-                )}
-              />
-              <span>{ul.name} ({ul.level})</span>
-            </label>
-          ))}
-        </div>
+        {isEdit ? (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {userLevels.map((ul) => (
+              <label
+                key={ul.id}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={user_level_ids.includes(ul.id)}
+                  onChange={(e) => setUserLevelIds((prev) =>
+                    e.target.checked ? [...prev, ul.id] : prev.filter((id) => id !== ul.id)
+                  )}
+                />
+                <span>{ul.name}</span>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: '0.85rem', color: '#334155' }}>
+            {currentUser?.user_level?.name || 'All Levels (Admin)'}
+          </div>
+        )}
       </div>
 
       <AttachmentUploader
@@ -184,7 +198,7 @@ export default function MemoForm({
         onChange={setAttachmentDocs}
         disabled={isEdit && existingAttachments.length > 0 && attachmentDocs.length === existingAttachments.length}
         directoryId={directory_id || undefined}
-        userLevelIds={user_level_ids}
+        userLevelIds={isEdit ? user_level_ids : undefined}
       />
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '0.5rem' }}>

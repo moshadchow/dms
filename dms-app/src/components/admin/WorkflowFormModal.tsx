@@ -22,7 +22,6 @@ interface StepForm {
 interface ApproverForm {
   user_id: number | null
   role_id: number | null
-  priority: number
 }
 
 const inputStyle: React.CSSProperties = {
@@ -68,7 +67,6 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
             approvers: s.approvers.map((a) => ({
               user_id: a.user_id,
               role_id: a.role_id,
-              priority: a.priority,
             })),
           }))
         )
@@ -105,7 +103,7 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
     setSteps((prev) =>
       prev.map((s, i) =>
         i === stepIndex
-          ? { ...s, approvers: [...s.approvers, { user_id: null, role_id: null, priority: 0 }] }
+          ? { ...s, approvers: [...s.approvers, { user_id: null, role_id: null }] }
           : s
       )
     )
@@ -159,7 +157,6 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
         approvers: s.approvers.map((a) => ({
           user_id: a.user_id,
           role_id: a.role_id,
-          priority: a.priority,
         })),
       }))
 
@@ -327,17 +324,6 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
                                 </optgroup>
                               )}
                             </select>
-                          </div>
-                          <div>
-                            <label style={{ fontSize: '0.68rem', fontWeight: 500, color: 'var(--text-tertiary)', marginBottom: '0.15rem', display: 'block' }}>Priority</label>
-                            <input
-                              type="number"
-                              className="input"
-                              value={approver.priority}
-                              onChange={(e) => updateApprover(stepIdx, approverIdx, 'priority', Number(e.target.value))}
-                              disabled={loading}
-                              min={0}
-                            />
                           </div>
                           <div>
                             <button type="button" onClick={() => removeApprover(stepIdx, approverIdx)} disabled={loading} style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: '#dc2626' }}>

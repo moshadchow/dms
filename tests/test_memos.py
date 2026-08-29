@@ -30,7 +30,7 @@ def _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="M
             "step_order": 1,
             "step_name": "Review",
             "approval_mode": "sequential",
-            "approvers": [{"user_id": seeded_data["admin_id"], "priority": 0}],
+            "approvers": [{"user_id": seeded_data["admin_id"]}],
         }],
     }
     resp = test_client.post("/api/v1/workflows", json=payload, headers=auth_headers["admin"])
@@ -81,19 +81,16 @@ class TestMemoService:
             assert doc.title == "Office Closure Notice"
             assert (storage / doc.storage_path).exists()
 
-    def test_create_draft_requires_user_levels(self, seeded_data, client):
+    def test_create_draft_auto_assigns_user_level(self, seeded_data, client):
         _, engine, _ = client
         with Session(engine) as session:
             from users.models import User
             maker = session.get(User, seeded_data["maker_id"])
-            from fastapi import HTTPException
-            try:
-                MemoService(session).create_draft(
-                    MemoCreate(**_memo_payload(seeded_data, user_level_ids=[])), maker
-                )
-                assert False, "expected HTTPException"
-            except HTTPException as exc:
-                assert exc.status_code == 422
+            memo = MemoService(session).create_draft(
+                MemoCreate(**_memo_payload(seeded_data, user_level_ids=[])), maker
+            )
+            assert memo is not None
+            assert memo.id is not None
 
     def test_get_memo(self, seeded_data, client):
         _, engine, _ = client
@@ -331,7 +328,7 @@ class TestMemoAPI:
                 "step_order": 1,
                 "step_name": "Review",
                 "approval_mode": "sequential",
-                "approvers": [{"user_id": checker_id, "priority": 0}],
+                "approvers": [{"user_id": checker_id}],
             }],
         }
         wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])

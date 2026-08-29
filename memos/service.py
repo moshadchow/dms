@@ -426,7 +426,10 @@ class MemoService:
 
     def create_draft(self, data: MemoCreate, current_user: User) -> MemoDetailRead:
         directory = ensure_directory_access(self.session, current_user, data.directory_id)
-        valid_level_ids = self._validate_user_levels(data.user_level_ids)
+        if data.user_level_ids:
+            valid_level_ids = self._validate_user_levels(data.user_level_ids)
+        else:
+            valid_level_ids = {current_user.user_level_id} if current_user.user_level_id else set()
 
         memo_date = data.memo_date or datetime.utcnow()
 
@@ -600,7 +603,7 @@ class MemoService:
         memo = self._get_memo_or_404(memo.id)
         return self._to_detail(memo)
 
-    def submit_memo(self, memo_id: int, data: MemoSubmit, current_user: User) -> MemoDetailRead:
+    def submit_memo(self, memo_id: int, data: MemoSubmit, current_user: User, background_tasks=None) -> MemoDetailRead:
         memo = self._get_memo_or_404(memo_id)
         self._check_author(memo, current_user)
 
@@ -624,6 +627,7 @@ class MemoService:
                 workflow_definition_id=data.workflow_definition_id,
             ),
             current_user,
+            background_tasks,
         )
 
         memo.updated_at = datetime.utcnow()

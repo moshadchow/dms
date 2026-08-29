@@ -17,6 +17,7 @@ interface Props {
 export default function UserTable({ users, loading, onEdit, onRefresh }: Props) {
   const [deactivating, setDeactivating] = useState<User | null>(null)
   const [deleting, setDeleting]         = useState<User | null>(null)
+  const [resetting, setResetting]       = useState<User | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
   const handleDeactivate = async () => {
@@ -42,6 +43,21 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
       toast.success(`${deleting.full_name} deleted`)
       onRefresh()
       setDeleting(null)
+    } catch (err) {
+      toast.error(getErrorMessage(err))
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResetPassword = async () => {
+    if (!resetting) return
+    setActionLoading(true)
+    try {
+      await usersApi.resetPassword(resetting.id)
+      toast.success(`Password has been reset. A temporary password has been sent to ${resetting.email}`)
+      onRefresh()
+      setResetting(null)
     } catch (err) {
       toast.error(getErrorMessage(err))
     } finally {
@@ -154,6 +170,11 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
                       <ActionBtn onClick={() => onEdit(user)} title="Edit" color="#475569">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                       </ActionBtn>
+                      {user.is_active && user.auth_provider !== 'azure_ad' && (
+                        <ActionBtn onClick={() => setResetting(user)} title="Reset Password" color="#8b5cf6">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        </ActionBtn>
+                      )}
                       {user.is_active && (
                         <ActionBtn onClick={() => setDeactivating(user)} title="Deactivate" color="#d97706">
                           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
@@ -189,6 +210,15 @@ export default function UserTable({ users, loading, onEdit, onRefresh }: Props) 
         loading={actionLoading}
         onConfirm={handleDelete}
         onCancel={() => setDeleting(null)}
+      />
+      <ConfirmDialog
+        isOpen={!!resetting}
+        title="Reset password"
+        message={`Reset "${resetting?.full_name}"'s password? A temporary password will be sent to ${resetting?.email}.`}
+        confirmLabel="Reset Password"
+        loading={actionLoading}
+        onConfirm={handleResetPassword}
+        onCancel={() => setResetting(null)}
       />
     </>
   )

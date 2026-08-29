@@ -129,7 +129,8 @@ class ApprovalActionService:
     ) -> WorkflowInstanceRead:
         instance = self._get_instance_or_404(instance_id)
 
-        if any(r.name == RoleName.MAKER for r in current_user.roles):
+        role_names = {r.name for r in current_user.roles}
+        if RoleName.MAKER in role_names and RoleName.CHECKER not in role_names and RoleName.ADMIN not in role_names:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Makers cannot perform approval actions",
@@ -255,8 +256,18 @@ class ApprovalActionService:
             from notifications.tasks import send_notification_task
             document_id = instance.document_id if instance.document else None
 
-            if step_advanced and document_id:
-                # Step advanced - notify next step approvers
+            if final_approved and document_id:
+                # Final approval - notify author with confirmation
+                background_tasks.add_task(
+                    send_notification_task,
+                    notification_type="approved",
+                    instance_id=instance.id,
+                    document_id=document_id,
+                    step_order=instance.current_step_order,
+                )
+
+            elif step_advanced and document_id:
+                # Step advanced to next step - notify next approvers AND author
                 current_step_orm = self._get_current_step(instance)
                 if current_step_orm:
                     background_tasks.add_task(
@@ -266,24 +277,31 @@ class ApprovalActionService:
                         document_id=document_id,
                         step_order=instance.current_step_order,
                     )
-
-            elif data.action in (ApprovalAction.REJECT, ApprovalAction.RETURN) and instance.document_id:
-                # Reject/Return - notify submitter
                 background_tasks.add_task(
                     send_notification_task,
                     notification_type="action",
                     instance_id=instance.id,
-                    document_id=instance.document_id,
+                    document_id=document_id,
                     step_order=instance.current_step_order,
                 )
 
-            elif final_approved and instance.document_id:
-                # Final approval - notify submitter
+            elif data.action in (ApprovalAction.REJECT, ApprovalAction.RETURN) and document_id:
+                # Reject/Return - notify author
                 background_tasks.add_task(
                     send_notification_task,
-                    notification_type="approved",
+                    notification_type="action",
                     instance_id=instance.id,
-                    document_id=instance.document_id,
+                    document_id=document_id,
+                    step_order=instance.current_step_order,
+                )
+
+            elif data.action == ApprovalAction.APPROVE and document_id:
+                # Approve (non-final, non-advance, e.g. PARALLEL waiting) - notify author
+                background_tasks.add_task(
+                    send_notification_task,
+                    notification_type="action",
+                    instance_id=instance.id,
+                    document_id=document_id,
                     step_order=instance.current_step_order,
                 )
 

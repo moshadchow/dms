@@ -32,7 +32,11 @@ export default function AzureCallbackPage() {
         const user = await authApi.me()
         setUser(user)
         toast.success(`Welcome, ${user.full_name.split(' ')[0]}!`)
-        navigate('/dashboard', { replace: true })
+        if (user.must_change_password) {
+          navigate('/force-change-password', { replace: true })
+        } else {
+          navigate('/dashboard', { replace: true })
+        }
       } catch {
         setError('Failed to load user profile')
       }

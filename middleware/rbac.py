@@ -52,7 +52,8 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     ("PATCH",  "/api/v1/workflows"):          PermissionAction.UPDATE,
     ("DELETE", "/api/v1/workflows"):          PermissionAction.DELETE,
     # ── Workflow instances ────────────────────
-    ("POST",   "/api/v1/workflow-instances"): PermissionAction.CREATE,
+    ("POST",   "/api/v1/workflow-instances"):  PermissionAction.CREATE,
+    ("POST",   "/api/v1/workflow-instances/"): PermissionAction.UPDATE,
     # ── Memos ─────────────────────────────────
     ("GET",    "/api/v1/memos"):               PermissionAction.VIEW,
     ("POST",   "/api/v1/memos"):               PermissionAction.CREATE,

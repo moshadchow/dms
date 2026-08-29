@@ -176,10 +176,13 @@ class DocumentService:
 
         # Validate user level IDs
         if not user_level_ids:
-            raise HTTPException(
-                status_code=422,
-                detail="At least one user level must be selected for document visibility",
-            )
+            if current_user.user_level_id:
+                user_level_ids = [current_user.user_level_id]
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="At least one user level must be selected for document visibility",
+                )
 
         valid_levels = self.session.exec(
             select(UserLevel).where(

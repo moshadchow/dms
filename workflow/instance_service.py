@@ -329,7 +329,6 @@ class WorkflowInstanceService:
             .where(WorkflowInstance.status.in_([
                 WorkflowStatus.SUBMITTED,
                 WorkflowStatus.PENDING_APPROVAL,
-                WorkflowStatus.RETURNED,
             ]))
         ).all()
 

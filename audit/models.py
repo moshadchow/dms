@@ -58,6 +58,7 @@ class AuditAction(str, Enum):
     # Security
     UNAUTHORIZED_ACCESS = "unauthorized_access"
     PERMISSION_DENIED = "permission_denied"
+    PASSWORD_RESET = "password_reset"
 
     # Workflow
     CREATE_WORKFLOW = "create_workflow"

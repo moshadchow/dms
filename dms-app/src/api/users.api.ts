@@ -49,6 +49,11 @@ export const usersApi = {
     return res.data
   },
 
+  resetPassword: async (id: number): Promise<{ message: string }> => {
+    const res = await apiClient.post<{ message: string }>(`/users/${id}/reset-password`)
+    return res.data
+  },
+
   // ── Roles ─────────────────────────────────────────────────────────
   listRoles: async (): Promise<Role[]> => {
     const res = await apiClient.get<Role[]>('/users/roles/all')

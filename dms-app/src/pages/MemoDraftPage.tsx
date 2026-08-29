@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { memoApi } from '@/api/memo.api'
+import { getErrorMessage } from '@/api/client'
 import { directoriesApi } from '@/api/directories.api'
 import { usersApi } from '@/api/users.api'
 import { workflowApi } from '@/api/workflow.api'
+import { useAuthStore } from '@/store/authStore'
 import type { MemoDetail, MemoCreate, MemoUpdate } from '@/types/memo.types'
 import type { UserLevel } from '@/types/user.types'
 import Button from '@/components/ui/Button'
@@ -15,6 +17,7 @@ export default function MemoDraftPage() {
   const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
   const isEdit = !!id && id !== 'new'
+  const { user: currentUser } = useAuthStore()
 
   const [directories, setDirectories] = useState<{ id: number; name: string; category_id: number }[]>([])
   const [userLevels, setUserLevels] = useState<UserLevel[]>([])
@@ -25,6 +28,7 @@ export default function MemoDraftPage() {
   const [memo, setMemo] = useState<MemoDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     setSubmitSignatureId(null)
@@ -66,6 +70,7 @@ export default function MemoDraftPage() {
   }, [id, isEdit])
 
   const handleSubmit = async (data: MemoCreate | MemoUpdate) => {
+    setError('')
     setSubmitting(true)
     try {
       if (isEdit) {
@@ -78,8 +83,8 @@ export default function MemoDraftPage() {
         toast.success('Memo created')
         navigate(`/memos/${created.id}`)
       }
-    } catch {
-      toast.error(isEdit ? 'Failed to update memo' : 'Failed to create memo')
+    } catch (err) {
+      setError(getErrorMessage(err))
     } finally {
       setSubmitting(false)
     }
@@ -88,6 +93,7 @@ export default function MemoDraftPage() {
   const handleSubmitForApproval = async (e: React.MouseEvent) => {
     e.preventDefault()
     if (!memo || !selectedWorkflowId) return
+    setError('')
     setSubmitting(true)
     try {
       await memoApi.submit(memo.id, {
@@ -96,8 +102,8 @@ export default function MemoDraftPage() {
       })
       toast.success('Submitted for approval')
       navigate(`/memos/${memo.id}`)
-    } catch {
-      toast.error('Failed to submit')
+    } catch (err) {
+      setError(getErrorMessage(err))
     } finally {
       setSubmitting(false)
     }
@@ -122,11 +128,14 @@ export default function MemoDraftPage() {
         initialData={memo || {}}
         directories={directories}
         userLevels={userLevels}
+        currentUser={currentUser}
         onSubmit={handleSubmit}
         onCancel={() => navigate('/memos')}
         submitting={submitting}
         isEdit={isEdit}
         existingAttachments={memo?.attachments || []}
+        error={error}
+        onClearError={() => setError('')}
       />
 
       {canEditSignature && (

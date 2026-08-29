@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
@@ -95,8 +95,9 @@ def submit_memo(
     payload: MemoSubmit,
     current_user: CurrentUser = None,
     session: Session = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
 ):
-    return MemoService(session).submit_memo(memo_id, payload, current_user)
+    return MemoService(session).submit_memo(memo_id, payload, current_user, background_tasks)
 
 
 @router.get(

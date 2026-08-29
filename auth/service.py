@@ -90,13 +90,16 @@ class AuthService:
     ) -> None:
         from fastapi import HTTPException, status
 
-        if not user.hashed_password or not verify_password(current_password, user.hashed_password):
+        if user.must_change_password:
+            pass
+        elif not user.hashed_password or not verify_password(current_password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Current password is incorrect",
             )
 
         user.hashed_password = hash_password(new_password)
+        user.must_change_password = False
         self.session.add(user)
         self.session.commit()
 

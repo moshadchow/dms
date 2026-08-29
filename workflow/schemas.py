@@ -24,7 +24,6 @@ class WorkflowStepApproverCreate(BaseModel):
 
     user_id: Optional[int] = Field(None, description="User ID (mutually exclusive with role_id)")
     role_id: Optional[int] = Field(None, description="Role ID (mutually exclusive with user_id)")
-    priority: int = Field(0, ge=0, description="Ordering priority within the step")
 
 
 class WorkflowStepCreate(BaseModel):

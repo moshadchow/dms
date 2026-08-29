@@ -90,7 +90,6 @@ class WorkflowDefinitionService:
                         "workflow_step_id": app.workflow_step_id,
                         "user_id": app.user_id,
                         "role_id": app.role_id,
-                        "priority": app.priority,
                         "is_active": app.is_active,
                         "user_name": app.user.full_name if app.user else None,
                         "role_name": app.role.name.value if app.role else None,
@@ -176,7 +175,6 @@ class WorkflowDefinitionService:
                     workflow_step_id=step.id,
                     user_id=approver_data.user_id,
                     role_id=approver_data.role_id,
-                    priority=approver_data.priority,
                 )
                 self.session.add(approver)
 
@@ -317,7 +315,6 @@ class WorkflowDefinitionService:
                         workflow_step_id=step.id,
                         user_id=approver_data.user_id,
                         role_id=approver_data.role_id,
-                        priority=approver_data.priority,
                     )
                     self.session.add(approver)
 

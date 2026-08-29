@@ -13,6 +13,7 @@ from users.models import (
     UserRead,
     UserUpdate,
 )
+from users.schemas import AdminPasswordResetRequest
 from users.service import UserService
 
 router = APIRouter()
@@ -103,6 +104,21 @@ def deactivate_user(
     session: Session   = Depends(get_session),
 ):
     return UserService(session).deactivate_user(user_id)
+
+
+@router.post(
+    "/{user_id}/reset-password",
+    summary="Reset a user's password (Admin only)",
+)
+def reset_password(
+    user_id: int,
+    _:       AdminUser = None,
+    current_user: CurrentUser = None,
+    session: Session   = Depends(get_session),
+):
+    """Generate a random password, hash it, email it to the user, and flag for change."""
+    UserService(session).reset_password(user_id, current_admin_id=current_user.id)
+    return {"message": "Password has been reset and sent to the user's email"}
 
 
 # ──────────────────────────────────────────────

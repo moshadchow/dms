@@ -17,8 +17,6 @@ from notifications.templates import (
     build_action_email,
 )
 from workflow.models import (
-    WorkflowDefinitionDetailRead,
-    WorkflowInstanceDetailRead,
     WorkflowStepRead,
 )
 from users.models import User
@@ -40,13 +38,9 @@ def send_notification_task(
     with Session(engine) as session:
         try:
             # 1. Fetch instance, document, workflow definition
-            instance = session.get(WorkflowInstanceDetailRead.__bases__[0], instance_id)
-            if not instance:
-                logger.warning(f"WorkflowInstance {instance_id} not found")
-                return
-
-            # Get the actual ORM models
-            from workflow.models import WorkflowInstance, WorkflowDefinition, WorkflowStep, Document, Memo
+            from workflow.models import WorkflowInstance, WorkflowAction, WorkflowDefinition, WorkflowStep
+            from documents.models import Document
+            from memos.models import Memo
 
             instance_orm = session.get(WorkflowInstance, instance_id)
             if not instance_orm:
@@ -89,7 +83,7 @@ def send_notification_task(
             from workflow.service import WorkflowInstanceService, WorkflowDefinitionService
 
             instance_detail = WorkflowInstanceService(session)._to_instance_detail(instance_orm)
-            workflow_def_detail = WorkflowDefinitionService(session)._to_definition_detail(workflow_def_orm)
+            workflow_def_detail = WorkflowDefinitionService(session).get_definition(workflow_def_orm.id)
 
             # Build step detail
             step_detail = WorkflowStepRead(
@@ -105,7 +99,6 @@ def send_notification_task(
                         'workflow_step_id': a.workflow_step_id,
                         'user_id': a.user_id,
                         'role_id': a.role_id,
-                        'priority': a.priority,
                         'is_active': a.is_active,
                         'user_name': a.user.full_name if a.user else None,
                         'role_name': a.role.name.value if a.role else None,
@@ -158,31 +151,22 @@ def send_notification_task(
                 elif notification_type in ("action", "approved") and memo_detail:
                     # Get actor name from the latest action
                     latest_action = session.exec(
-                        select(WorkflowInstanceDetailRead.__bases__[0].actions)
-                        .where(WorkflowInstanceDetailRead.__bases__[0].id == instance_id)
-                        .order_by(WorkflowInstanceDetailRead.__bases__[0].acted_at.desc())
+                        select(WorkflowAction)
+                        .where(WorkflowAction.workflow_instance_id == instance_id)
+                        .order_by(WorkflowAction.acted_at.desc())
                     ).first()
                     actor_name = latest_action.acted_by_user.full_name if latest_action and latest_action.acted_by_user else "Unknown"
                     remarks = latest_action.remarks if latest_action else None
+                    action_value = latest_action.action.value if latest_action else notification_type
                     subject, html_body, text_body = build_action_email(
-                        memo_detail, instance_detail, notification_type, actor_name, remarks
+                        memo_detail, instance_detail, action_value, actor_name, remarks
                     )
 
                 if subject and html_body and text_body:
-                    # Replace the placeholder review URL with user-specific one
-                    review_url = f"{settings.FRONTEND_URL}/approvals/{instance_id}?token=PLACEHOLDER"
-                    # Actually generate a proper token per recipient
-                    from core.security import _create_token
-                    from datetime import timedelta
-                    token = _create_token(
-                        subject=str(instance_id),
-                        token_type="approval_link",
-                        expires_delta=timedelta(days=7),
-                    )
-                    review_url = f"{settings.FRONTEND_URL}/approvals/{instance_id}?token={token}"
+                    review_url = f"{settings.FRONTEND_URL}/approvals/pending"
 
-                    html_body = html_body.replace("PLACEHOLDER", token)
-                    text_body = text_body.replace("PLACEHOLDER", token)
+                    html_body = html_body.replace("PLACEHOLDER", review_url)
+                    text_body = text_body.replace("PLACEHOLDER", review_url)
 
                     success = email_service._send_smtp(
                         to_email=recipient.email,

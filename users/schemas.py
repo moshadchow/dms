@@ -193,6 +193,17 @@ class AssignRolesRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════
+# User — Admin Password Reset
+# ══════════════════════════════════════════════
+
+class AdminPasswordResetRequest(BaseModel):
+    """Body for POST /users/{user_id}/reset-password — Admin only.
+
+    No fields needed; the password is auto-generated.
+    """
+
+
+# ══════════════════════════════════════════════
 # Permission Matrix (used in Admin Panel)
 # ══════════════════════════════════════════════
 

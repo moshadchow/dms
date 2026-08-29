@@ -166,18 +166,20 @@ class TestUploadUserLevels:
         assert body["title"] == "Test Upload"
         assert sorted(body["user_level_ids"]) == sorted([data["high_level_id"], data["medium_level_id"]])
 
-    def test_upload_fails_without_user_levels(self, client, seeded_visibility_data, visibility_auth_headers):
-        """Test 2: Upload fails if no user level is selected."""
+    def test_upload_auto_assigns_user_level(self, client, seeded_visibility_data, visibility_auth_headers):
+        """Test 2: Upload with empty user levels auto-assigns the user's own level."""
         test_client, _, _ = client
         data = seeded_visibility_data
         resp = _upload_doc(
             test_client,
             visibility_auth_headers["maker"],
             data["finance_directory_id"],
-            "No Levels",
+            "Auto Assigned",
             [],
         )
-        assert resp.status_code == 422
+        assert resp.status_code == 201
+        body = resp.json()
+        assert len(body["user_level_ids"]) == 1
 
     def test_upload_succeeds_with_one_user_level(self, client, seeded_visibility_data, visibility_auth_headers):
         """Test 3: Upload succeeds with exactly one user level."""

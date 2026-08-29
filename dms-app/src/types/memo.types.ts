@@ -46,7 +46,7 @@ export interface MemoListResponse {
 
 export interface MemoCreate {
   directory_id: number
-  user_level_ids: number[]
+  user_level_ids?: number[]
   memo_date?: string | null
   subject: string
   body: string  // HTML content from rich-text editor

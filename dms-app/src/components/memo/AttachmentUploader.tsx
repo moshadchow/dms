@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 import { documentsApi } from '@/api/documents.api'
+import { getErrorMessage } from '@/api/client'
 import type { Document } from '@/types/document.types'
 
 interface AttachmentUploaderProps {
@@ -40,8 +41,8 @@ export default function AttachmentUploader({
           userLevelIds,
         )
         newAttachments.push(doc)
-      } catch {
-        toast.error(`Failed to upload ${file.name}`)
+      } catch (err) {
+        toast.error(getErrorMessage(err))
       }
     }
     setAttachments(newAttachments)

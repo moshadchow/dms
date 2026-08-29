@@ -3,8 +3,7 @@
 import pytest
 from sqlmodel import Session
 
-from documents.models import Document, DocumentUserLevelLink
-from user_levels.models import UserLevel
+from documents.models import Document
 from users.models import Role, RoleName, User, UserRoleLink
 from workflow.approval_policy import resolve_eligible_user_ids
 from workflow.models import WorkflowStepApprover
@@ -13,7 +12,7 @@ from workflow.models import WorkflowStepApprover
 class TestResolveEligibleUserIds:
     """Unit tests for resolve_eligible_user_ids — the single source of truth."""
 
-    def _make_step(self, session, *, user_id=None, role_id=None, priority=0):
+    def _make_step(self, session, *, user_id=None, role_id=None):
         """Create a persisted WorkflowStep with one approver."""
         from workflow.models import WorkflowStep, ApprovalMode
         step = WorkflowStep(
@@ -28,7 +27,6 @@ class TestResolveEligibleUserIds:
             workflow_step_id=step.id,
             user_id=user_id,
             role_id=role_id,
-            priority=priority,
         )
         session.add(approver)
         session.flush()
@@ -43,16 +41,16 @@ class TestResolveEligibleUserIds:
             result = resolve_eligible_user_ids(session, step, doc)
             assert seeded_data["admin_id"] in result
 
-    def test_direct_user_ineligible_by_level(self, seeded_data, client):
+    def test_direct_user_eligible_regardless_of_level(self, seeded_data, client):
         _, engine, _ = client
         with Session(engine) as session:
             # hr_doc is only visible to High level
             doc = session.get(Document, seeded_data["hr_document_id"])
-            # maker has Medium level, not High
+            # maker has Medium level, not High — but approvers are trusted
             step = self._make_step(session, user_id=seeded_data["maker_id"])
 
             result = resolve_eligible_user_ids(session, step, doc)
-            assert seeded_data["maker_id"] not in result
+            assert seeded_data["maker_id"] in result
 
     def test_role_based_expansion(self, seeded_data, client):
         _, engine, _ = client
@@ -130,7 +128,7 @@ class TestResolveEligibleUserIds:
             result = resolve_eligible_user_ids(session, step, doc)
             assert result == []
 
-    def test_no_level_links_returns_empty(self, seeded_data, client):
+    def test_no_level_links_still_eligible(self, seeded_data, client):
         _, engine, _ = client
         with Session(engine) as session:
             # Create a doc with no user level links
@@ -151,4 +149,4 @@ class TestResolveEligibleUserIds:
             step = self._make_step(session, user_id=seeded_data["admin_id"])
 
             result = resolve_eligible_user_ids(session, step, doc)
-            assert result == []
+            assert seeded_data["admin_id"] in result

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { authApi } from '@/api/auth.api'
 import Spinner from '@/components/ui/Spinner'
@@ -7,6 +7,8 @@ import Spinner from '@/components/ui/Spinner'
 export default function ProtectedRoute() {
   const { accessToken, refreshToken, setTokens, setUser, logout } = useAuthStore()
   const [checking, setChecking] = useState(true)
+  const navigate = useNavigate()
+  const location = useLocation()
 
   useEffect(() => {
     const verify = async () => {
@@ -20,6 +22,11 @@ export default function ProtectedRoute() {
         // Verify token is still valid by fetching current user
         const user = await authApi.me()
         setUser(user)
+
+        if (user.must_change_password && location.pathname !== '/force-change-password') {
+          navigate('/force-change-password', { replace: true })
+          return
+        }
       } catch {
         // Access token expired — try refresh
         if (refreshToken) {
@@ -28,6 +35,11 @@ export default function ProtectedRoute() {
             setTokens(tokens.access_token, tokens.refresh_token)
             const user = await authApi.me()
             setUser(user)
+
+            if (user.must_change_password && location.pathname !== '/force-change-password') {
+              navigate('/force-change-password', { replace: true })
+              return
+            }
           } catch {
             // Refresh also failed — clear everything
             logout()

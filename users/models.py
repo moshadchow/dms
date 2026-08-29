@@ -136,11 +136,12 @@ class UserBase(SQLModel):
 class User(UserBase, table=True):
     __tablename__ = "users"
 
-    id:              Optional[int] = Field(default=None, primary_key=True)
-    hashed_password: Optional[str] = Field(default=None, max_length=255)
-    user_level_id:   Optional[int] = Field(default=None, foreign_key="user_levels.id")
-    created_at:      datetime      = Field(default_factory=datetime.utcnow)
-    updated_at:      datetime      = Field(default_factory=datetime.utcnow)
+    id:                    Optional[int] = Field(default=None, primary_key=True)
+    hashed_password:       Optional[str] = Field(default=None, max_length=255)
+    must_change_password:  bool          = Field(default=False)
+    user_level_id:         Optional[int] = Field(default=None, foreign_key="user_levels.id")
+    created_at:            datetime      = Field(default_factory=datetime.utcnow)
+    updated_at:            datetime      = Field(default_factory=datetime.utcnow)
 
     # ── Azure AD fields ───────────────────────
     auth_provider:       str           = Field(default="local", max_length=20)
@@ -222,13 +223,14 @@ class AssignedCategoryRead(SQLModel):
 
 
 class UserRead(UserBase):
-    id:            int
-    created_at:    datetime
-    updated_at:    datetime
-    auth_provider: str = "local"
-    roles:         List[RoleRead] = []
-    categories:    List[AssignedCategoryRead] = []
-    user_level:    Optional["UserLevelRead"] = None
+    id:                   int
+    created_at:           datetime
+    updated_at:           datetime
+    auth_provider:        str = "local"
+    must_change_password: bool = False
+    roles:                List[RoleRead] = []
+    categories:           List[AssignedCategoryRead] = []
+    user_level:           Optional["UserLevelRead"] = None
     model_config = {"from_attributes": True}
 
 
