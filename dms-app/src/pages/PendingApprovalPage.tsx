@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
 import { memoApi } from '@/api/memo.api'
+import { documentsApi } from '@/api/documents.api'
+import { getErrorMessage } from '@/api/client'
 import { useAuthStore } from '@/store/authStore'
 import { useWorkflowStore } from '@/store/workflowStore'
 import Button from '@/components/ui/Button'
@@ -374,14 +376,18 @@ export default function PendingApprovalPage() {
                                 ({a.file_type?.toUpperCase()}, {(a.file_size || 0) / 1024} KB)
                               </span>
                             </span>
-                            <a
-                              href={`/api/v1/documents/${a.document_id}/download`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ fontSize: '0.78rem', color: '#4f46e5', textDecoration: 'none' }}
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await documentsApi.download(a.document_id, a.file_name || a.document_title || 'download')
+                                } catch (err) {
+                                  toast.error(getErrorMessage(err))
+                                }
+                              }}
+                              style={{ fontSize: '0.78rem', color: '#4f46e5', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
                             >
                               Download
-                            </a>
+                            </button>
                           </li>
                         ))}
                       </ul>

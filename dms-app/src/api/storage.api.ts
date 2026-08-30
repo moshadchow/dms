@@ -14,6 +14,8 @@ export interface CategoryStorageUsage {
 export interface StorageUsageResponse {
   total_capacity: number
   total_capacity_human: string
+  total_used: number
+  total_used_human: string
   db_used: number
   db_used_human: string
   disk_used: number

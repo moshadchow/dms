@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { memoApi } from '@/api/memo.api'
 import { workflowApi } from '@/api/workflow.api'
+import { documentsApi } from '@/api/documents.api'
+import { getErrorMessage } from '@/api/client'
 import type { MemoDetail } from '@/types/memo.types'
 import type { WorkflowInstanceDetail, ApprovalAction, WorkflowActionCreate } from '@/types/workflow.types'
 import Button from '@/components/ui/Button'
@@ -222,12 +224,18 @@ export default function MemoDetailPage() {
                       <strong>{a.document_title || a.file_name}</strong> {' '}
                       <span style={{ color: '#64748b', fontWeight: 400 }}>({a.file_type?.toUpperCase()}, {(a.file_size || 0) / 1024} KB)</span>
                     </span>
-                    <Link
-                      to={`/api/v1/documents/${a.document_id}/download`}
-                      style={{ fontSize: '0.8rem', color: '#4f46e5' }}
+                    <button
+                      onClick={async () => {
+                        try {
+                          await documentsApi.download(a.document_id, a.file_name || a.document_title || 'download')
+                        } catch (err) {
+                          toast.error(getErrorMessage(err))
+                        }
+                      }}
+                      style={{ fontSize: '0.8rem', color: '#4f46e5', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
                     >
                       Download
-                    </Link>
+                    </button>
                   </li>
                 ))}
               </ul>

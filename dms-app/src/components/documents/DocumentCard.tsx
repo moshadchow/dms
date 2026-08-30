@@ -168,7 +168,7 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
         {/* Actions menu */}
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
-            onClick={() => setMenuOpen(!menuOpen)}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen) }}
             style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', backgroundColor: menuOpen ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)' }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
@@ -176,8 +176,8 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
 
           {menuOpen && (
             <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setMenuOpen(false)} />
-              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', width: '170px', backgroundColor: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.1)', zIndex: 50, padding: '0.3rem', overflow: 'hidden' }}>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 40, cursor: 'default' }} onClick={(e) => { e.stopPropagation(); setMenuOpen(false) }} />
+              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', width: '170px', backgroundColor: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.1)', zIndex: 50, padding: '0.3rem', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
                 <MenuItem icon="eye"      label="Preview"  onClick={() => { setMenuOpen(false); onView(doc) }} />
                 {canDownload && <MenuItem icon="download"  label="Download" onClick={() => { setMenuOpen(false); handleDownload() }} />}
                 {canUpdate && doc.status === 'active'   && <MenuItem icon="archive"  label="Archive"  onClick={handleArchive} />}

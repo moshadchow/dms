@@ -104,11 +104,19 @@ export const documentsApi = {
     const res = await apiClient.get(`/documents/${id}/download`, {
       responseType: 'blob',
     })
-    const url = URL.createObjectURL(res.data as Blob)
+    const blob = res.data as Blob
+    if (blob.type === 'application/json') {
+      const text = await blob.text()
+      const json = JSON.parse(text)
+      throw new Error(json.detail || 'Download failed')
+    }
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = fileName
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
   },
 
@@ -116,11 +124,19 @@ export const documentsApi = {
     const res = await apiClient.get(`/documents/variants/${variantId}/download`, {
       responseType: 'blob',
     })
-    const url = URL.createObjectURL(res.data as Blob)
+    const blob = res.data as Blob
+    if (blob.type === 'application/json') {
+      const text = await blob.text()
+      const json = JSON.parse(text)
+      throw new Error(json.detail || 'Download failed')
+    }
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = fileName
+    document.body.appendChild(a)
     a.click()
+    document.body.removeChild(a)
     URL.revokeObjectURL(url)
   },
 }

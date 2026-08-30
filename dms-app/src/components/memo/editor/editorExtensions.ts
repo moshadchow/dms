@@ -29,6 +29,8 @@ export function getExtensions() {
           class: 'memo-blockquote',
         },
       },
+      link: false,
+      underline: false,
     }),
     Underline,
     TextAlign.configure({

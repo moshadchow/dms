@@ -177,25 +177,32 @@ export default function PdfAnnotationWorkspace({
 
   useEffect(() => {
     if (!pdfDocRef.current || pageMetrics.length === 0) return
+
+    const tasks: { cancel: () => void }[] = []
     let cancelled = false
 
     const renderPages = async () => {
       for (const metric of pageMetrics) {
+        if (cancelled) break
         const canvas = pdfCanvasRefs.current[metric.pageNumber - 1]
         if (!canvas) continue
         const page = await pdfDocRef.current.getPage(metric.pageNumber)
+        if (cancelled) break
         const viewport = page.getViewport({ scale: zoom })
         canvas.width = viewport.width
         canvas.height = viewport.height
         const context = canvas.getContext('2d')
         if (!context || cancelled) continue
-        await page.render({ canvasContext: context, viewport }).promise
+        const task = page.render({ canvasContext: context, viewport })
+        tasks.push(task)
+        await task.promise.catch(() => {})
       }
     }
 
     void renderPages()
     return () => {
       cancelled = true
+      tasks.forEach((t) => { try { t.cancel() } catch { /* ignore */ } })
     }
   }, [pageMetrics, zoom])
 

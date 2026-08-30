@@ -28,6 +28,8 @@ class CategoryStorageUsage(BaseModel):
 class StorageUsageResponse(BaseModel):
     total_capacity: int
     total_capacity_human: str
+    total_used: int
+    total_used_human: str
     db_used: int
     db_used_human: str
     disk_used: int

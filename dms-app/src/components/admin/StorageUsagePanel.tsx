@@ -71,6 +71,7 @@ export default function StorageUsagePanel() {
           Overall Storage Usage
         </h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
+          <StatCard label="Total Used" value={data.total_used_human} color="#6366f1" />
           <StatCard label="Used (DB)" value={data.db_used_human} color="var(--primary)" />
           <StatCard label="Used (Disk)" value={data.disk_used_human} color="#6366f1" />
           <StatCard label="Available" value={data.available_storage_human} color="var(--success)" />
@@ -80,7 +81,7 @@ export default function StorageUsagePanel() {
         <div style={{ marginBottom: '0.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '4px' }}>
             <span>{data.usage_percentage}% used</span>
-            <span>{data.db_used_human} / {data.total_capacity_human}</span>
+            <span>{data.total_used_human} / {data.total_capacity_human}</span>
           </div>
           <div style={{ width: '100%', height: '10px', backgroundColor: 'var(--border)', borderRadius: '999px', overflow: 'hidden' }}>
             <div style={{
