@@ -11,6 +11,7 @@ import UserLevelTable from '@/components/admin/UserLevelTable'
 import UserLevelFormModal from '@/components/admin/UserLevelFormModal'
 import WorkflowConfigPanel from '@/components/admin/WorkflowConfigPanel'
 import StorageUsagePanel from '@/components/admin/StorageUsagePanel'
+import UserSignaturePanel from '@/components/admin/UserSignaturePanel'
 import type { User, Role, Permission, UserLevel } from '@/types/user.types'
 
 type Tab = 'users' | 'roles' | 'category-access' | 'user-levels' | 'workflows' | 'storage'
@@ -39,6 +40,7 @@ export default function AdminPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [levelFormOpen, setLevelFormOpen] = useState(false)
   const [editingLevel, setEditingLevel] = useState<UserLevel | null>(null)
+  const [signatureUser, setSignatureUser] = useState<User | null>(null)
   const [userPage, setUserPage]     = useState(1)
   const [totalUsers, setTotalUsers] = useState(0)
   const LIMIT = 20
@@ -222,6 +224,7 @@ export default function AdminPage() {
               users={users}
               loading={loadingUsers}
               onEdit={(u) => { setEditingUser(u); setFormOpen(true) }}
+              onSignature={(u) => setSignatureUser(u)}
               onRefresh={loadUsers}
             />
 
@@ -332,6 +335,14 @@ export default function AdminPage() {
         editing={editingLevel}
         onClose={() => { setLevelFormOpen(false); setEditingLevel(null) }}
         onSuccess={() => { loadLevels(); loadUsers() }}
+      />
+
+      {/* User signature panel */}
+      <UserSignaturePanel
+        userId={signatureUser?.id ?? 0}
+        userName={signatureUser?.full_name ?? ''}
+        isOpen={!!signatureUser}
+        onClose={() => setSignatureUser(null)}
       />
     </div>
   )

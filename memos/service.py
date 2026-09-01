@@ -696,7 +696,8 @@ class MemoService:
             .where(WorkflowAction.workflow_instance_id == approved_instance.id)
         ).all()
 
-        # Build approval entries with signatures
+        # Build approval entries with signatures (auto-load from user's centrally managed signatures)
+        from workflow.models import Signature
         approval_entries = []
         for action in actions:
             step_name = None
@@ -704,11 +705,13 @@ class MemoService:
                 step_name = action.workflow_step.step_name
 
             signature_path = None
-            if action.signature_id:
-                from workflow.models import Signature
-                sig = self.session.get(Signature, action.signature_id)
-                if sig and sig.is_active:
-                    signature_path = Path(settings.STORAGE_ROOT) / sig.file_path
+            action_sig = self.session.exec(
+                select(Signature)
+                .where(Signature.user_id == action.acted_by, Signature.is_active == True)
+                .order_by(Signature.created_at.desc())
+            ).first()
+            if action_sig:
+                signature_path = Path(settings.STORAGE_ROOT) / action_sig.file_path
 
             acted_by_name = action.acted_by_user.full_name if action.acted_by_user else f"User #{action.acted_by}"
             acted_at = action.acted_at.strftime("%Y-%m-%d %H:%M") if action.acted_at else ""
@@ -719,6 +722,7 @@ class MemoService:
                 "action": action.action.value if hasattr(action.action, 'value') else str(action.action),
                 "signature_path": signature_path,
                 "acted_at": acted_at,
+                "remarks": action.remarks,
             })
 
         # Sort approval entries by step order
@@ -728,13 +732,15 @@ class MemoService:
             0,
         ))
 
-        # Get maker's signature path
+        # Get maker's signature path (auto-load from user's centrally managed signatures)
         author_signature_path = None
-        if memo.author_signature_id:
-            from workflow.models import Signature
-            author_sig = self.session.get(Signature, memo.author_signature_id)
-            if author_sig and author_sig.is_active:
-                author_signature_path = Path(settings.STORAGE_ROOT) / author_sig.file_path
+        author_sig = self.session.exec(
+            select(Signature)
+            .where(Signature.user_id == memo.created_by, Signature.is_active == True)
+            .order_by(Signature.created_at.desc())
+        ).first()
+        if author_sig:
+            author_signature_path = Path(settings.STORAGE_ROOT) / author_sig.file_path
 
         # Format memo date
         memo_date = memo.memo_date.strftime("%Y-%m-%d") if memo.memo_date else ""

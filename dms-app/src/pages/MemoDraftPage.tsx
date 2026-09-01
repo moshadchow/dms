@@ -11,7 +11,6 @@ import type { MemoDetail, MemoCreate, MemoUpdate } from '@/types/memo.types'
 import type { UserLevel } from '@/types/user.types'
 import Button from '@/components/ui/Button'
 import MemoForm from '@/components/memo/MemoForm'
-import SignaturePicker from '@/components/memo/SignaturePicker'
 
 export default function MemoDraftPage() {
   const navigate = useNavigate()
@@ -23,16 +22,12 @@ export default function MemoDraftPage() {
   const [userLevels, setUserLevels] = useState<UserLevel[]>([])
   const [workflows, setWorkflows] = useState<Array<{ id: number; name: string }>>([])
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number | ''>('')
-  const [submitSignatureId, setSubmitSignatureId] = useState<number | null>(null)
-  const [editSignatureId, setEditSignatureId] = useState<number | null>(null)
   const [memo, setMemo] = useState<MemoDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    setSubmitSignatureId(null)
-    setEditSignatureId(null)
     setSelectedWorkflowId('')
     setWorkflows([])
     setMemo(null)
@@ -53,7 +48,6 @@ export default function MemoDraftPage() {
         if (isEdit) {
           const m = await memoApi.get(Number(id))
           setMemo(m)
-          setEditSignatureId(m.author_signature_id ?? null)
           const canSubmit = !m.workflow_status || ['draft', 'returned'].includes(m.workflow_status)
           if (canSubmit) {
             const wfs = await workflowApi.list({ is_active: true })
@@ -74,8 +68,7 @@ export default function MemoDraftPage() {
     setSubmitting(true)
     try {
       if (isEdit) {
-        const updateData = { ...data, signature_id: editSignatureId }
-        await memoApi.update(Number(id), updateData as MemoUpdate)
+        await memoApi.update(Number(id), data as MemoUpdate)
         toast.success('Memo updated')
         navigate('/memos')
       } else {
@@ -98,7 +91,6 @@ export default function MemoDraftPage() {
     try {
       await memoApi.submit(memo.id, {
         workflow_definition_id: Number(selectedWorkflowId),
-        signature_id: submitSignatureId || undefined,
       })
       toast.success('Submitted for approval')
       navigate(`/memos/${memo.id}`)
@@ -116,7 +108,6 @@ export default function MemoDraftPage() {
   }
 
   const canSubmit = !!memo && (!memo.workflow_status || ['draft', 'returned'].includes(memo.workflow_status))
-  const canEditSignature = isEdit && memo && ['submitted', 'pending_approval'].includes(memo.workflow_status || '')
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -138,21 +129,6 @@ export default function MemoDraftPage() {
         onClearError={() => setError('')}
       />
 
-      {canEditSignature && (
-        <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8 }}>
-          <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>Update Signature</h3>
-          <p style={{ margin: '0 0 0.75rem', fontSize: '0.8rem', color: '#92400e' }}>
-            This memo is under review. You can update your signature before approval.
-          </p>
-          <SignaturePicker
-            key={`edit-sig-${id}`}
-            selectedSignatureId={editSignatureId}
-            onSelect={setEditSignatureId}
-            memoAuthorSignatureId={memo?.author_signature_id}
-          />
-        </div>
-      )}
-
       {isEdit && canSubmit && workflows.length > 0 && (
         <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8 }}>
           <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.9rem' }}>Submit for Approval</h3>
@@ -172,7 +148,6 @@ export default function MemoDraftPage() {
               ))}
             </select>
           </div>
-          <SignaturePicker key={`sig-${id || 'new'}`} selectedSignatureId={submitSignatureId} onSelect={setSubmitSignatureId} memoAuthorSignatureId={memo?.author_signature_id} />
           <div style={{ marginTop: '0.75rem' }}>
             <Button onClick={handleSubmitForApproval} disabled={submitting || !selectedWorkflowId}>
               {submitting ? 'Submitting...' : 'Submit for Approval'}

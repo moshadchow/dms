@@ -1,14 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
 import { memoApi } from '@/api/memo.api'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
-import { useAuthStore } from '@/store/authStore'
 import { useWorkflowStore } from '@/store/workflowStore'
 import Button from '@/components/ui/Button'
-import SignaturePad from '@/components/workflow/SignaturePad'
 import type {
   WorkflowInstance,
   ApprovalAction,
@@ -29,20 +26,7 @@ const statusColors: Record<string, { bg: string; color: string }> = {
   archived: { bg: '#f3f4f6', color: '#374151' },
 }
 
-const actionButtons: {
-  action: ApprovalAction
-  label: string
-  color: string
-  hoverBg: string
-}[] = [
-  { action: 'approve', label: 'Approve', color: '#059669', hoverBg: '#047857' },
-  { action: 'reject', label: 'Reject', color: '#dc2626', hoverBg: '#b91c1c' },
-  { action: 'return', label: 'Return', color: '#d97706', hoverBg: '#b45309' },
-]
-
 export default function PendingApprovalPage() {
-  const navigate = useNavigate()
-  const user = useAuthStore((s) => s.user)
   const refreshPendingCount = useWorkflowStore((s) => s.refreshPendingCount)
 
   const [instances, setInstances] = useState<WorkflowInstance[]>([])
@@ -53,9 +37,7 @@ export default function PendingApprovalPage() {
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedInstance, setSelectedInstance] = useState<WorkflowInstance | null>(null)
-  const [selectedAction, setSelectedAction] = useState<ApprovalAction>('approve')
   const [remarks, setRemarks] = useState('')
-  const [signatureBlob, setSignatureBlob] = useState<Blob | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [memoDetail, setMemoDetail] = useState<MemoDetail | null>(null)
   const [memoLoading, setMemoLoading] = useState(false)
@@ -80,11 +62,9 @@ export default function PendingApprovalPage() {
 
   const totalPages = Math.ceil(total / LIMIT) || 1
 
-  const openActionModal = async (instance: WorkflowInstance, action: ApprovalAction) => {
+  const openReviewModal = async (instance: WorkflowInstance) => {
     setSelectedInstance(instance)
-    setSelectedAction(action)
     setRemarks('')
-    setSignatureBlob(null)
     setMemoDetail(null)
     setModalOpen(true)
 
@@ -103,34 +83,25 @@ export default function PendingApprovalPage() {
     setModalOpen(false)
     setSelectedInstance(null)
     setRemarks('')
-    setSignatureBlob(null)
     setMemoDetail(null)
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (action: ApprovalAction) => {
     if (!selectedInstance) return
     setSubmitting(true)
     try {
-      let signatureId: number | null = null
-      if (signatureBlob) {
-        const file = new File([signatureBlob], `signature-${Date.now()}.png`, { type: 'image/png' })
-        const sig = await workflowApi.uploadSignature(file, 'wet_signature')
-        signatureId = sig.id
-      }
-
       await workflowApi.actOnInstance(selectedInstance.id, {
-        action: selectedAction,
+        action,
         remarks: remarks.trim() || undefined,
-        signature_id: signatureId,
       })
 
-      const label = selectedAction.charAt(0).toUpperCase() + selectedAction.slice(1)
+      const label = action.charAt(0).toUpperCase() + action.slice(1)
       toast.success(`Document ${label.toLowerCase()}d successfully`)
       closeModal()
       loadPending()
       refreshPendingCount()
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || `Failed to ${selectedAction} document`
+      const msg = err?.response?.data?.detail || `Failed to ${action} document`
       toast.error(msg)
     } finally {
       setSubmitting(false)
@@ -234,24 +205,16 @@ export default function PendingApprovalPage() {
                           {formatDate(inst.submitted_at)}
                         </td>
                         <td style={{ padding: '0.75rem 1rem' }}>
-                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                            {actionButtons.map((ab) => (
-                              <button
-                                key={ab.action}
-                                onClick={() => openActionModal(inst, ab.action)}
-                                style={{
-                                  padding: '4px 12px', borderRadius: '6px', border: 'none',
-                                  backgroundColor: ab.color, color: '#fff', fontSize: '0.78rem',
-                                  fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                                  transition: 'background-color 150ms',
-                                }}
-                                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = ab.hoverBg }}
-                                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = ab.color }}
-                              >
-                                {ab.label}
-                              </button>
-                            ))}
-                          </div>
+                          <button
+                            onClick={() => openReviewModal(inst)}
+                            style={{
+                              padding: '5px 16px', borderRadius: '6px', border: '1px solid var(--border)',
+                              backgroundColor: 'var(--surface)', color: 'var(--text)', fontSize: '0.78rem',
+                              fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                            }}
+                          >
+                            Review
+                          </button>
                         </td>
                       </tr>
                     )
@@ -307,7 +270,7 @@ export default function PendingApprovalPage() {
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <h2 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>
-                {selectedAction.charAt(0).toUpperCase() + selectedAction.slice(1)} Document
+                Review Document
               </h2>
               <button
                 onClick={closeModal}
@@ -414,47 +377,6 @@ export default function PendingApprovalPage() {
                   }}
                 />
               </div>
-
-              {/* Signature */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', marginBottom: '6px' }}>
-                  Signature <span style={{ fontWeight: 400, color: 'var(--text-tertiary)' }}>(optional)</span>
-                </label>
-                {signatureBlob ? (
-                  <div style={{
-                    padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)',
-                    backgroundColor: '#f0fdf4',
-                  }}>
-                    <img
-                      src={URL.createObjectURL(signatureBlob)}
-                      alt="Signature preview"
-                      style={{ maxHeight: 80, display: 'block', marginBottom: '0.5rem' }}
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2">
-                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
-                      </svg>
-                      <span style={{ fontSize: '0.78rem', color: '#065f46', fontWeight: 500 }}>Signature captured</span>
-                      <button
-                        onClick={() => setSignatureBlob(null)}
-                        style={{
-                          marginLeft: 'auto', padding: '2px 8px', borderRadius: '4px', border: '1px solid #d1d5db',
-                          backgroundColor: '#fff', color: '#6b7280', fontSize: '0.78rem', cursor: 'pointer',
-                          fontFamily: 'inherit',
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <SignaturePad
-                    width={460}
-                    height={140}
-                    onCapture={(blob) => setSignatureBlob(blob)}
-                  />
-                )}
-              </div>
             </div>
 
             {/* Modal footer */}
@@ -466,11 +388,25 @@ export default function PendingApprovalPage() {
                 Cancel
               </Button>
               <Button
-                variant={selectedAction === 'approve' ? 'primary' : selectedAction === 'reject' ? 'danger' : 'secondary'}
+                variant="secondary"
                 loading={submitting}
-                onClick={handleSubmit}
+                onClick={() => handleSubmit('return')}
               >
-                {selectedAction.charAt(0).toUpperCase() + selectedAction.slice(1)}
+                Return
+              </Button>
+              <Button
+                variant="danger"
+                loading={submitting}
+                onClick={() => handleSubmit('reject')}
+              >
+                Reject
+              </Button>
+              <Button
+                variant="primary"
+                loading={submitting}
+                onClick={() => handleSubmit('approve')}
+              >
+                Approve
               </Button>
             </div>
           </div>

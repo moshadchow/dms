@@ -490,6 +490,7 @@ def generate_memo_pdf(
             - action (str): "approve", "reject", "return", etc.
             - signature_path (Optional[Path])
             - acted_at (str): Formatted datetime string
+            - remarks (Optional[str]): Approver's note/remark
         output_path: Where to write the generated PDF.
 
     Returns:
@@ -625,6 +626,14 @@ def generate_memo_pdf(
         else:
             story.append(Paragraph("[No signature on file]", styles["SignatureInfo"]))
 
+        # Show approver remarks only for approve actions in the Final Draft
+        remarks = entry.get("remarks")
+        if remarks and action == "approve":
+            story.append(Paragraph(
+                f'<i>"{_sanitize_for_reportlab(remarks)}"</i>',
+                styles["SignatureInfo"],
+            ))
+
         story.append(Spacer(1, 8))
 
     # ── Approval summary table ──
@@ -641,6 +650,11 @@ def generate_memo_pdf(
     if approval_entries:
         latest_date = max(e.get("acted_at", "") for e in approval_entries)
         summary_data.append(["Completed", latest_date])
+
+    # Count approver remarks included in the Final Draft (approve actions only)
+    approve_remarks = [e for e in approval_entries if e.get("remarks") and e.get("action") == "approve"]
+    if approve_remarks:
+        summary_data.append(["Notes", f"{len(approve_remarks)} approver note(s) included"])
 
     summary_table = Table(summary_data, colWidths=[100, doc.width - 100])
     summary_table.setStyle(TableStyle([

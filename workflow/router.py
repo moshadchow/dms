@@ -320,3 +320,63 @@ def delete_signature(
     session: Session = Depends(get_session),
 ):
     return SignatureService(session).soft_delete_signature(signature_id, current_user)
+
+
+# ══════════════════════════════════════════════
+# Admin Signature Endpoints
+# ══════════════════════════════════════════════
+
+
+@signature_router.get(
+    "/admin/{target_user_id}",
+    response_model=List[SignatureRead],
+    summary="List signatures for a specific user (admin only)",
+)
+def admin_list_user_signatures(
+    target_user_id: int,
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return SignatureService(session).list_user_signatures(target_user_id, current_user)
+
+
+@signature_router.post(
+    "/admin/{target_user_id}",
+    response_model=SignatureRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload signature for a user (admin only)",
+)
+def admin_upload_signature(
+    target_user_id: int,
+    file: UploadFile = File(..., description="Signature image (JPEG or PNG)"),
+    sig_type: str = Form(..., description="Signature type: e_signature or wet_signature"),
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    try:
+        sig_type_enum = SignatureType(sig_type)
+    except ValueError:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid sig_type '{sig_type}'. Must be 'e_signature' or 'wet_signature'",
+        )
+    return SignatureService(session).admin_upload_for_user(
+        target_user_id, file, current_user, sig_type_enum
+    )
+
+
+@signature_router.delete(
+    "/admin/{target_user_id}/{signature_id}",
+    response_model=SignatureRead,
+    summary="Delete a user's signature (admin only)",
+)
+def admin_delete_signature(
+    target_user_id: int,
+    signature_id: int,
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return SignatureService(session).admin_delete_signature(
+        target_user_id, signature_id, current_user
+    )

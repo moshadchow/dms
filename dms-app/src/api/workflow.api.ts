@@ -139,4 +139,33 @@ export const workflowApi = {
     const res = await apiClient.get(`/signatures/${id}/file`, { responseType: 'blob' })
     return URL.createObjectURL(res.data as Blob)
   },
+
+  // ── Admin Signature Management ─────────────────
+
+  adminListSignaturesForUser: async (userId: number): Promise<Signature[]> => {
+    const res = await apiClient.get<Signature[]>(`/signatures/admin/${userId}`)
+    return res.data
+  },
+
+  adminUploadSignatureForUser: async (
+    userId: number,
+    file: File,
+    sigType: SignatureType
+  ): Promise<Signature> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('sig_type', sigType)
+    const res = await apiClient.post<Signature>(`/signatures/admin/${userId}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return res.data
+  },
+
+  adminDeleteSignatureForUser: async (
+    userId: number,
+    signatureId: number
+  ): Promise<Signature> => {
+    const res = await apiClient.delete<Signature>(`/signatures/admin/${userId}/${signatureId}`)
+    return res.data
+  },
 }

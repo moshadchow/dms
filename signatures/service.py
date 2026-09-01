@@ -214,6 +214,173 @@ class SignatureService:
 
         return self._to_read(sig)
 
+    # ── Admin operations ──────────────────────────
+
+    def _validate_target_user(self, target_user_id: int) -> User:
+        """Validate that the target user exists and is active."""
+        target = self.session.get(User, target_user_id)
+        if not target:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User {target_user_id} not found",
+            )
+        if not target.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User {target_user_id} is inactive",
+            )
+        return target
+
+    def admin_upload_for_user(
+        self,
+        target_user_id: int,
+        file: UploadFile,
+        current_user: User,
+        sig_type: SignatureType,
+    ) -> SignatureRead:
+        """Admin uploads a signature on behalf of another user.
+
+        If the target user already has an active signature, it is soft-deleted
+        (replaced) before the new one is created.
+        """
+        if not current_user.is_admin():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can manage other users' signatures",
+            )
+        self._validate_target_user(target_user_id)
+
+        mime = file.content_type or ""
+        if mime not in ALLOWED_SIGNATURE_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"File type '{mime}' is not supported. Allowed types: JPEG, PNG",
+            )
+
+        content = file.file.read()
+        file_size = len(content)
+
+        max_bytes = 5 * 1024 * 1024
+        if file_size > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Signature file size exceeds the 5 MB limit",
+            )
+
+        # Soft-delete existing active signature (replace behavior)
+        existing_query = (
+            select(Signature)
+            .where(
+                Signature.user_id == target_user_id,
+                Signature.is_active == True,
+            )
+        )
+        existing = self.session.exec(existing_query).all()
+        from datetime import datetime
+        for old_sig in existing:
+            old_sig.is_active = False
+            old_sig.updated_at = datetime.utcnow()
+
+        storage_root = Path(settings.STORAGE_ROOT)
+        dest_dir = storage_root / "signatures" / str(target_user_id)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = f"{uuid.uuid4().hex}_{Path(file.filename or 'signature').name}"
+        dest_path = dest_dir / safe_name
+        dest_path.write_bytes(content)
+
+        relative_path = str(dest_path.relative_to(storage_root))
+
+        sig = Signature(
+            user_id=target_user_id,
+            file_name=file.filename or safe_name,
+            file_path=relative_path,
+            mime_type=mime,
+            file_size=file_size,
+            sig_type=sig_type,
+            is_active=True,
+        )
+        self.session.add(sig)
+        self.session.commit()
+        self.session.refresh(sig)
+
+        self._log_audit(
+            AuditAction.CREATE_WORKFLOW,
+            sig,
+            f"Admin {current_user.id} uploaded {sig_type.value} for user {target_user_id}",
+        )
+
+        return self._to_read(sig)
+
+    def list_user_signatures(
+        self,
+        target_user_id: int,
+        current_user: User,
+    ) -> List[SignatureRead]:
+        """Admin lists active signatures for a specific user."""
+        if not current_user.is_admin():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can view other users' signatures",
+            )
+        self._validate_target_user(target_user_id)
+
+        query = (
+            select(Signature)
+            .where(
+                Signature.user_id == target_user_id,
+                Signature.is_active == True,
+            )
+            .order_by(Signature.created_at.desc())
+        )
+        signatures = self.session.exec(query).all()
+        return [self._to_read(s) for s in signatures]
+
+    def admin_delete_signature(
+        self,
+        target_user_id: int,
+        signature_id: int,
+        current_user: User,
+    ) -> SignatureRead:
+        """Admin deletes a specific signature for a user."""
+        if not current_user.is_admin():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can delete other users' signatures",
+            )
+        self._validate_target_user(target_user_id)
+
+        sig = self.session.get(Signature, signature_id)
+        if not sig:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        if not sig.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Signature {signature_id} not found",
+            )
+        if sig.user_id != target_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Signature {signature_id} does not belong to user {target_user_id}",
+            )
+
+        sig.is_active = False
+        from datetime import datetime
+        sig.updated_at = datetime.utcnow()
+        self.session.commit()
+        self.session.refresh(sig)
+
+        self._log_audit(
+            AuditAction.DELETE_WORKFLOW,
+            sig,
+            f"Admin {current_user.id} deleted signature {signature_id} for user {target_user_id}",
+        )
+
+        return self._to_read(sig)
+
     def validate_signature_exists(self, signature_id: int) -> Signature:
         """Validate that a signature exists and is active."""
         sig = self.session.get(Signature, signature_id)

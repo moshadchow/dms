@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { memoApi } from '@/api/memo.api'
@@ -8,7 +8,6 @@ import { getErrorMessage } from '@/api/client'
 import type { MemoDetail } from '@/types/memo.types'
 import type { WorkflowInstanceDetail, ApprovalAction, WorkflowActionCreate } from '@/types/workflow.types'
 import Button from '@/components/ui/Button'
-import SignaturePad from '@/components/workflow/SignaturePad'
 import { useAuthStore } from '@/store/authStore'
 import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
@@ -35,11 +34,8 @@ export default function MemoDetailPage() {
   const [actionModal, setActionModal] = useState<{ open: boolean; instanceId?: number }>({ open: false })
   const [selectedAction, setSelectedAction] = useState<ApprovalAction>('approve')
   const [remarks, setRemarks] = useState('')
-  const [signatureId, setSignatureId] = useState<number | null>(null)
   const [acting, setActing] = useState(false)
   const [downloading, setDownloading] = useState(false)
-  const authorSigUrlRef = useRef<string>('')
-  const [authorSigUrl, setAuthorSigUrl] = useState<string>('')
 
   useEffect(() => {
     const load = async () => {
@@ -60,24 +56,6 @@ export default function MemoDetailPage() {
     load()
   }, [memoId])
 
-  useEffect(() => {
-    if (!memo?.author_signature_id) return
-    let revoked = false
-    workflowApi.getSignatureFileUrl(memo.author_signature_id).then((url) => {
-      if (!revoked) {
-        authorSigUrlRef.current = url
-        setAuthorSigUrl(url)
-      }
-    }).catch(() => {})
-    return () => {
-      revoked = true
-      if (authorSigUrlRef.current) {
-        URL.revokeObjectURL(authorSigUrlRef.current)
-        authorSigUrlRef.current = ''
-      }
-    }
-  }, [memo?.author_signature_id])
-
   const statusColor = (status: string | null) => STATUS_COLORS[status || 'draft'] || STATUS_COLORS.draft
 
   const handleAct = async () => {
@@ -87,13 +65,11 @@ export default function MemoDetailPage() {
       const payload: WorkflowActionCreate = {
         action: selectedAction,
         remarks,
-        signature_id: signatureId || undefined,
       }
       await workflowApi.actOnInstance(instance.id, payload)
       toast.success(`Memo ${selectedAction}d`)
       setActionModal({ open: false })
       setRemarks('')
-      setSignatureId(null)
       const inst = await workflowApi.getInstanceByDocument(memo!.document_id)
       setInstance(inst)
       const m = await memoApi.get(memoId)
@@ -103,16 +79,6 @@ export default function MemoDetailPage() {
       toast.error(message)
     } finally {
       setActing(false)
-    }
-  }
-
-  const handleSignatureCapture = async (blob: Blob) => {
-    const file = new File([blob], 'signature.png', { type: 'image/png' })
-    try {
-      const sig = await workflowApi.uploadSignature(file, 'e_signature')
-      setSignatureId(sig.id)
-    } catch {
-      toast.error('Failed to upload signature')
     }
   }
 
@@ -241,21 +207,6 @@ export default function MemoDetailPage() {
               </ul>
             </div>
           )}
-
-          {memo.author_signature_id && (
-            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
-              <h3 style={{ margin: '0 0 0.5rem', fontSize: '0.85rem' }}>Author's Signature</h3>
-              {authorSigUrl ? (
-                <img
-                  src={authorSigUrl}
-                  alt="Author signature"
-                  style={{ maxWidth: 300, maxHeight: 150, border: '1px solid #e2e8f0', borderRadius: 6 }}
-                />
-              ) : (
-                <p style={{ fontSize: '0.85rem', color: '#94a3b8' }}>Loading…</p>
-              )}
-            </div>
-          )}
         </div>
 
         <div>
@@ -356,10 +307,6 @@ export default function MemoDetailPage() {
                   rows={3}
                   style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6 }}
                 />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px' }}>Signature (optional)</label>
-                <SignaturePad onCapture={handleSignatureCapture} onCancel={() => setSignatureId(null)} />
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                 <Button variant="secondary" size="sm" onClick={() => setActionModal({ open: false })}>Cancel</Button>
