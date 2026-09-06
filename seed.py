@@ -33,6 +33,7 @@ from users.models import (
     User,
     UserRoleLink,
 )
+from storage_usage.models import SystemSetting
 
 
 # ──────────────────────────────────────────────
@@ -171,6 +172,20 @@ def seed() -> None:
             print(f"  [+] Admin user created: {DEFAULT_ADMIN['email']}")
         else:
             print(f"  [=] Admin user already exists: {DEFAULT_ADMIN['email']}")
+
+        # ── 5. Default storage capacity ─────
+        cap_row = session.get(SystemSetting, "storage_capacity_gb")
+        if not cap_row:
+            session.add(
+                SystemSetting(
+                    key="storage_capacity_gb",
+                    value="100",
+                    description="Total storage capacity in GB",
+                )
+            )
+            print("  [+] Storage capacity set to 100 GB")
+        else:
+            print(f"  [=] Storage capacity already set: {cap_row.value} GB")
 
         session.commit()
         print("\n✅  Seed complete.")

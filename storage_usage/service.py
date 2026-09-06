@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 from fastapi import HTTPException
@@ -91,7 +92,7 @@ def _get_disk_usage() -> Tuple[int, Dict[int, int]]:
 
     Returns (total_bytes, {category_id: bytes})
     """
-    storage_root = os.path.join(os.getcwd(), settings.STORAGE_ROOT)
+    storage_root = str(Path(settings.STORAGE_ROOT).resolve())
     if not os.path.isdir(storage_root):
         return 0, {}
 
@@ -125,8 +126,12 @@ def get_storage_usage(session: Session) -> StorageUsageResponse:
     db_total, db_categories = _get_db_usage(session)
     disk_total, disk_by_cat = _get_disk_usage()
 
-    available = max(capacity - disk_total, 0)
-    usage_pct = (disk_total / capacity * 100) if capacity > 0 else 0.0
+    # Use the best available measurement for total used storage.
+    # disk_total is preferred (actual filesystem), but if the disk walk
+    # fails or returns 0 while the DB has documents, fall back to db_total.
+    total_used = max(db_total, disk_total)
+    available = max(capacity - total_used, 0)
+    usage_pct = (total_used / capacity * 100) if capacity > 0 else 0.0
 
     # Merge DB and disk data
     all_cat_ids = set()
@@ -184,8 +189,8 @@ def get_storage_usage(session: Session) -> StorageUsageResponse:
     return StorageUsageResponse(
         total_capacity=capacity,
         total_capacity_human=_human_size(capacity),
-        total_used=disk_total,
-        total_used_human=_human_size(disk_total),
+        total_used=total_used,
+        total_used_human=_human_size(total_used),
         db_used=db_total,
         db_used_human=_human_size(db_total),
         disk_used=disk_total,

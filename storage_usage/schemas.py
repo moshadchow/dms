@@ -11,7 +11,7 @@ def _human_size(size_bytes: int) -> str:
         return f"{size_bytes / 1024:.1f} KB"
     if size_bytes < 1024 ** 3:
         return f"{size_bytes / 1024 ** 2:.1f} MB"
-    return f"{size_bytes / 1024 ** 3:.2f} GB"
+    return f"{size_bytes / 1024 ** 3:.4f} GB"
 
 
 class CategoryStorageUsage(BaseModel):
