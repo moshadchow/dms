@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
 import { usersApi } from '@/api/users.api'
+import { companiesApi } from '@/api/companies.api'
 import { getErrorMessage } from '@/api/client'
 import { ROLE_LABELS } from '@/utils/permissions'
+import { useAuthStore } from '@/store/authStore'
 import type { User, Role, RoleName, UserLevel } from '@/types/user.types'
+import type { Company } from '@/types/company.types'
 
 interface Props {
   isOpen:    boolean
@@ -21,8 +24,44 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
   const [isActive, setIsActive]     = useState(true)
   const [selectedRoles, setSelectedRoles] = useState<number[]>([])
   const [selectedLevel, setSelectedLevel] = useState<string>('')
+  const [selectedCompany, setSelectedCompany] = useState<string>('')
+  const [companies, setCompanies] = useState<Company[]>([])
+  const [loadingCompanies, setLoadingCompanies] = useState(false)
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState('')
+
+  const { user: currentUser } = useAuthStore()
+  const isSuperAdmin = currentUser?.roles.some((r) => r.name === 'superadmin') ?? false
+
+  // Determine if the user being edited has ADMIN role
+  const isEditingAdmin = editing?.roles.some((r) => r.name === 'admin') ?? false
+
+  // Determine if SUPERADMIN is editing (not creating)
+  const isSuperAdminEditing = isSuperAdmin && !!editing
+
+  // Determine if editing own account (admin self-edit)
+  const isSelfEdit = !!editing && currentUser?.id === editing.id
+
+  // Get the target user's primary role for display
+  const targetRole = editing?.roles[0]
+
+  // UX-only restriction: SUPERADMIN can only see ADMIN role in the picker when CREATING
+  // When editing, show all roles so the target user's role is visible
+  const isCreating = !editing
+  const visibleRoles = isSuperAdmin && isCreating
+    ? roles.filter((r) => r.name === 'admin')
+    : roles
+
+  // Fetch active companies — for SUPERADMIN create OR when editing another ADMIN (not self-edit)
+  useEffect(() => {
+    if ((isSuperAdmin || (isEditingAdmin && !isSelfEdit)) && isOpen) {
+      setLoadingCompanies(true)
+      companiesApi.list({ is_active: true, limit: 200 })
+        .then((data) => setCompanies(data.items))
+        .catch(() => toast.error('Failed to load companies'))
+        .finally(() => setLoadingCompanies(false))
+    }
+  }, [isSuperAdmin, isEditingAdmin, isSelfEdit, isOpen])
 
   useEffect(() => {
     if (editing) {
@@ -31,6 +70,7 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
       setIsActive(editing.is_active)
       setSelectedRoles(editing.roles.map((r) => r.id))
       setSelectedLevel(editing.user_level ? String(editing.user_level.id) : '')
+      setSelectedCompany(editing.company ? String(editing.company.id) : '')
       setPassword('')
     } else {
       setFullName('')
@@ -39,6 +79,7 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
       setIsActive(true)
       setSelectedRoles([])
       setSelectedLevel('')
+      setSelectedCompany('')
     }
     setError('')
   }, [editing, isOpen])
@@ -55,19 +96,26 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
     if (!email.trim())            { setError('Email is required.'); return }
     if (!editing && !password)    { setError('Password is required for new users.'); return }
     if (selectedRoles.length === 0) { setError('Assign at least one role.'); return }
+    if (isSuperAdmin && !editing && !selectedCompany) { setError('Company is required for Admin users.'); return }
 
     setLoading(true)
     setError('')
     try {
       const levelId = selectedLevel ? Number(selectedLevel) : null
+      const companyId = selectedCompany ? Number(selectedCompany) : null
       if (editing) {
-        await usersApi.update(editing.id, {
+        const updatePayload: Record<string, unknown> = {
           full_name: fullName.trim(),
           email:     email.trim(),
           is_active: isActive,
           role_ids:  selectedRoles,
           user_level_id: levelId,
-        })
+        }
+        // Only send company_id when editing another ADMIN (not self-edit)
+        if (isEditingAdmin && !isSelfEdit) {
+          updatePayload.company_id = companyId
+        }
+        await usersApi.update(editing.id, updatePayload)
         toast.success('User updated')
       } else {
         await usersApi.create({
@@ -77,6 +125,7 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
           is_active: isActive,
           role_ids:  selectedRoles,
           user_level_id: levelId ?? undefined,
+          company_id: companyId ?? undefined,
         })
         toast.success('User created')
       }
@@ -92,10 +141,11 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
   if (!isOpen) return null
 
   const roleColors: Record<string, { bg: string; border: string; active: string; text: string }> = {
-    admin:   { bg: '#faf5ff', border: '#e9d5ff', active: '#7c3aed', text: '#6d28d9' },
-    maker:   { bg: '#eff6ff', border: '#bfdbfe', active: '#2563eb', text: '#1d4ed8' },
-    checker: { bg: '#fff7ed', border: '#fed7aa', active: '#ea580c', text: '#c2410c' },
-    auditor: { bg: '#f0fdf4', border: '#bbf7d0', active: '#16a34a', text: '#15803d' },
+    superadmin: { bg: '#fff1f2', border: '#fecdd3', active: '#e11d48', text: '#be123c' },
+    admin:      { bg: '#faf5ff', border: '#e9d5ff', active: '#7c3aed', text: '#6d28d9' },
+    maker:      { bg: '#eff6ff', border: '#bfdbfe', active: '#2563eb', text: '#1d4ed8' },
+    checker:    { bg: '#fff7ed', border: '#fed7aa', active: '#ea580c', text: '#c2410c' },
+    auditor:    { bg: '#f0fdf4', border: '#bbf7d0', active: '#16a34a', text: '#15803d' },
   }
 
   return (
@@ -154,8 +204,8 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
             </div>
           )}
 
-          {/* User Level selection */}
-          {userLevels.length > 0 && (
+          {/* User Level selection — hidden when editing ADMIN or SUPERADMIN creating ADMIN */}
+          {!isEditingAdmin && userLevels.length > 0 && (
             <div style={{ marginBottom: '1rem' }}>
               <label style={labelStyle}>User Level</label>
               <select className="input" value={selectedLevel} onChange={(e) => setSelectedLevel(e.target.value)} disabled={loading}>
@@ -167,42 +217,106 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
             </div>
           )}
 
+          {/* Company Profile — read-only for admin self-edit, dropdown for SUPERADMIN create or editing another admin */}
+          {isSelfEdit && isEditingAdmin && (
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={labelStyle}>Company Profile <Req /></label>
+              <div style={{
+                padding: '0.625rem 0.75rem',
+                borderRadius: '0.5rem',
+                border: '1px solid var(--border-soft)',
+                backgroundColor: 'var(--bg)',
+                fontSize: '0.875rem',
+                color: 'var(--text)',
+                minHeight: '2.25rem',
+                display: 'flex',
+                alignItems: 'center',
+              }}>
+                {editing.company?.full_name ?? (
+                  <span style={{ color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No company assigned</span>
+                )}
+              </div>
+            </div>
+          )}
+          {((!editing && isSuperAdmin) || (editing && isEditingAdmin && !isSelfEdit)) && (
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={labelStyle}>Company Profile <Req /></label>
+              {loadingCompanies ? (
+                <div style={{ padding: '0.5rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Loading companies…</div>
+              ) : companies.length === 0 ? (
+                <div style={{ padding: '0.5rem', fontSize: '0.82rem', color: '#dc2626' }}>
+                  No active companies available. Create a Company Profile first.
+                </div>
+              ) : (
+                <select className="input" value={selectedCompany} onChange={(e) => setSelectedCompany(e.target.value)} disabled={loading}>
+                  <option value="">Select a company</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={String(c.id)}>{c.short_name} — {c.full_name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
           {/* Role selection */}
           <div style={{ marginBottom: '1.25rem' }}>
             <label style={{ ...labelStyle, marginBottom: '0.6rem' }}>Roles <Req /></label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-              {roles.map((role) => {
-                const c       = roleColors[role.name] ?? roleColors.auditor
-                const checked = selectedRoles.includes(role.id)
-                return (
-                  <button
-                    key={role.id}
-                    type="button"
-                    onClick={() => toggleRole(role.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '8px',
-                      padding: '8px 10px', borderRadius: '8px',
-                      border: `1.5px solid ${checked ? c.active : c.border}`,
-                      backgroundColor: checked ? c.bg : 'var(--surface)',
-                      cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
-                      transition: 'all 150ms',
-                    }}
-                  >
-                    <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: `2px solid ${checked ? c.active : 'var(--surface-3)'}`, backgroundColor: checked ? c.active : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 150ms' }}>
-                      {checked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
-                    </div>
-                    <div>
-                      <p style={{ fontSize: '0.82rem', fontWeight: 600, color: checked ? c.text : 'var(--text-secondary)', margin: 0 }}>
-                        {ROLE_LABELS[role.name as RoleName] ?? role.name}
-                      </p>
-                      <p style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>
-                        {role.permissions.length} permissions
-                      </p>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
+            
+            {/* SUPERADMIN editing: show read-only role display */}
+            {isSuperAdminEditing && targetRole && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '8px',
+                padding: '8px 10px', borderRadius: '8px',
+                border: `1.5px solid ${roleColors[targetRole.name]?.border || 'var(--border)'}`,
+                backgroundColor: roleColors[targetRole.name]?.bg || 'var(--surface)',
+                cursor: 'not-allowed',
+              }}>
+                <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: `2px solid ${roleColors[targetRole.name]?.active || 'var(--surface-3)'}`, backgroundColor: roleColors[targetRole.name]?.active || 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: roleColors[targetRole.name]?.text || 'var(--text)', margin: 0 }}>
+                  {ROLE_LABELS[targetRole.name as RoleName] ?? targetRole.name}
+                </span>
+                <span style={{ marginLeft: 'auto', fontSize: '0.68rem', color: 'var(--text-tertiary)' }}>Read-only</span>
+              </div>
+            )}
+            
+            {/* Normal role picker for ADMIN editing or SUPERADMIN creating */}
+            {!isSuperAdminEditing && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                {visibleRoles.map((role) => {
+                  const c       = roleColors[role.name] ?? roleColors.auditor
+                  const checked = selectedRoles.includes(role.id)
+                  return (
+                    <button
+                      key={role.id}
+                      type="button"
+                      onClick={() => toggleRole(role.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '8px 10px', borderRadius: '8px',
+                        border: `1.5px solid ${checked ? c.active : c.border}`,
+                        backgroundColor: checked ? c.bg : 'var(--surface)',
+                        cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+                        transition: 'all 150ms',
+                      }}
+                    >
+                      <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: `2px solid ${checked ? c.active : 'var(--surface-3)'}`, backgroundColor: checked ? c.active : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'all 150ms' }}>
+                        {checked && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: '0.82rem', fontWeight: 600, color: checked ? c.text : 'var(--text-secondary)', margin: 0 }}>
+                          {ROLE_LABELS[role.name as RoleName] ?? role.name}
+                        </p>
+                        <p style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>
+                          {role.permissions.length} permissions
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: '0.75rem' }}>

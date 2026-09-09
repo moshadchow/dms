@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from categories.models import Category
+from company_profile.models import Company, CompanyRead
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from core.security import hash_password
@@ -19,6 +20,7 @@ from users.models import (
     PermissionRead,
     Role,
     RoleCreate,
+    RoleName,
     RoleRead,
     RolePermissionLink,
     User,
@@ -48,6 +50,9 @@ def _user_to_read(user: User) -> UserRead:
     level_read = None
     if user.user_level:
         level_read = UserLevelRead.model_validate(user.user_level)
+    company_read = None
+    if user.company:
+        company_read = CompanyRead.model_validate(user.company)
     return UserRead(
         id=user.id,
         full_name=user.full_name,
@@ -68,6 +73,7 @@ def _user_to_read(user: User) -> UserRead:
             for category in user.categories
         ],
         user_level=level_read,
+        company=company_read,
     )
 
 
@@ -86,12 +92,38 @@ class UserService:
         search:    Optional[str]  = None,
         is_active: Optional[bool] = None,
         user_level_id: Optional[int] = None,
+        current_user:  Optional[User] = None,
     ) -> Tuple[List[UserRead], int]:
         query = select(User).options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
             selectinload(User.user_level),  # type: ignore[arg-type]
+            selectinload(User.company),  # type: ignore[arg-type]
         )
+
+        # Hide SUPERADMIN users from ADMIN list and scope to same company
+        if current_user is not None:
+            is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+            is_admin = any(r.name == RoleName.ADMIN for r in current_user.roles)
+            if is_admin and not is_superadmin:
+                superadmin_role_id = self.session.exec(
+                    select(Role.id).where(Role.name == RoleName.SUPERADMIN)
+                ).first()
+                if superadmin_role_id is not None:
+                    superadmin_user_ids = self.session.exec(
+                        select(UserRoleLink.user_id).where(
+                            UserRoleLink.role_id == superadmin_role_id
+                        )
+                    ).all()
+                    if superadmin_user_ids:
+                        query = query.where(User.id.notin_(superadmin_user_ids))
+
+                # Scope to same company
+                if current_user.company_id is not None:
+                    query = query.where(User.company_id == current_user.company_id)
+                else:
+                    return [], 0
+
         if search:
             query = query.where(
                 User.full_name.ilike(f"%{search}%") | User.email.ilike(f"%{search}%")
@@ -112,7 +144,7 @@ class UserService:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
         return _user_to_read(user)
 
-    def create_user(self, data: UserCreate) -> UserRead:
+    def create_user(self, data: UserCreate, current_user: User = None) -> UserRead:
         exists = self.session.exec(
             select(User).where(User.email == data.email)
         ).first()
@@ -121,6 +153,66 @@ class UserService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Email '{data.email}' is already registered",
             )
+
+        # Enforce: SUPERADMIN can only assign ADMIN role
+        is_superadmin = False
+        if current_user is not None:
+            is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+            if is_superadmin:
+                allowed_ids = {
+                    r.id for r in self.session.exec(select(Role)).all()
+                    if r.name == RoleName.ADMIN
+                }
+                if not set(data.role_ids).issubset(allowed_ids):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Super Admin can only create Admin users",
+                    )
+
+        # Company assignment for SUPERADMIN-created ADMIN
+        company_id = None
+        if is_superadmin:
+            if not data.company_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Company is required for Admin users created by Super Admin",
+                )
+            company = self.session.get(Company, data.company_id)
+            if not company:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Company {data.company_id} not found",
+                )
+            if not company.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot assign an inactive company",
+                )
+            company_id = data.company_id
+
+        # Company assignment for ADMIN-created users (MAKER, CHECKER, AUDITOR, ADMIN)
+        # ADMIN must have a company assigned; new users inherit that company automatically
+        is_admin = False
+        if current_user is not None:
+            is_admin = any(r.name == RoleName.ADMIN for r in current_user.roles)
+            if is_admin and not is_superadmin:
+                if not current_user.company_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Admin must be assigned to a Company Profile before creating users",
+                    )
+                company = self.session.get(Company, current_user.company_id)
+                if not company:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Admin's company {current_user.company_id} not found",
+                    )
+                if not company.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot create users: Admin's company is inactive",
+                    )
+                company_id = current_user.company_id
 
         # Determine user_level_id: use provided value, or default to "Low"
         level_id = data.user_level_id
@@ -150,6 +242,7 @@ class UserService:
             hashed_password=hashed_pw,
             is_active=data.is_active,
             user_level_id=level_id,
+            company_id=company_id,
             auth_provider=auth_provider,
             azure_object_id=data.azure_object_id,
         )
@@ -173,7 +266,7 @@ class UserService:
         # Re-fetch with eager load so roles are in memory
         return self.get_user(user.id)
 
-    def update_user(self, user_id: int, data: UserUpdate) -> UserRead:
+    def update_user(self, user_id: int, data: UserUpdate, current_user: User = None) -> UserRead:
         user = self.session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
@@ -201,6 +294,15 @@ class UserService:
             user.is_active = data.is_active
 
         if data.role_ids is not None:
+            # SUPERADMIN cannot change roles of any user
+            if current_user is not None:
+                is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+                if is_superadmin:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Super Admin cannot modify user roles",
+                    )
+
             for link in self.session.exec(
                 select(UserRoleLink).where(UserRoleLink.user_id == user_id)
             ).all():
@@ -218,6 +320,30 @@ class UserService:
 
         if data.user_level_id is not None or (hasattr(data, 'user_level_id') and 'user_level_id' in data.model_fields_set):
             user.user_level_id = data.user_level_id
+
+        # Company assignment — only for ADMIN users
+        if 'company_id' in data.model_fields_set:
+            # Defense-in-depth: admin cannot change their own company
+            if current_user is not None and current_user.id == user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin cannot change their own company",
+                )
+            target_user_roles = [r.name for r in user.roles]
+            if RoleName.ADMIN in target_user_roles:
+                if data.company_id is not None:
+                    company = self.session.get(Company, data.company_id)
+                    if not company:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Company {data.company_id} not found",
+                        )
+                    if not company.is_active:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Cannot assign an inactive company",
+                        )
+                user.company_id = data.company_id
 
         user.updated_at = datetime.utcnow()
         self.session.add(user)
@@ -366,6 +492,12 @@ class UserService:
         return _role_to_read(role)
 
     def create_role(self, data: RoleCreate) -> RoleRead:
+        # Prevent creation of protected system roles
+        if data.name == RoleName.SUPERADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot create Super Admin role via API",
+            )
         exists = self.session.exec(
             select(Role).where(Role.name == data.name)
         ).first()

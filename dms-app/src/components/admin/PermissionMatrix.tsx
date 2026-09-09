@@ -13,7 +13,7 @@ const ACTION_LABELS: Record<PermissionAction, string> = {
   delete:   'Delete',
 }
 
-const ROLE_ORDER: RoleName[] = ['admin', 'maker', 'checker', 'auditor']
+const ROLE_ORDER: RoleName[] = ['superadmin', 'admin', 'maker', 'checker', 'auditor']
 
 export default function PermissionMatrix({ roles }: Props) {
   // Sort roles by defined order
@@ -77,10 +77,11 @@ export default function PermissionMatrix({ roles }: Props) {
 
 function RoleDot({ name }: { name: RoleName }) {
   const colors: Record<RoleName, string> = {
-    admin:   '#7c3aed',
-    maker:   '#2563eb',
-    checker: '#ea580c',
-    auditor: '#16a34a',
+    superadmin: '#e11d48',
+    admin:      '#7c3aed',
+    maker:      '#2563eb',
+    checker:    '#ea580c',
+    auditor:    '#16a34a',
   }
   return (
     <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: colors[name] ?? '#94a3b8', display: 'inline-block', flexShrink: 0 }} />

@@ -5,9 +5,9 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER:     postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB:       dms_db
+      POSTGRES_USER:     dmsuser
+      POSTGRES_PASSWORD: dmspass2026
+      POSTGRES_DB:       dmsdb
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -25,7 +25,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:password@db:5432/dms_db
+      DATABASE_URL: postgresql+psycopg2://postgres:root@db:5432/dmsdb
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:-change-me-in-production}"
       DEBUG: "false"
       STORAGE_ROOT: /app/storage/uploads

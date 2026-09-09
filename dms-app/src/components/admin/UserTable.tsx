@@ -95,7 +95,7 @@ export default function UserTable({ users, loading, onEdit, onSignature, onRefre
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-              {['User', 'Email', 'Roles', 'Provider', 'Level', 'Status', 'Joined', 'Actions'].map((h) => (
+              {['User', 'Email', 'Roles', 'Company', 'Provider', 'Level', 'Status', 'Joined', 'Actions'].map((h) => (
                 <th key={h} style={{ padding: '0.625rem 1rem', textAlign: 'left', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>
                   {h}
                 </th>
@@ -134,6 +134,16 @@ export default function UserTable({ users, loading, onEdit, onSignature, onRefre
                         </span>
                       ))}
                     </div>
+                  </td>
+                  {/* Company */}
+                  <td style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                    {user.roles.some((r) => r.name === 'superadmin') ? (
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>—</span>
+                    ) : user.company ? (
+                      <span style={{ fontSize: '0.78rem', fontWeight: 500 }}>{user.company.short_name}</span>
+                    ) : (
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>—</span>
+                    )}
                   </td>
                   {/* Provider */}
                   <td style={{ padding: '0.75rem 1rem' }}>
@@ -240,10 +250,11 @@ function ActionBtn({ onClick, title, color, children }: { onClick: () => void; t
 
 function getRoleBadge(name: RoleName): React.CSSProperties {
   const map: Record<string, React.CSSProperties> = {
-    admin:   { backgroundColor: '#f3e8ff', color: '#7c3aed' },
-    maker:   { backgroundColor: '#dbeafe', color: '#1d4ed8' },
-    checker: { backgroundColor: '#ffedd5', color: '#c2410c' },
-    auditor: { backgroundColor: '#dcfce7', color: '#15803d' },
+    superadmin: { backgroundColor: '#ffe4e6', color: '#e11d48' },
+    admin:      { backgroundColor: '#f3e8ff', color: '#7c3aed' },
+    maker:      { backgroundColor: '#dbeafe', color: '#1d4ed8' },
+    checker:    { backgroundColor: '#ffedd5', color: '#c2410c' },
+    auditor:    { backgroundColor: '#dcfce7', color: '#15803d' },
   }
   return map[name] ?? { backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)' }
 }

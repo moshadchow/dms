@@ -13,6 +13,7 @@ interface AuthState {
 
   isAuthenticated: () => boolean
   isAdmin: () => boolean
+  isSuperAdmin: () => boolean
   hasPermission: (action: PermissionAction) => boolean
   hasRole: (roleName: string) => boolean
   canAccessCategory: (categoryId: number) => boolean
@@ -42,12 +43,15 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: () => Boolean(get().accessToken && get().user),
 
       isAdmin: () =>
-        get().user?.roles.some((r) => r.name === 'admin') ?? false,
+        get().user?.roles.some((r) => r.name === 'admin' || r.name === 'superadmin') ?? false,
+
+      isSuperAdmin: () =>
+        get().user?.roles.some((r) => r.name === 'superadmin') ?? false,
 
       hasPermission: (action) => {
         const { user } = get()
         if (!user) return false
-        if (user.roles.some((r) => r.name === 'admin')) return true
+        if (user.roles.some((r) => r.name === 'admin' || r.name === 'superadmin')) return true
         return user.roles.some((role) =>
           role.permissions.some((p) => p.action === action)
         )
@@ -59,7 +63,7 @@ export const useAuthStore = create<AuthState>()(
       canAccessCategory: (categoryId) => {
         const { user } = get()
         if (!user) return false
-        if (user.roles.some((r) => r.name === 'admin')) return true
+        if (user.roles.some((r) => r.name === 'admin' || r.name === 'superadmin')) return true
         return user.categories.some((category) => category.id === categoryId)
       },
     }),

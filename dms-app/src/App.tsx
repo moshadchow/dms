@@ -12,6 +12,7 @@ const MemoListPage = lazy(() => import('@/pages/MemoListPage'))
 const MemoDraftPage = lazy(() => import('@/pages/MemoDraftPage'))
 const MemoDetailPage = lazy(() => import('@/pages/MemoDetailPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
+const CompanyProfilePage = lazy(() => import('@/pages/CompanyProfilePage'))
 const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
 const PendingApprovalPage = lazy(() => import('@/pages/PendingApprovalPage'))
 const ApprovalHistoryPage = lazy(() => import('@/pages/ApprovalHistoryPage'))
@@ -86,6 +87,7 @@ export default function App() {
               <Route path="/force-change-password" element={<ForceChangePasswordPage />} />
               <Route path="/directory/:directoryId" element={<DocumentsPage />} />
               <Route path="/admin"                element={<AdminPage />} />
+              <Route path="/admin/company-profile" element={<CompanyProfilePage />} />
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
               <Route path="/approvals/pending"    element={<PendingApprovalPage />} />
               <Route path="/approvals/history"    element={<ApprovalHistoryPage />} />

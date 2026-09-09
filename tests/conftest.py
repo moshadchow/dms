@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session, create_engine, select
 
 import core.database
 import middleware.rbac
@@ -26,6 +26,7 @@ from users.models import (
 )
 from categories.models import Category
 from user_levels.models import UserLevel
+from company_profile.models import Company
 
 
 @pytest.fixture()
@@ -70,13 +71,22 @@ def seeded_data(client):
 
         admin_role = Role(name=RoleName.ADMIN, description="Admin")
         maker_role = Role(name=RoleName.MAKER, description="Maker")
+        checker_role = Role(name=RoleName.CHECKER, description="Checker")
+        auditor_role = Role(name=RoleName.AUDITOR, description="Auditor")
+        superadmin_role = Role(name=RoleName.SUPERADMIN, description="Full system access; manages admins & companies")
         session.add(admin_role)
         session.add(maker_role)
+        session.add(checker_role)
+        session.add(auditor_role)
+        session.add(superadmin_role)
         session.flush()
 
         for permission in permissions.values():
             session.add(
                 RolePermissionLink(role_id=admin_role.id, permission_id=permission.id)
+            )
+            session.add(
+                RolePermissionLink(role_id=superadmin_role.id, permission_id=permission.id)
             )
 
         for action in (
@@ -87,6 +97,23 @@ def seeded_data(client):
         ):
             session.add(
                 RolePermissionLink(role_id=maker_role.id, permission_id=permissions[action].id)
+            )
+
+        for action in (
+            PermissionAction.VIEW,
+            PermissionAction.DOWNLOAD,
+            PermissionAction.UPDATE,
+        ):
+            session.add(
+                RolePermissionLink(role_id=checker_role.id, permission_id=permissions[action].id)
+            )
+
+        for action in (
+            PermissionAction.VIEW,
+            PermissionAction.DOWNLOAD,
+        ):
+            session.add(
+                RolePermissionLink(role_id=auditor_role.id, permission_id=permissions[action].id)
             )
 
         # User levels
@@ -112,12 +139,39 @@ def seeded_data(client):
             is_active=True,
             user_level_id=medium_level.id,
         )
+        superadmin = User(
+            full_name="Super Administrator",
+            email="superadmin@dms.local",
+            hashed_password=hash_password("SuperAdmin@1234"),
+            is_active=True,
+            user_level_id=high_level.id,
+        )
         session.add(admin)
         session.add(maker)
+        session.add(superadmin)
         session.flush()
 
         session.add(UserRoleLink(user_id=admin.id, role_id=admin_role.id))
         session.add(UserRoleLink(user_id=maker.id, role_id=maker_role.id))
+        session.add(UserRoleLink(user_id=superadmin.id, role_id=superadmin_role.id))
+
+        # Create a test company for admin
+        test_company = Company(
+            company_id="TEST-COMP-001",
+            full_name="Test Company",
+            short_name="TESTCO",
+            is_active=True,
+        )
+        session.add(test_company)
+        session.flush()
+
+        # Assign company to admin user
+        admin.company_id = test_company.id
+        session.add(admin)
+        # Assign company to maker user (same company as admin)
+        maker.company_id = test_company.id
+        session.add(maker)
+        session.flush()
 
         finance = Category(name="Finance", description="Finance docs", is_active=True)
         hr = Category(name="HR", description="HR docs", is_active=True)
@@ -192,6 +246,7 @@ def seeded_data(client):
         return {
             "admin_id": admin.id,
             "maker_id": maker.id,
+            "superadmin_id": superadmin.id,
             "finance_category_id": finance.id,
             "hr_category_id": hr.id,
             "legal_category_id": legal.id,
@@ -202,6 +257,7 @@ def seeded_data(client):
             "high_level_id": high_level.id,
             "medium_level_id": medium_level.id,
             "low_level_id": low_level.id,
+            "company_id": test_company.id,
         }
 
 
@@ -210,4 +266,5 @@ def auth_headers(seeded_data):
     return {
         "admin": {"Authorization": f"Bearer {create_access_token(seeded_data['admin_id'])}"},
         "maker": {"Authorization": f"Bearer {create_access_token(seeded_data['maker_id'])}"},
+        "superadmin": {"Authorization": f"Bearer {create_access_token(seeded_data['superadmin_id'])}"},
     }

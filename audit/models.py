@@ -81,6 +81,12 @@ class AuditAction(str, Enum):
     EMAIL_SENT = "email_sent"
     EMAIL_FAILED = "email_failed"
 
+    # Company Profile
+    CREATE_COMPANY = "create_company"
+    UPDATE_COMPANY = "update_company"
+    ACTIVATE_COMPANY = "activate_company"
+    DEACTIVATE_COMPANY = "deactivate_company"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"
@@ -91,6 +97,7 @@ class AuditModule(str, Enum):
     USER_LEVELS = "user_levels"
     SECURITY = "security"
     WORKFLOW = "workflow"
+    COMPANIES = "companies"
 
 
 # ──────────────────────────────────────────────

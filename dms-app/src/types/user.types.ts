@@ -1,5 +1,5 @@
 export type PermissionAction = 'view' | 'download' | 'create' | 'update' | 'delete'
-export type RoleName = 'admin' | 'maker' | 'checker' | 'auditor'
+export type RoleName = 'admin' | 'maker' | 'checker' | 'auditor' | 'superadmin'
 
 export interface Permission {
   id: number
@@ -31,6 +31,20 @@ export interface UserLevel {
   updated_at: string
 }
 
+export interface CompanySummary {
+  id: number
+  company_id: string
+  full_name: string
+  short_name: string
+  address: string | null
+  contact_person: string | null
+  contact_no: string | null
+  email_address: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface User {
   id: number
   full_name: string
@@ -43,6 +57,7 @@ export interface User {
   roles: Role[]
   categories: AssignedCategory[]
   user_level: UserLevel | null
+  company: CompanySummary | null
 }
 
 export interface UserListResponse {
@@ -60,6 +75,7 @@ export interface UserCreateRequest {
   role_ids: number[]
   category_ids?: number[]
   user_level_id?: number | null
+  company_id?: number | null
 }
 
 export interface UserUpdateRequest {
@@ -69,6 +85,7 @@ export interface UserUpdateRequest {
   role_ids?: number[]
   category_ids?: number[]
   user_level_id?: number | null
+  company_id?: number | null
 }
 
 export interface RoleCreateRequest {

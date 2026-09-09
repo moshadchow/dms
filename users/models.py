@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, Session, SQLModel, select
 
+from company_profile.models import CompanyRead
 from user_levels.models import UserLevelRead
 
 if TYPE_CHECKING:
+    from company_profile.models import Company
     from user_levels.models import UserLevel
 
 
@@ -16,10 +18,11 @@ if TYPE_CHECKING:
 # ──────────────────────────────────────────────
 
 class RoleName(str, Enum):
-    ADMIN   = "admin"
-    MAKER   = "maker"
-    CHECKER = "checker"
-    AUDITOR = "auditor"
+    SUPERADMIN = "superadmin"
+    ADMIN      = "admin"
+    MAKER      = "maker"
+    CHECKER    = "checker"
+    AUDITOR    = "auditor"
 
 
 class PermissionAction(str, Enum):
@@ -140,6 +143,7 @@ class User(UserBase, table=True):
     hashed_password:       Optional[str] = Field(default=None, max_length=255)
     must_change_password:  bool          = Field(default=False)
     user_level_id:         Optional[int] = Field(default=None, foreign_key="user_levels.id")
+    company_id:            Optional[int] = Field(default=None, foreign_key="companies.id")
     created_at:            datetime      = Field(default_factory=datetime.utcnow)
     updated_at:            datetime      = Field(default_factory=datetime.utcnow)
 
@@ -164,6 +168,9 @@ class User(UserBase, table=True):
         back_populates="users",
         sa_relationship_kwargs={"lazy": "selectin"},
     )
+    company: Optional["Company"] = Relationship(
+        sa_relationship_kwargs={"lazy": "selectin"},
+    )
 
     def has_permission(self, action: PermissionAction) -> bool:
         for role in self.roles:
@@ -173,7 +180,7 @@ class User(UserBase, table=True):
         return False
 
     def is_admin(self) -> bool:
-        return any(r.name == RoleName.ADMIN for r in self.roles)
+        return any(r.name in (RoleName.ADMIN, RoleName.SUPERADMIN) for r in self.roles)
 
 
 # ── Helper: load user with all relationships eagerly ──────────────
@@ -189,6 +196,7 @@ def get_user_with_roles(session: Session, user_id: int) -> Optional["User"]:
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
             selectinload(User.user_level),  # type: ignore[arg-type]
+            selectinload(User.company),  # type: ignore[arg-type]
         )
     ).first()
     return result
@@ -201,6 +209,7 @@ class UserCreate(UserBase):
     role_ids: List[int] = []
     category_ids: List[int] = []
     user_level_id: Optional[int] = None
+    company_id: Optional[int] = None
     auth_provider: str = "local"
     azure_object_id: Optional[str] = None
 
@@ -212,6 +221,7 @@ class UserUpdate(SQLModel):
     role_ids:  Optional[List[int]] = None
     category_ids: Optional[List[int]] = None
     user_level_id: Optional[int]   = None
+    company_id: Optional[int]      = None
 
 
 class AssignedCategoryRead(SQLModel):
@@ -231,6 +241,7 @@ class UserRead(UserBase):
     roles:                List[RoleRead] = []
     categories:           List[AssignedCategoryRead] = []
     user_level:           Optional["UserLevelRead"] = None
+    company:              Optional[CompanyRead] = None
     model_config = {"from_attributes": True}
 
 

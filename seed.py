@@ -41,27 +41,37 @@ from storage_usage.models import SystemSetting
 # ──────────────────────────────────────────────
 
 ROLE_PERMISSIONS: dict[RoleName, list[PermissionAction]] = {
-    RoleName.ADMIN:   [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
-                       PermissionAction.CREATE, PermissionAction.UPDATE,
-                       PermissionAction.DELETE],
-    RoleName.MAKER:   [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
-                       PermissionAction.CREATE, PermissionAction.UPDATE],
-    RoleName.CHECKER: [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
-                       PermissionAction.UPDATE],
-    RoleName.AUDITOR: [PermissionAction.VIEW, PermissionAction.DOWNLOAD],
+    RoleName.SUPERADMIN: [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
+                          PermissionAction.CREATE, PermissionAction.UPDATE,
+                          PermissionAction.DELETE],
+    RoleName.ADMIN:      [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
+                          PermissionAction.CREATE, PermissionAction.UPDATE,
+                          PermissionAction.DELETE],
+    RoleName.MAKER:      [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
+                          PermissionAction.CREATE, PermissionAction.UPDATE],
+    RoleName.CHECKER:    [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
+                          PermissionAction.UPDATE],
+    RoleName.AUDITOR:    [PermissionAction.VIEW, PermissionAction.DOWNLOAD],
 }
 
 ROLE_DESCRIPTIONS: dict[RoleName, str] = {
-    RoleName.ADMIN:   "Full system access; manages users, roles, and categories",
-    RoleName.MAKER:   "Creates and uploads documents and directories",
-    RoleName.CHECKER: "Reviews and updates documents",
-    RoleName.AUDITOR: "Read-only access for compliance and auditing",
+    RoleName.SUPERADMIN: "Full system access; manages admins & companies",
+    RoleName.ADMIN:      "Full system access; manages users, roles, and categories",
+    RoleName.MAKER:      "Creates and uploads documents and directories",
+    RoleName.CHECKER:    "Reviews and updates documents",
+    RoleName.AUDITOR:    "Read-only access for compliance and auditing",
 }
 
 DEFAULT_ADMIN = {
     "full_name": "System Administrator",
     "email":     "admin@dms.local",
     "password":  "Admin@1234",   # ← change before production
+}
+
+DEFAULT_SUPERADMIN = {
+    "full_name": "Super Administrator",
+    "email":     "superadmin@dms.local",
+    "password":  "SuperAdmin@1234",   # ← change before production
 }
 
 
@@ -173,7 +183,32 @@ def seed() -> None:
         else:
             print(f"  [=] Admin user already exists: {DEFAULT_ADMIN['email']}")
 
-        # ── 5. Default storage capacity ─────
+        # ── 5. Default Super Admin user ───────
+        superadmin_exists = session.exec(
+            select(User).where(User.email == DEFAULT_SUPERADMIN["email"])
+        ).first()
+
+        if not superadmin_exists:
+            superadmin_user = User(
+                full_name=DEFAULT_SUPERADMIN["full_name"],
+                email=DEFAULT_SUPERADMIN["email"],
+                hashed_password=hash_password(DEFAULT_SUPERADMIN["password"]),
+                user_level_id=level_map.get("High", level_map.get("Low")).id if level_map else None,
+            )
+            session.add(superadmin_user)
+            session.flush()
+
+            session.add(
+                UserRoleLink(
+                    user_id=superadmin_user.id,
+                    role_id=role_map[RoleName.SUPERADMIN].id,
+                )
+            )
+            print(f"  [+] Super Admin user created: {DEFAULT_SUPERADMIN['email']}")
+        else:
+            print(f"  [=] Super Admin user already exists: {DEFAULT_SUPERADMIN['email']}")
+
+        # ── 6. Default storage capacity ─────
         cap_row = session.get(SystemSetting, "storage_capacity_gb")
         if not cap_row:
             session.add(

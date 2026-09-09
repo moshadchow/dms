@@ -31,9 +31,13 @@ def list_users(
     is_active: Optional[bool] = Query(None),
     user_level_id: Optional[int] = Query(None, description="Filter by user level ID"),
     _:         AdminUser      = None,
+    current_user: CurrentUser = None,
     session:   Session        = Depends(get_session),
 ):
-    users, total = UserService(session).list_users(skip, limit, search, is_active, user_level_id)
+    users, total = UserService(session).list_users(
+        skip, limit, search, is_active, user_level_id,
+        current_user=current_user,
+    )
     return {
         "total": total,
         "skip":  skip,
@@ -50,10 +54,10 @@ def list_users(
 )
 def create_user(
     payload: UserCreate,
-    _:       AdminUser = None,
+    current_user: AdminUser = None,
     session: Session   = Depends(get_session),
 ):
-    return UserService(session).create_user(payload)
+    return UserService(session).create_user(payload, current_user=current_user)
 
 
 @router.get("/me", response_model=UserRead, summary="Current user's own profile")
@@ -74,10 +78,10 @@ def get_user(
 def update_user(
     user_id: int,
     payload: UserUpdate,
-    _:       AdminUser = None,
+    current_user: AdminUser = None,
     session: Session   = Depends(get_session),
 ):
-    return UserService(session).update_user(user_id, payload)
+    return UserService(session).update_user(user_id, payload, current_user=current_user)
 
 
 @router.delete(

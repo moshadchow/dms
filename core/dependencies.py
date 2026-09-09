@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from core.database import get_session
 from core.security import verify_access_token
-from users.models import PermissionAction, User, get_user_with_roles
+from users.models import PermissionAction, RoleName, User, get_user_with_roles
 
 
 class OptionalHTTPBearer(HTTPBearer):
@@ -83,3 +83,15 @@ def require_admin(current_user: CurrentUser) -> User:
 
 
 AdminUser = Annotated[User, Depends(require_admin)]
+
+
+def require_superadmin(current_user: CurrentUser) -> User:
+    if not any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super Admin access required",
+        )
+    return current_user
+
+
+SuperAdminUser = Annotated[User, Depends(require_superadmin)]

@@ -1,7 +1,7 @@
 """Tests for the extracted approver resolution policy function."""
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from documents.models import Document
 from users.models import Role, RoleName, User, UserRoleLink
@@ -57,10 +57,10 @@ class TestResolveEligibleUserIds:
         with Session(engine) as session:
             doc = session.get(Document, seeded_data["finance_document_id"])
 
-            # Create a checker role and user
-            checker_role = Role(name=RoleName.CHECKER, description="Checker")
-            session.add(checker_role)
-            session.flush()
+            # Use the existing checker role from seeded_data
+            checker_role = session.exec(
+                select(Role).where(Role.name == RoleName.CHECKER)
+            ).first()
 
             checker = User(
                 full_name="Checker User",

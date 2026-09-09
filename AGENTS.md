@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (176 tests, SQLite-in-memory)
+pytest                        # run all tests (292 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -64,7 +64,7 @@ The `memos/` module has a PDF generator (`memos/pdf_generator.py`) for final dra
 - **`middleware/audit.py`** — auto-logs auth events, security events (401/403), and document operations from HTTP requests. Registered after RBAC middleware in `main.py`.
 - **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV).
 - **Immutability**: no PUT/PATCH/DELETE endpoints exist for audit records. Users cannot edit or delete audit logs.
-- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py` all call `AuditService.log_event()` after significant operations.
+- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py`, `company_profile/service.py` all call `AuditService.log_event()` after significant operations.
 - **Legacy**: `core/audit.py` contains an old logger-based `log_audit_event` helper. It is dead code — all callers now use `AuditService`. Do not add new callers; use `AuditService` directly.
 
 ## Auth & User Injection
@@ -74,7 +74,9 @@ from core.dependencies import CurrentUser
 def my_endpoint(current_user: CurrentUser = None): ...
 ```
 
-`AdminUser` (also from `core/dependencies.py`) raises 403 for non-admins.
+`AdminUser` (also from `core/dependencies.py`) raises 403 for non-admins. **Note:** `AdminUser` allows both ADMIN and SUPERADMIN through — it is an authorization guard, not a visibility guard. SUPERADMIN visibility hiding from ADMIN is enforced in `users/service.py` `list_users()`. ADMIN user lists are also scoped to the ADMIN's own company (`user.company_id == current_user.company_id`); ADMIN with no company sees an empty list.
+
+`SuperAdminUser` (also from `core/dependencies.py`) raises 403 for non-superadmins. Use `require_superadmin` dependency for SUPERADMIN-only endpoints.
 
 ## Azure AD Authentication
 Backend module: `auth/azure_service.py` handles PKCE, token exchange, ID token validation, and JIT user provisioning.
@@ -110,14 +112,58 @@ All API files import `apiClient` from `./client` (the Axios instance with interc
 - `httpx==0.27.0` — used for Azure AD token exchange (async HTTP client).
 - Frontend: React 18, Vite 5, Zustand 4, React Router 6.
 
+## Additional Backend Modules
+
+### Notifications
+`notifications/` handles email notifications for workflow events. Key files:
+- `service.py` — `EmailService` sends SMTP emails (never raises on failure), with idempotency via `EmailNotification` records.
+- `tasks.py` — Celery-style background tasks (`send_notification_task`) for async email delivery.
+- `templates.py` — HTML/text email templates for workflow notifications (submitted, approved, rejected, returned, clarified, forward).
+- `models.py` — `EmailNotification` table for idempotency tracking and audit trail.
+
+**Gotcha:** Emails are fire-and-forget; failures are logged but don't block the workflow. SMTP config via `core/config.py` (`SMTP_*` settings).
+
+### Signatures
+`signatures/` manages signature files (e-signature uploads, wet-signature canvas captures) independently of workflow.
+- `SignatureService` — upload (5 MB limit, JPEG/PNG only), list, get, soft-delete, admin operations (upload/delete for other users).
+- Stored under `STORAGE_ROOT/signatures/{user_id}/` with UUID filenames.
+- Integrates with workflow via `signature_id` on memo/document approval actions.
+
+### Company Profile
+`company_profile/` — CRUD for company entities (multi-tenancy foundation).
+- `CompanyService` — list (paginated, searchable), get, create, update, activate/deactivate.
+- Unique constraints: `company_id` and `short_name`.
+- SUPERADMIN-only endpoints mounted at `/api/v1/companies`.
+- `users.company_id` FK (nullable) links users to companies. SUPERADMIN assigns company when creating ADMIN users; company is required for ADMIN creation, ignored for other roles. ADMIN users can update their own company via `PATCH /users/{id}`; SUPERADMIN cannot change company for non-ADMIN users.
+
+**Admin self-edit company rules** (`users/service.py` `update_user()`):
+- Admin cannot change their own `company_id` through the API (returns 403).
+- Frontend renders company as read-only text when admin edits their own account.
+- Frontend skips `company_id` in the update payload for admin self-edit.
+
+**Users table Company column** (`UserTable.tsx`):
+- Displays `company.short_name` for all non-SUPERADMIN users.
+- SUPERADMIN displays `—`.
+- Users without a company display `—`.
+- Backend already returns `company` in `UserRead` via `selectinload(User.company)` — no N+1 risk.
+
+### Storage Usage
+`storage_usage/` — tracks storage consumption per user/company.
+- `StorageUsageService` — calculates used space, enforces quotas.
+- Admin endpoints at `/api/v1/storage`.
+
+## Frontend: TypeScript Typecheck
+`npm run build` runs `tsc && vite build` — typecheck is part of the build step, no separate `typecheck` script.
+
 ## Seed Data
-`seed.py` creates four roles with fixed permission matrices:
-| Role    | Permissions |
-|---------|------------|
-| Admin   | view, download, create, update, delete |
-| Maker   | view, download, create, update |
-| Checker | view, download, update |
-| Auditor | view, download |
+`seed.py` creates five roles with fixed permission matrices:
+| Role       | Permissions |
+|------------|------------|
+| SuperAdmin | view, download, create, update, delete (full system access; manages admins & companies) |
+| Admin      | view, download, create, update, delete |
+| Maker      | view, download, create, update |
+| Checker    | view, download, update |
+| Auditor    | view, download |
 
 Default admin: `admin@dms.local` / `Admin@1234`.
 
