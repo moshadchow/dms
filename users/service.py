@@ -93,6 +93,7 @@ class UserService:
         is_active: Optional[bool] = None,
         user_level_id: Optional[int] = None,
         current_user:  Optional[User] = None,
+        company_id:    Optional[int] = None,
     ) -> Tuple[List[UserRead], int]:
         query = select(User).options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
@@ -123,6 +124,17 @@ class UserService:
                     query = query.where(User.company_id == current_user.company_id)
                 else:
                     return [], 0
+
+            # SUPERADMIN company filter: when company_id is provided, scope to that company
+            if is_superadmin and company_id is not None:
+                # Validate company exists
+                company = self.session.get(Company, company_id)
+                if not company:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Company {company_id} not found",
+                    )
+                query = query.where(User.company_id == company_id)
 
         if search:
             query = query.where(

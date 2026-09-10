@@ -20,6 +20,7 @@ export const usersApi = {
     search?: string
     is_active?: boolean
     user_level_id?: number | null
+    company_id?: number
   }): Promise<UserListResponse> => {
     const res = await apiClient.get<UserListResponse>('/users', { params })
     return res.data

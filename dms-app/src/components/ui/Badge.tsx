@@ -13,10 +13,11 @@ interface Props {
 }
 
 const ROLE_STYLES: Record<RoleName, { bg: string; color: string; label: string }> = {
-  admin:   { bg: 'var(--primary-soft)', color: 'var(--primary)', label: 'Admin' },
-  maker:   { bg: 'var(--info-bg)', color: 'var(--info)', label: 'Maker' },
-  checker: { bg: 'var(--accent-soft)', color: 'var(--accent)', label: 'Checker' },
-  auditor: { bg: 'var(--success-bg)', color: 'var(--success)', label: 'Auditor' },
+  admin:     { bg: 'var(--primary-soft)', color: 'var(--primary)', label: 'Admin' },
+  maker:     { bg: 'var(--info-bg)', color: 'var(--info)', label: 'Maker' },
+  checker:   { bg: 'var(--accent-soft)', color: 'var(--accent)', label: 'Checker' },
+  auditor:   { bg: 'var(--success-bg)', color: 'var(--success)', label: 'Auditor' },
+  superadmin: { bg: '#fef3c7', color: '#92400e', label: 'Super Admin' },
 }
 
 const STATUS_STYLES: Record<DocumentStatus, { bg: string; color: string; label: string }> = {

@@ -470,3 +470,122 @@ class TestSuperAdminCategoryRestrictions:
         )
         assert response.status_code == 403
         assert "category assignments" in response.json()["detail"].lower()
+
+
+# ── SUPERADMIN company filtering for Category Access ──────
+
+
+class TestSuperAdminCompanyFiltering:
+    def test_superadmin_filters_users_by_company(self, seeded_data, client, auth_headers):
+        """SUPERADMIN with company_id should see only that company's users."""
+        test_client, _, _ = client
+
+        # Create second company and user
+        _, engine, _ = client
+        from users.models import User
+        from company_profile.models import Company
+
+        with Session(engine) as session:
+            other_company = Company(
+                company_id="FILTER-COMP-001",
+                full_name="Filter Company",
+                short_name="FILTCO",
+                is_active=True,
+            )
+            session.add(other_company)
+            session.flush()
+
+            other_maker = User(
+                full_name="Other Maker",
+                email="othermaker@example.com",
+                hashed_password="hashed",
+                is_active=True,
+                company_id=other_company.id,
+            )
+            session.add(other_maker)
+            session.flush()
+
+            from users.models import UserRoleLink
+            maker_role = session.exec(
+                select(UserRoleLink).where(
+                    UserRoleLink.user_id == seeded_data["maker_id"]
+                )
+            ).first()
+            session.add(UserRoleLink(user_id=other_maker.id, role_id=maker_role.role_id))
+            session.commit()
+
+            other_company_id = other_company.id
+
+        # SUPERADMIN without company_id — sees all users
+        response = test_client.get(
+            "/api/v1/users",
+            headers=auth_headers["superadmin"],
+        )
+        assert response.status_code == 200
+        all_users = response.json()["items"]
+        assert len(all_users) >= 2
+
+        # SUPERADMIN with company_id — sees only that company's users
+        response = test_client.get(
+            f"/api/v1/users?company_id={seeded_data['company_id']}",
+            headers=auth_headers["superadmin"],
+        )
+        assert response.status_code == 200
+        filtered_users = response.json()["items"]
+        assert len(filtered_users) >= 1
+        for user in filtered_users:
+            if user.get("company") is not None:
+                assert user["company"]["id"] == seeded_data["company_id"]
+
+    def test_superadmin_no_company_selected_shows_all(self, seeded_data, client, auth_headers):
+        """SUPERADMIN without company_id param should see all users (no filter)."""
+        test_client, _, _ = client
+
+        response = test_client.get(
+            "/api/v1/users",
+            headers=auth_headers["superadmin"],
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] >= 2
+
+    def test_admin_ignores_company_id_param(self, seeded_data, client, auth_headers):
+        """ADMIN cannot use company_id to see other company's users — always scoped to own."""
+        test_client, _, _ = client
+
+        # Create second company
+        _, engine, _ = client
+        from company_profile.models import Company
+
+        with Session(engine) as session:
+            other_company = Company(
+                company_id="IGNORE-COMP-001",
+                full_name="Ignore Company",
+                short_name="IGNCO",
+                is_active=True,
+            )
+            session.add(other_company)
+            session.flush()
+            other_company_id = other_company.id
+
+        # ADMIN requesting other company — should still get own company only
+        response = test_client.get(
+            f"/api/v1/users?company_id={other_company_id}",
+            headers=auth_headers["admin"],
+        )
+        assert response.status_code == 200
+        data = response.json()
+        for user in data["items"]:
+            if user.get("company") is not None:
+                assert user["company"]["id"] == seeded_data["company_id"]
+
+    def test_superadmin_invalid_company_id_returns_error(self, seeded_data, client, auth_headers):
+        """SUPERADMIN with non-existent company_id should get 400."""
+        test_client, _, _ = client
+
+        response = test_client.get(
+            "/api/v1/users?company_id=999999",
+            headers=auth_headers["superadmin"],
+        )
+        assert response.status_code == 400
+        assert "not found" in response.json()["detail"].lower()
