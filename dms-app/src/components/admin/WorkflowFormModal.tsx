@@ -3,6 +3,7 @@ import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
 import { usersApi } from '@/api/users.api'
 import { getErrorMessage } from '@/api/client'
+import { useAuthStore } from '@/store/authStore'
 import type { WorkflowDefinitionDetail, WorkflowStepCreate, ApprovalMode } from '@/types/workflow.types'
 import type { User, Role } from '@/types/user.types'
 
@@ -37,6 +38,7 @@ const inputStyle: React.CSSProperties = {
 }
 
 export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess }: WorkflowFormModalProps) {
+  const isSuperAdmin = useAuthStore((state) => state.isSuperAdmin())
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [steps, setSteps] = useState<StepForm[]>([])
@@ -48,9 +50,13 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
 
   useEffect(() => {
     if (!isOpen) return
+    if (isSuperAdmin) {
+      onClose()
+      return
+    }
     usersApi.list({ limit: 200 }).then((res) => setUsers(res.items)).catch(() => {})
     usersApi.listRoles().then(setRoles).catch(() => {})
-  }, [isOpen])
+  }, [isOpen, isSuperAdmin, onClose])
 
   useEffect(() => {
     if (!isOpen) return

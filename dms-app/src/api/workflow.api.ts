@@ -19,6 +19,7 @@ export const workflowApi = {
   list: async (params?: {
     category_id?: number
     is_active?: boolean
+    company_id?: number
     skip?: number
     limit?: number
   }): Promise<WorkflowDefinitionListResponse> => {

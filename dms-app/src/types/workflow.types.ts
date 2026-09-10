@@ -26,6 +26,7 @@ export interface WorkflowDefinition {
   description: string | null
   is_active: boolean
   created_by: number
+  company_id: number | null
   created_at: string
   updated_at: string
 }

@@ -50,13 +50,15 @@ signature_router = APIRouter()
 )
 def list_workflow_definitions(
     is_active:  Optional[bool] = Query(None, description="Filter by active status"),
+    company_id: Optional[int]  = Query(None, description="Filter by company (SUPERADMIN only)"),
     skip:       int            = Query(0, ge=0),
     limit:      int            = Query(50, ge=1, le=200),
-    _:          CurrentUser    = None,
+    current_user: CurrentUser  = None,
     session:    Session        = Depends(get_session),
 ):
     return WorkflowDefinitionService(session).list_definitions(
         skip=skip, limit=limit, is_active=is_active,
+        company_id=company_id, current_user=current_user,
     )
 
 
@@ -68,10 +70,10 @@ def list_workflow_definitions(
 )
 def create_workflow_definition(
     payload: WorkflowDefinitionCreate,
-    _:       AdminUser = None,
+    current_user: AdminUser = None,
     session: Session   = Depends(get_session),
 ):
-    return WorkflowDefinitionService(session).create_definition(payload, current_user=_)
+    return WorkflowDefinitionService(session).create_definition(payload, current_user=current_user)
 
 
 @router.get(
@@ -81,10 +83,10 @@ def create_workflow_definition(
 )
 def get_workflow_definition(
     definition_id: int,
-    _:             CurrentUser = None,
-    session:       Session     = Depends(get_session),
+    current_user:   CurrentUser = None,
+    session:        Session     = Depends(get_session),
 ):
-    return WorkflowDefinitionService(session).get_definition(definition_id)
+    return WorkflowDefinitionService(session).get_definition(definition_id, current_user)
 
 
 @router.put(
@@ -95,10 +97,10 @@ def get_workflow_definition(
 def update_workflow_definition(
     definition_id: int,
     payload:       WorkflowDefinitionUpdate,
-    _:             AdminUser = None,
+    current_user:  AdminUser = None,
     session:       Session   = Depends(get_session),
 ):
-    return WorkflowDefinitionService(session).update_definition(definition_id, payload)
+    return WorkflowDefinitionService(session).update_definition(definition_id, payload, current_user)
 
 
 @router.delete(
@@ -109,10 +111,10 @@ def update_workflow_definition(
 )
 def deactivate_workflow_definition(
     definition_id: int,
-    _:             AdminUser = None,
+    current_user:  AdminUser = None,
     session:       Session   = Depends(get_session),
 ):
-    return WorkflowDefinitionService(session).deactivate_definition(definition_id)
+    return WorkflowDefinitionService(session).deactivate_definition(definition_id, current_user)
 
 
 @router.patch(
@@ -122,10 +124,10 @@ def deactivate_workflow_definition(
 )
 def activate_workflow_definition(
     definition_id: int,
-    _:             AdminUser = None,
+    current_user:  AdminUser = None,
     session:       Session   = Depends(get_session),
 ):
-    return WorkflowDefinitionService(session).activate_definition(definition_id)
+    return WorkflowDefinitionService(session).activate_definition(definition_id, current_user)
 
 
 # ══════════════════════════════════════════════

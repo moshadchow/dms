@@ -88,7 +88,7 @@ class TestWorkflowDefinitionService:
                 name="Get Test WF",
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
-            result = svc.get_definition(created.id)
+            result = svc.get_definition(created.id, admin)
             assert result.name == "Get Test WF"
             assert len(result.steps) == 1
             assert result.steps[0].step_name == "Manager Review"
@@ -107,7 +107,7 @@ class TestWorkflowDefinitionService:
                 )
                 svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
 
-            result = svc.list_definitions()
+            result = svc.list_definitions(current_user=admin)
             assert result.total == 3
             assert len(result.items) == 3
 
@@ -125,7 +125,7 @@ class TestWorkflowDefinitionService:
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
 
             update = WorkflowDefinitionUpdate(name="Updated WF Name")
-            result = svc.update_definition(created.id, update)
+            result = svc.update_definition(created.id, update, admin)
             assert result.name == "Updated WF Name"
 
     def test_deactivate_definition(self, seeded_data, client):
@@ -140,7 +140,7 @@ class TestWorkflowDefinitionService:
                 name="Deactivate WF",
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
-            result = svc.deactivate_definition(created.id)
+            result = svc.deactivate_definition(created.id, admin)
             assert result.is_active is False
 
     def test_activate_definition(self, seeded_data, client):
@@ -155,8 +155,8 @@ class TestWorkflowDefinitionService:
                 name="Activate WF",
             )
             created = svc.create_definition(WorkflowDefinitionCreate(**payload), current_user=admin)
-            svc.deactivate_definition(created.id)
-            result = svc.activate_definition(created.id)
+            svc.deactivate_definition(created.id, admin)
+            result = svc.activate_definition(created.id, admin)
             assert result.is_active is True
 
     def test_validate_step_requires_approvers(self, seeded_data, client):
@@ -230,9 +230,9 @@ class TestWorkflowDefinitionService:
                 ),
             ]
             update = WorkflowDefinitionUpdate(steps=new_steps)
-            result = svc.update_definition(created.id, update)
+            result = svc.update_definition(created.id, update, admin)
 
-            detail = svc.get_definition(created.id)
+            detail = svc.get_definition(created.id, admin)
             assert len(detail.steps) == 2
             assert detail.steps[0].step_name == "New Step A"
             assert detail.steps[1].step_name == "New Step B"
@@ -489,8 +489,9 @@ class TestWorkflowInstanceService:
             from workflow.service import WorkflowDefinitionService as WDS
             from fastapi import HTTPException
             maker = session.get(User, seeded_data["maker_id"])
+            admin = session.get(User, seeded_data["admin_id"])
 
-            WDS(session).deactivate_definition(wf.id)
+            WDS(session).deactivate_definition(wf.id, admin)
 
             svc = WorkflowInstanceService(session)
             payload = WorkflowInstanceCreate(

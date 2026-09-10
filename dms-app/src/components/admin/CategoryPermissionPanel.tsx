@@ -8,6 +8,7 @@ import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import EmptyState from '@/components/ui/EmptyState'
 import Spinner from '@/components/ui/Spinner'
+import CompanyContextDropdown from '@/components/admin/CompanyContextDropdown'
 import { useAuthStore } from '@/store/authStore'
 import type { Category } from '@/types/category.types'
 import type { RoleName, User } from '@/types/user.types'
@@ -19,6 +20,7 @@ interface Props {
 export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
   const authUser = useAuthStore((state) => state.user)
   const setAuthUser = useAuthStore((state) => state.setUser)
+  const isSuperAdmin = useAuthStore((state) => state.isSuperAdmin())
 
   const [users, setUsers] = useState<User[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -29,6 +31,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [loadingCategories, setLoadingCategories] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null)
 
   const loadCategories = useCallback(async () => {
     setLoadingCategories(true)
@@ -45,10 +48,12 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
   const loadUsers = useCallback(async (search = '') => {
     setLoadingUsers(true)
     try {
-      const data = await usersApi.list({
+      const params: Record<string, unknown> = {
         limit: 200,
         search: search.trim() || undefined,
-      })
+      }
+      if (isSuperAdmin && selectedCompanyId) params.company_id = selectedCompanyId
+      const data = await usersApi.list(params)
       setUsers(data.items)
       setSelectedUserId((current) => {
         if (current && data.items.some((user) => user.id === current)) return current
@@ -59,7 +64,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
     } finally {
       setLoadingUsers(false)
     }
-  }, [])
+  }, [isSuperAdmin, selectedCompanyId])
 
   useEffect(() => {
     loadCategories()
@@ -71,7 +76,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
     }, 200)
 
     return () => window.clearTimeout(timer)
-  }, [loadUsers, userSearch])
+  }, [loadUsers, userSearch, selectedCompanyId])
 
   const selectedUser = useMemo(
     () => users.find((user) => user.id === selectedUserId) ?? null,
@@ -136,17 +141,31 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
 
   const assignedCount = selectedCategoryIds.length
 
+  const showEmptyState = isSuperAdmin && !selectedCompanyId
+
   return (
     <div style={{ padding: '1.25rem' }}>
       <div style={{ marginBottom: '1.25rem' }}>
-        <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>
-          Category-wise user access
-        </h3>
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0.3rem 0 0' }}>
-          Select a user, assign the categories they can see, then save the full access map.
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>
+              Category-wise user access
+            </h3>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0.3rem 0 0' }}>
+              Select a user, assign the categories they can see, then save the full access map.
+            </p>
+          </div>
+          {isSuperAdmin && (
+            <CompanyContextDropdown value={selectedCompanyId} onChange={setSelectedCompanyId} />
+          )}
+        </div>
       </div>
 
+      {showEmptyState ? (
+        <div style={{ padding: '3rem', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>Please select a company to view category-wise user access.</p>
+        </div>
+      ) : (
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
         <section style={{ ...panelStyle, flex: '1 1 280px', maxWidth: '320px' }}>
           <div style={{ padding: '1rem', borderBottom: '1px solid var(--border)' }}>
@@ -270,23 +289,27 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
             </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={!selectedUser || selectedCategoryIds.length === 0 || saving}
-                onClick={() => setSelectedCategoryIds([])}
-              >
-                Clear all
-              </Button>
-              <Button
-                size="sm"
-                icon={<CheckSquare size={14} />}
-                loading={saving}
-                disabled={!selectedUser || !isDirty}
-                onClick={handleSave}
-              >
-                Save permissions
-              </Button>
+              {!isSuperAdmin && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!selectedUser || selectedCategoryIds.length === 0 || saving}
+                    onClick={() => setSelectedCategoryIds([])}
+                  >
+                    Clear all
+                  </Button>
+                  <Button
+                    size="sm"
+                    icon={<CheckSquare size={14} />}
+                    loading={saving}
+                    disabled={!selectedUser || !isDirty}
+                    onClick={handleSave}
+                  >
+                    Save permissions
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -316,14 +339,14 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                       <button
                         key={category.id}
                         type="button"
-                        onClick={() => toggleCategory(category.id)}
+                        onClick={() => !isSuperAdmin && toggleCategory(category.id)}
                         style={{
                           textAlign: 'left',
                           padding: '0.9rem',
                           borderRadius: '0.85rem',
                           border: `1.5px solid ${checked ? '#6366f1' : 'var(--border)'}`,
                           backgroundColor: checked ? 'var(--primary-soft)' : 'var(--surface)',
-                          cursor: 'pointer',
+                          cursor: isSuperAdmin ? 'default' : 'pointer',
                           fontFamily: 'inherit',
                         }}
                       >
@@ -384,6 +407,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
           </div>
         </section>
       </div>
+      )}
     </div>
   )
 }

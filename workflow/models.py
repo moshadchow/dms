@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Optional
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
+    from company_profile.models import Company
     from documents.models import Document
     from users.models import User, Role
 
@@ -43,6 +44,7 @@ class WorkflowDefinitionBase(SQLModel):
     name: str = Field(max_length=255, index=True)
     description: Optional[str] = Field(default=None, max_length=1000)
     is_active: bool = Field(default=True, index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
 
 
 class WorkflowDefinition(WorkflowDefinitionBase, table=True):
@@ -55,6 +57,9 @@ class WorkflowDefinition(WorkflowDefinitionBase, table=True):
 
     created_by_user: "User" = Relationship(
         sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[WorkflowDefinition.created_by]"}
+    )
+    company: Optional["Company"] = Relationship(
+        sa_relationship_kwargs={"lazy": "selectin"}
     )
     steps: List["WorkflowStep"] = Relationship(
         back_populates="workflow_definition",
@@ -292,6 +297,7 @@ class WorkflowDefinitionRead(SQLModel):
     description: Optional[str] = None
     is_active: bool
     created_by: int
+    company_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}

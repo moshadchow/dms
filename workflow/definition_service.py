@@ -12,7 +12,7 @@ from sqlmodel import Session, func, select
 
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
-from users.models import User
+from users.models import RoleName, User
 from workflow.models import (
     WorkflowAction,
     WorkflowDefinition,
@@ -74,9 +74,28 @@ class WorkflowDefinitionService:
             description=wf.description,
             is_active=wf.is_active,
             created_by=wf.created_by,
+            company_id=wf.company_id,
             created_at=wf.created_at,
             updated_at=wf.updated_at,
         )
+
+    @staticmethod
+    def _is_superadmin(current_user: User) -> bool:
+        return any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+
+    def _check_company_access(self, definition: WorkflowDefinition, current_user: User) -> None:
+        if self._is_superadmin(current_user):
+            return
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin must be assigned to a Company",
+            )
+        if definition.company_id != current_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow definition {definition.id} not found",
+            )
 
     def _build_steps_read(self, steps: List[WorkflowStep]) -> List[WorkflowStepRead]:
         """Build step read schemas with approver details."""
@@ -141,7 +160,19 @@ class WorkflowDefinitionService:
         data: WorkflowDefinitionCreate,
         current_user: User,
     ) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot create workflow definitions",
+            )
+
         self._validate_step_approvers(data.steps)
+
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin must be assigned to a Company",
+            )
 
         existing = self.session.exec(
             select(WorkflowDefinition).where(WorkflowDefinition.name == data.name)
@@ -156,6 +187,7 @@ class WorkflowDefinitionService:
             name=data.name,
             description=data.description,
             created_by=current_user.id,
+            company_id=current_user.company_id,
         )
         self.session.add(wf)
         self.session.flush()
@@ -195,8 +227,9 @@ class WorkflowDefinitionService:
 
         return self._to_read(wf)
 
-    def get_definition(self, definition_id: int) -> WorkflowDefinitionDetailRead:
+    def get_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionDetailRead:
         wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
 
         wf = self.session.exec(
             select(WorkflowDefinition)
@@ -211,6 +244,7 @@ class WorkflowDefinitionService:
             description=wf.description,
             is_active=wf.is_active,
             created_by=wf.created_by,
+            company_id=wf.company_id,
             created_at=wf.created_at,
             updated_at=wf.updated_at,
             steps=steps_read,
@@ -222,15 +256,23 @@ class WorkflowDefinitionService:
         skip: int = 0,
         limit: int = 50,
         is_active: Optional[bool] = None,
+        company_id: Optional[int] = None,
+        current_user: Optional[User] = None,
     ) -> WorkflowDefinitionListResponse:
         query = select(WorkflowDefinition)
+        count_query = select(func.count(WorkflowDefinition.id))
 
         if is_active is not None:
             query = query.where(WorkflowDefinition.is_active == is_active)
-
-        count_query = select(func.count(WorkflowDefinition.id))
-        if is_active is not None:
             count_query = count_query.where(WorkflowDefinition.is_active == is_active)
+
+        if current_user is not None and not self._is_superadmin(current_user):
+            query = query.where(WorkflowDefinition.company_id == current_user.company_id)
+            count_query = count_query.where(WorkflowDefinition.company_id == current_user.company_id)
+        elif company_id is not None:
+            query = query.where(WorkflowDefinition.company_id == company_id)
+            count_query = count_query.where(WorkflowDefinition.company_id == company_id)
+
         total = self.session.exec(count_query).one()
 
         wfs = self.session.exec(
@@ -250,8 +292,16 @@ class WorkflowDefinitionService:
         self,
         definition_id: int,
         data: WorkflowDefinitionUpdate,
+        current_user: User,
     ) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot update workflow definitions",
+            )
+
         wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
 
         old_value = {
             "name": wf.name,
@@ -343,8 +393,15 @@ class WorkflowDefinitionService:
 
         return self._to_read(wf)
 
-    def deactivate_definition(self, definition_id: int) -> WorkflowDefinitionRead:
+    def deactivate_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot deactivate workflow definitions",
+            )
+
         wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
 
         old_value = {"is_active": wf.is_active}
         wf.is_active = False
@@ -362,8 +419,15 @@ class WorkflowDefinitionService:
 
         return self._to_read(wf)
 
-    def activate_definition(self, definition_id: int) -> WorkflowDefinitionRead:
+    def activate_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot activate workflow definitions",
+            )
+
         wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
 
         old_value = {"is_active": wf.is_active}
         wf.is_active = True

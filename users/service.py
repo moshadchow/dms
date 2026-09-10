@@ -311,6 +311,13 @@ class UserService:
             self._assign_roles(user_id, data.role_ids)
 
         if data.category_ids is not None:
+            if current_user is not None:
+                is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+                if is_superadmin:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Super Admin cannot modify category assignments",
+                    )
             for link in self.session.exec(
                 select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
             ).all():

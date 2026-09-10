@@ -8,7 +8,7 @@ FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature 
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (292 tests, SQLite-in-memory)
+pytest                        # run all tests (308 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -46,6 +46,8 @@ Each feature module follows this pattern:
 The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
 
 The `workflow/` module has three router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`), `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`), and `signature_router` (signatures, mounted at `/api/v1/signatures`). Service classes are split into separate files: `definition_service.py`, `instance_service.py`, `approval_service.py`. The old `service.py` is a backward-compatible re-export shim. Shared approver logic lives in `approval_policy.py`.
+
+**Workflow company scoping:** `WorkflowDefinition` has a `company_id` FK (nullable). ADMIN workflows are auto-scoped to their `company_id` on create. ADMIN sees only own-company workflows. SUPERADMIN can view any company's workflows (with `company_id` query param filter) but cannot create/update/activate/deactivate. SUPERADMIN gets a company context dropdown in the frontend to select which company's workflows to view.
 
 The `memos/` module creates document drafts with markdown rendering and workflow integration. Its service uses `core/access.py` helpers (`ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`) for permission checks.
 
@@ -208,6 +210,8 @@ Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `
 
 **RBAC gap on PATCH /activate:** `PATCH /api/v1/workflows/{id}/activate` has no `ROUTE_PERMISSION_MAP` entry — it is protected solely by the `AdminUser` dependency. This has no practical impact since admin bypasses RBAC anyway, but for defense-in-depth an entry could be added.
 
+**SUPERADMIN workflow restrictions:** SUPERADMIN passes the `AdminUser` dependency but is blocked at the service level for all mutation endpoints (create/update/activate/deactivate) with 403. Only list and get are permitted (with company context filtering).
+
 ### User Level Integration
 `workflow_instances` inherits the visibility rules already enforced in `documents/service.py` via `DocumentUserLevelLink`. Admin bypass still applies. Approval never overrides a User Level restriction — an approver who cannot view the underlying document per their level must not appear as a valid approver for that instance.
 
@@ -226,3 +230,4 @@ Any new module importing `engine` directly (e.g. a workflow-specific middleware,
 - **Activation validation:** Activating a workflow (`PATCH /{id}/activate`) does **not** validate that steps/approvers exist. A workflow with no steps can be activated.
 - **Step order uniqueness:** Enforced by a DB unique constraint on `(workflow_definition_id, step_order)`. The service does not pre-check for duplicates — a raw DB integrity error would surface if violated.
 - **Step ordering in detail response:** `GET /api/v1/workflows/{id}` returns steps in DB fetch order, not explicitly sorted by `step_order`. For deterministic ordering, add `.order_by(WorkflowStep.step_order)` to the query.
+- **Company scoping:** `company_id` is nullable on `WorkflowDefinition`. ADMIN creates workflows auto-scoped to their company. SUPERADMIN can see any company's workflows but cannot mutate. Existing definitions with `company_id=NULL` are visible to SUPERADMIN only.
