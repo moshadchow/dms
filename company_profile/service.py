@@ -110,6 +110,7 @@ class CompanyService:
         AuditService(self.session).log_event(
             action=AuditAction.CREATE_COMPANY,
             module=AuditModule.COMPANIES,
+            company_id=company.id,
             entity_name="company",
             entity_id=str(company.id),
             new_value={"company_id": data.company_id, "full_name": data.full_name},
@@ -177,6 +178,7 @@ class CompanyService:
         AuditService(self.session).log_event(
             action=AuditAction.UPDATE_COMPANY,
             module=AuditModule.COMPANIES,
+            company_id=company.id,
             entity_name="company",
             entity_id=str(company_id),
             old_value=old_values,
@@ -204,6 +206,7 @@ class CompanyService:
         AuditService(self.session).log_event(
             action=AuditAction.ACTIVATE_COMPANY,
             module=AuditModule.COMPANIES,
+            company_id=company.id,
             entity_name="company",
             entity_id=str(company_id),
             old_value={"is_active": False},
@@ -231,6 +234,7 @@ class CompanyService:
         AuditService(self.session).log_event(
             action=AuditAction.DEACTIVATE_COMPANY,
             module=AuditModule.COMPANIES,
+            company_id=company.id,
             entity_name="company",
             entity_id=str(company_id),
             old_value={"is_active": True},

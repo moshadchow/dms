@@ -30,6 +30,12 @@ export default function Sidebar({ isOpen }: Props) {
 
   // Load categories whenever categoriesVersion bumps
   useEffect(() => {
+    // SUPERADMIN has no access to categories
+    if (isSuperAdmin()) {
+      setCategories([])
+      setLoadingCats(false)
+      return
+    }
     setLoadingCats(true)
     // Match dashboard: admins see inactive categories too
     categoriesApi.list(isAdmin())
@@ -37,7 +43,7 @@ export default function Sidebar({ isOpen }: Props) {
       .catch(() => toast.error('Failed to load categories'))
       .finally(() => setLoadingCats(false))
     refreshPendingCount()
-  }, [categoriesVersion, user?.id])  // re-fetch when user profile loads
+  }, [categoriesVersion, user?.id, isAdmin, isSuperAdmin])  // re-fetch when user profile loads
 
   const handleCategoryClick = (cat: Category) => {
     setSelectedCategory(cat.id)

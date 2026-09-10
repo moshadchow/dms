@@ -24,6 +24,7 @@ class AuditRepository:
         limit: int = 50,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
+        company_id: Optional[int] = None,
         user_id: Optional[int] = None,
         module: Optional[str] = None,
         action: Optional[str] = None,
@@ -39,6 +40,9 @@ class AuditRepository:
         sort_order: str = "desc",
     ) -> AuditLogListResponse:
         query = select(AuditLog)
+
+        if company_id is not None:
+            query = query.where(AuditLog.company_id == company_id)
 
         if start_date is not None:
             query = query.where(AuditLog.timestamp >= start_date)

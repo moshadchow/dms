@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from categories.models import Category
 from directories.models import Directory
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink
-from users.models import User, UserCategoryLink
+from users.models import RoleName, User, UserCategoryLink
 
 
 def ensure_category_access(
@@ -13,7 +13,19 @@ def ensure_category_access(
     category_id: int,
 ) -> Category:
     if user.is_admin():
-        category = session.get(Category, category_id)
+        # SUPERADMIN has no access to categories
+        if any(r.name == RoleName.SUPERADMIN for r in user.roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot access categories",
+            )
+        # ADMIN: scope to own company
+        category = session.exec(
+            select(Category).where(
+                Category.id == category_id,
+                Category.company_id == user.company_id,
+            )
+        ).first()
         if not category:
             raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
         return category

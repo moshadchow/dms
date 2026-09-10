@@ -95,3 +95,21 @@ def require_superadmin(current_user: CurrentUser) -> User:
 
 
 SuperAdminUser = Annotated[User, Depends(require_superadmin)]
+
+
+def require_admin_only(current_user: CurrentUser) -> User:
+    """Allow ADMIN but reject SUPERADMIN. Used for category endpoints."""
+    if not current_user.is_admin():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    if any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super Admin cannot access categories",
+        )
+    return current_user
+
+
+AdminOnlyUser = Annotated[User, Depends(require_admin_only)]

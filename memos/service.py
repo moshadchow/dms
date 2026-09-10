@@ -403,12 +403,14 @@ class MemoService:
         *,
         old_value: Optional[dict] = None,
         new_value: Optional[dict] = None,
+        company_id: Optional[int] = None,
     ) -> None:
         try:
             svc = AuditService(self.session)
             svc.log_event(
                 action=action,
                 module=AuditModule.DOCUMENTS,
+                company_id=company_id,
                 entity_name="memo",
                 entity_id=str(memo.id),
                 old_value=old_value,
@@ -477,6 +479,7 @@ class MemoService:
             f"Created memo '{memo.subject}'",
             current_user,
             new_value={"subject": memo.subject, "document_id": memo.document_id},
+            company_id=current_user.company_id,
         )
 
         # Reload for eager relationships
@@ -598,6 +601,7 @@ class MemoService:
                 "subject": memo.subject,
                 "author_signature_id": memo.author_signature_id,
             },
+            company_id=current_user.company_id,
         )
 
         memo = self._get_memo_or_404(memo.id)
@@ -644,6 +648,7 @@ class MemoService:
                 "workflow_definition_id": data.workflow_definition_id,
                 "signature_id": data.signature_id,
             },
+            company_id=current_user.company_id,
         )
 
         memo = self._get_memo_or_404(memo.id)
@@ -775,6 +780,7 @@ class MemoService:
             memo,
             f"Downloaded final draft of memo '{memo.subject}'",
             current_user,
+            company_id=current_user.company_id,
         )
 
         return output_path

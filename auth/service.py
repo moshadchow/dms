@@ -30,6 +30,7 @@ class AuthService:
             AuditService(self.session).log_event(
                 action=AuditAction.FAILED_LOGIN,
                 module=AuditModule.AUTH,
+                company_id=user.company_id if user else None,
                 entity_name="user",
                 entity_id=str(user.id) if user else None,
                 description=f"Failed login attempt for {email}",
@@ -46,6 +47,7 @@ class AuthService:
         AuditService(self.session).log_event(
             action=AuditAction.LOGIN,
             module=AuditModule.AUTH,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user.id),
             description=f"Local login successful for {email}",
@@ -107,6 +109,7 @@ class AuthService:
         AuditService(self.session).log_event(
             action=AuditAction.PASSWORD_CHANGED,
             module=AuditModule.AUTH,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user.id),
             description="Password changed successfully",

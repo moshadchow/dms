@@ -82,6 +82,7 @@ class AuditService:
         *,
         action: AuditAction,
         module: AuditModule,
+        company_id: Optional[int] = None,
         entity_name: Optional[str] = None,
         entity_id: Optional[str] = None,
         old_value: Optional[dict] = None,
@@ -123,6 +124,7 @@ class AuditService:
                     user_level = ul.name
 
             event = AuditLog(
+                company_id=company_id,
                 user_id=user_id,
                 username=username,
                 full_name=full_name,

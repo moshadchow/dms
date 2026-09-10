@@ -34,6 +34,12 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null)
 
   const loadCategories = useCallback(async () => {
+    // SUPERADMIN has no access to categories — skip API call
+    if (isSuperAdmin) {
+      setCategories([])
+      setLoadingCategories(false)
+      return
+    }
     setLoadingCategories(true)
     try {
       const data = await categoriesApi.list(true)
@@ -43,7 +49,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
     } finally {
       setLoadingCategories(false)
     }
-  }, [])
+  }, [isSuperAdmin])
 
   const loadUsers = useCallback(async (search = '') => {
     setLoadingUsers(true)

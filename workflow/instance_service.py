@@ -134,12 +134,14 @@ class WorkflowInstanceService:
         *,
         old_value: Optional[dict] = None,
         new_value: Optional[dict] = None,
+        company_id: Optional[int] = None,
     ) -> None:
         try:
             svc = AuditService(self.session)
             svc.log_event(
                 action=action,
                 module=AuditModule.WORKFLOW,
+                company_id=company_id,
                 entity_name="workflow_instance",
                 entity_id=str(instance.id),
                 old_value=old_value,
@@ -251,6 +253,7 @@ class WorkflowInstanceService:
             instance,
             f"Submitted document {data.document_id} for approval via workflow '{wf_def.name}'",
             new_value={"document_id": data.document_id, "workflow_name": wf_def.name},
+            company_id=wf_def.company_id,
         )
 
         # Enqueue email notification for submission
@@ -393,6 +396,7 @@ class WorkflowInstanceService:
             svc.log_event(
                 action=AuditAction.CANCEL_WORKFLOW,
                 module=AuditModule.WORKFLOW,
+                company_id=instance.workflow_definition.company_id if instance.workflow_definition else None,
                 entity_name="workflow_instance",
                 entity_id=str(instance.id),
                 new_value={"status": "cancelled"},

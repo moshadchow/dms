@@ -3,6 +3,8 @@ export interface Category {
   name: string
   description: string | null
   is_active: boolean
+  company_id: number
+  created_by: number | null
   created_at: string
   updated_at: string
   directory_count: number

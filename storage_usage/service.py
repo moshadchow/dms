@@ -31,12 +31,26 @@ def _get_capacity_bytes(session: Session) -> int:
     return DEFAULT_CAPACITY_GB * 1024 ** 3
 
 
-def _get_db_usage(session: Session) -> Tuple[int, List[Dict]]:
+def _get_db_usage(session: Session, company_id: int = None) -> Tuple[int, List[Dict]]:
     """Aggregate file_size from the documents table, grouped by category.
 
     Returns (total_bytes, [{category_id, category_name, total_size, document_count}])
     Only includes categories that still exist in the categories table.
+    If company_id is provided, only includes categories belonging to that company.
     """
+    # If company_id is given, first get valid category IDs for that company
+    if company_id is not None:
+        company_cat_ids = [
+            c.id for c in session.exec(
+                select(Category).where(Category.company_id == company_id)
+            ).all()
+        ]
+        if not company_cat_ids:
+            return 0, []
+        cat_filter = col(Directory.category_id).in_(company_cat_ids)
+    else:
+        cat_filter = True
+
     rows = (
         session.exec(
             select(
@@ -47,6 +61,7 @@ def _get_db_usage(session: Session) -> Tuple[int, List[Dict]]:
             .join(Directory, Document.directory_id == Directory.id)
             .where(
                 Document.status != DocumentStatus.DELETED,
+                cat_filter,
             )
             .group_by(Directory.category_id)
         )
@@ -120,11 +135,27 @@ def _get_disk_usage() -> Tuple[int, Dict[int, int]]:
     return total, by_category
 
 
-def get_storage_usage(session: Session) -> StorageUsageResponse:
-    """Compute and return full storage usage stats."""
+def get_storage_usage(session: Session, company_id: int = None) -> StorageUsageResponse:
+    """Compute and return full storage usage stats.
+    
+    If company_id is provided, only includes categories belonging to that company.
+    """
     capacity = _get_capacity_bytes(session)
-    db_total, db_categories = _get_db_usage(session)
-    disk_total, disk_by_cat = _get_disk_usage()
+    db_total, db_categories = _get_db_usage(session, company_id)
+    disk_total_raw, disk_by_cat = _get_disk_usage()
+
+    # If company scoped, filter disk results to company's categories only
+    if company_id is not None:
+        company_cat_ids = set(
+            c.id for c in session.exec(
+                select(Category).where(Category.company_id == company_id)
+            ).all()
+        )
+        disk_by_cat = {cid: size for cid, size in disk_by_cat.items() if cid in company_cat_ids}
+        disk_total = sum(disk_by_cat.values())
+    else:
+        disk_total = disk_total_raw
+        company_cat_ids = None
 
     # Use the best available measurement for total used storage.
     # disk_total is preferred (actual filesystem), but if the disk walk
@@ -150,8 +181,11 @@ def get_storage_usage(session: Session) -> StorageUsageResponse:
     # Add disk-only categories that exist in the categories table
     orphan_disk_ids = [cid for cid in disk_by_cat if cid not in all_cat_ids]
     if orphan_disk_ids:
+        cat_filter = col(Category.id).in_(orphan_disk_ids)
+        if company_cat_ids is not None:
+            cat_filter = cat_filter & (Category.company_id == company_id)
         cat_rows = session.exec(
-            select(Category).where(col(Category.id).in_(orphan_disk_ids))
+            select(Category).where(cat_filter)
         ).all()
         valid_names = {c.id: c.name for c in cat_rows}
         for cid in orphan_disk_ids:

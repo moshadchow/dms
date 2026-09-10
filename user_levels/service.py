@@ -54,6 +54,7 @@ class UserLevelService:
         AuditService(self.session).log_event(
             action=AuditAction.CREATE_USER_LEVEL,
             module=AuditModule.USER_LEVELS,
+            company_id=None,
             entity_name="user_level",
             entity_id=str(level.id),
             new_value={"name": data.name},
@@ -90,6 +91,7 @@ class UserLevelService:
         AuditService(self.session).log_event(
             action=AuditAction.UPDATE_USER_LEVEL,
             module=AuditModule.USER_LEVELS,
+            company_id=None,
             entity_name="user_level",
             entity_id=str(level_id),
             old_value=old_values,
@@ -119,6 +121,7 @@ class UserLevelService:
         AuditService(self.session).log_event(
             action=AuditAction.DELETE_USER_LEVEL,
             module=AuditModule.USER_LEVELS,
+            company_id=None,
             entity_name="user_level",
             entity_id=str(level_id),
             old_value={"name": level_name},

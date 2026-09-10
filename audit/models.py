@@ -109,6 +109,7 @@ class AuditLog(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     user_id: Optional[int] = Field(default=None, index=True)
     username: Optional[str] = Field(default=None, max_length=255)
     full_name: Optional[str] = Field(default=None, max_length=150)
@@ -143,6 +144,7 @@ class AuditLog(SQLModel, table=True):
 class AuditLogRead(SQLModel):
     id: int
     timestamp: datetime
+    company_id: Optional[int] = None
     user_id: Optional[int] = None
     username: Optional[str] = None
     full_name: Optional[str] = None

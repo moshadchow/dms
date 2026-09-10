@@ -131,6 +131,7 @@ class DirectoryService:
         AuditService(self.session).log_event(
             action=AuditAction.CREATE_DIRECTORY,
             module=AuditModule.DIRECTORIES,
+            company_id=current_user.company_id,
             entity_name="directory",
             entity_id=str(directory.id),
             new_value={"name": data.name, "category_id": data.category_id},
@@ -156,6 +157,7 @@ class DirectoryService:
         AuditService(self.session).log_event(
             action=AuditAction.RENAME_DIRECTORY,
             module=AuditModule.DIRECTORIES,
+            company_id=current_user.company_id,
             entity_name="directory",
             entity_id=str(directory_id),
             old_value=old_values,
@@ -214,6 +216,7 @@ class DirectoryService:
         AuditService(self.session).log_event(
             action=AuditAction.DELETE_DIRECTORY,
             module=AuditModule.DIRECTORIES,
+            company_id=current_user.company_id,
             entity_name="directory",
             entity_id=str(directory_id),
             old_value={"name": dir_name},

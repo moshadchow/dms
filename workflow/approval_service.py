@@ -37,12 +37,15 @@ class ApprovalActionService:
         instance: WorkflowInstance,
         action: ApprovalAction,
         description: str,
+        *,
+        company_id: Optional[int] = None,
     ) -> None:
         try:
             svc = AuditService(self.session)
             svc.log_event(
                 action=audit_action,
                 module=AuditModule.WORKFLOW,
+                company_id=company_id,
                 entity_name="workflow_instance",
                 entity_id=str(instance.id),
                 new_value={"action": action.value, "status": instance.status.value},
@@ -246,6 +249,7 @@ class ApprovalActionService:
             instance,
             data.action,
             f"User {current_user.id} performed '{data.action.value}' on instance {instance.id}",
+            company_id=instance.workflow_definition.company_id if instance.workflow_definition else None,
         )
 
         self.session.commit()

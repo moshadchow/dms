@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, func, select
@@ -10,7 +10,7 @@ from categories.models import Category, CategoryCreate, CategoryReadWithStats, C
 from core.access import ensure_category_access
 from directories.models import Directory
 from documents.models import Document, DocumentStatus
-from users.models import User, UserCategoryLink
+from users.models import RoleName, User, UserCategoryLink
 
 
 class CategoryService:
@@ -22,9 +22,15 @@ class CategoryService:
         current_user: User,
         include_inactive: bool = False,
     ) -> List[CategoryReadWithStats]:
+        # SUPERADMIN has no access to categories
+        if any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+            return []
+
         query = select(Category)
 
         if current_user.is_admin():
+            # ADMIN: scope to own company
+            query = query.where(Category.company_id == current_user.company_id)
             if not include_inactive:
                 query = query.where(Category.is_active == True)
         else:
@@ -62,16 +68,31 @@ class CategoryService:
     def get_category(self, category_id: int, current_user: User) -> Category:
         return ensure_category_access(self.session, current_user, category_id)
 
-    def create_category(self, data: CategoryCreate) -> Category:
+    def create_category(self, data: CategoryCreate, current_user: User) -> Category:
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin must belong to a company to create categories",
+            )
+
+        # Check for duplicate name within the same company
         exists = self.session.exec(
-            select(Category).where(Category.name == data.name)
+            select(Category).where(
+                Category.name == data.name,
+                Category.company_id == current_user.company_id,
+            )
         ).first()
         if exists:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Category '{data.name}' already exists",
+                detail=f"Category '{data.name}' already exists in your company",
             )
-        cat = Category(**data.model_dump())
+
+        cat = Category(
+            **data.model_dump(),
+            company_id=current_user.company_id,
+            created_by=current_user.id,
+        )
         self.session.add(cat)
         self.session.commit()
         self.session.refresh(cat)
@@ -79,6 +100,7 @@ class CategoryService:
         AuditService(self.session).log_event(
             action=AuditAction.CREATE_CATEGORY,
             module=AuditModule.CATEGORIES,
+            company_id=current_user.company_id,
             entity_name="category",
             entity_id=str(cat.id),
             new_value={"name": data.name},
@@ -88,10 +110,34 @@ class CategoryService:
 
         return cat
 
-    def update_category(self, category_id: int, data: CategoryUpdate) -> Category:
+    def update_category(self, category_id: int, data: CategoryUpdate, current_user: User) -> Category:
         cat = self._get_category_or_404(category_id)
+
+        # Enforce company ownership
+        if cat.company_id != current_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Category belongs to another company",
+            )
+
         old_values = {"name": cat.name, "description": cat.description, "is_active": cat.is_active}
         updates = data.model_dump(exclude_unset=True)
+
+        # Check name uniqueness within company if renaming
+        if "name" in updates and updates["name"] != cat.name:
+            dup = self.session.exec(
+                select(Category).where(
+                    Category.name == updates["name"],
+                    Category.company_id == current_user.company_id,
+                    Category.id != category_id,
+                )
+            ).first()
+            if dup:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Category '{updates['name']}' already exists in your company",
+                )
+
         for field, value in updates.items():
             setattr(cat, field, value)
         cat.updated_at = datetime.utcnow()
@@ -102,6 +148,7 @@ class CategoryService:
         AuditService(self.session).log_event(
             action=AuditAction.UPDATE_CATEGORY,
             module=AuditModule.CATEGORIES,
+            company_id=current_user.company_id,
             entity_name="category",
             entity_id=str(category_id),
             old_value=old_values,
@@ -112,8 +159,16 @@ class CategoryService:
 
         return cat
 
-    def delete_category(self, category_id: int) -> None:
+    def delete_category(self, category_id: int, current_user: User) -> None:
         cat = self._get_category_or_404(category_id)
+
+        # Enforce company ownership
+        if cat.company_id != current_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Category belongs to another company",
+            )
+
         # Check for existing directories before hard delete
         dirs = self.session.exec(
             select(Directory).where(Directory.category_id == category_id).limit(1)
@@ -130,6 +185,7 @@ class CategoryService:
         AuditService(self.session).log_event(
             action=AuditAction.DELETE_CATEGORY,
             module=AuditModule.CATEGORIES,
+            company_id=current_user.company_id,
             entity_name="category",
             entity_id=str(category_id),
             old_value={"name": cat_name},

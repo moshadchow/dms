@@ -234,6 +234,7 @@ class DocumentService:
         AuditService(self.session).log_event(
             action=AuditAction.UPLOAD_DOCUMENT,
             module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(doc.id),
             new_value={"title": title, "file_name": file.filename},
@@ -263,6 +264,7 @@ class DocumentService:
         AuditService(self.session).log_event(
             action=AuditAction.UPDATE_DOCUMENT,
             module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(document_id),
             old_value=old_values,
@@ -290,6 +292,7 @@ class DocumentService:
         AuditService(self.session).log_event(
             action=AuditAction.ARCHIVE_DOCUMENT,
             module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(document_id),
             old_value={"status": "active"},
@@ -314,6 +317,7 @@ class DocumentService:
         AuditService(self.session).log_event(
             action=AuditAction.RESTORE_DOCUMENT,
             module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(document_id),
             old_value={"status": old_status},
@@ -359,6 +363,7 @@ class DocumentService:
         AuditService(self.session).log_event(
             action=AuditAction.DELETE_DOCUMENT,
             module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(document_id),
             old_value=old_values,

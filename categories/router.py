@@ -6,7 +6,7 @@ from sqlmodel import Session
 from categories.models import CategoryCreate, CategoryRead, CategoryReadWithStats, CategoryUpdate
 from categories.service import CategoryService
 from core.database import get_session
-from core.dependencies import AdminUser, CurrentUser
+from core.dependencies import AdminOnlyUser, CurrentUser
 
 router = APIRouter()
 
@@ -28,11 +28,11 @@ def list_categories(
     summary="Create category (Admin only)",
 )
 def create_category(
-    payload: CategoryCreate,
-    _:       AdminUser = None,
-    session: Session   = Depends(get_session),
+    payload:      CategoryCreate,
+    current_user: AdminOnlyUser = None,
+    session:      Session       = Depends(get_session),
 ):
-    return CategoryService(session).create_category(payload)
+    return CategoryService(session).create_category(payload, current_user)
 
 
 @router.get("/{category_id}", response_model=CategoryRead, summary="Get category by ID")
@@ -50,12 +50,12 @@ def get_category(
     summary="Update category (Admin only)",
 )
 def update_category(
-    category_id: int,
-    payload:     CategoryUpdate,
-    _:           AdminUser = None,
-    session:     Session   = Depends(get_session),
+    category_id:  int,
+    payload:      CategoryUpdate,
+    current_user: AdminOnlyUser = None,
+    session:      Session       = Depends(get_session),
 ):
-    return CategoryService(session).update_category(category_id, payload)
+    return CategoryService(session).update_category(category_id, payload, current_user)
 
 
 @router.delete(
@@ -64,8 +64,8 @@ def update_category(
     summary="Delete category (Admin only)",
 )
 def delete_category(
-    category_id: int,
-    _:           AdminUser = None,
-    session:     Session   = Depends(get_session),
+    category_id:  int,
+    current_user: AdminOnlyUser = None,
+    session:      Session       = Depends(get_session),
 ):
-    CategoryService(session).delete_category(category_id)
+    CategoryService(session).delete_category(category_id, current_user)

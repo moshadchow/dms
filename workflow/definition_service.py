@@ -135,12 +135,14 @@ class WorkflowDefinitionService:
         *,
         old_value: Optional[dict] = None,
         new_value: Optional[dict] = None,
+        company_id: Optional[int] = None,
     ) -> None:
         try:
             svc = AuditService(self.session)
             svc.log_event(
                 action=action,
                 module=AuditModule.WORKFLOW,
+                company_id=company_id,
                 entity_name="workflow_definition",
                 entity_id=str(definition.id),
                 old_value=old_value,
@@ -223,6 +225,7 @@ class WorkflowDefinitionService:
             wf,
             f"Created workflow '{wf.name}' with {len(data.steps)} step(s)",
             new_value={"name": wf.name, "steps": len(data.steps)},
+            company_id=wf.company_id,
         )
 
         return self._to_read(wf)
@@ -389,6 +392,7 @@ class WorkflowDefinitionService:
             f"Updated workflow '{wf.name}'",
             old_value=old_value,
             new_value=new_value,
+            company_id=wf.company_id,
         )
 
         return self._to_read(wf)
@@ -415,6 +419,7 @@ class WorkflowDefinitionService:
             f"Deactivated workflow '{wf.name}'",
             old_value=old_value,
             new_value={"is_active": False},
+            company_id=wf.company_id,
         )
 
         return self._to_read(wf)
@@ -441,6 +446,7 @@ class WorkflowDefinitionService:
             f"Activated workflow '{wf.name}'",
             old_value=old_value,
             new_value={"is_active": True},
+            company_id=wf.company_id,
         )
 
         return self._to_read(wf)

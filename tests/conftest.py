@@ -165,6 +165,16 @@ def seeded_data(client):
         session.add(test_company)
         session.flush()
 
+        # Create a second company for cross-company testing
+        other_company = Company(
+            company_id="OTHER-CO-002",
+            full_name="Other Company",
+            short_name="OTHERCO",
+            is_active=True,
+        )
+        session.add(other_company)
+        session.flush()
+
         # Assign company to admin user
         admin.company_id = test_company.id
         session.add(admin)
@@ -173,12 +183,60 @@ def seeded_data(client):
         session.add(maker)
         session.flush()
 
-        finance = Category(name="Finance", description="Finance docs", is_active=True)
-        hr = Category(name="HR", description="HR docs", is_active=True)
-        legal = Category(name="Legal", description="Legal docs", is_active=False)
+        # Create second admin for cross-company testing
+        other_admin = User(
+            full_name="Other Admin",
+            email="other_admin@example.com",
+            hashed_password=hash_password("OtherAdmin@1234"),
+            is_active=True,
+            user_level_id=high_level.id,
+            company_id=other_company.id,
+        )
+        session.add(other_admin)
+        session.flush()
+        session.add(UserRoleLink(user_id=other_admin.id, role_id=admin_role.id))
+
+        finance = Category(
+            name="Finance",
+            description="Finance docs",
+            is_active=True,
+            company_id=test_company.id,
+            created_by=admin.id,
+        )
+        hr = Category(
+            name="HR",
+            description="HR docs",
+            is_active=True,
+            company_id=test_company.id,
+            created_by=admin.id,
+        )
+        legal = Category(
+            name="Legal",
+            description="Legal docs",
+            is_active=False,
+            company_id=test_company.id,
+            created_by=admin.id,
+        )
+        # Categories for the other company
+        marketing = Category(
+            name="Marketing",
+            description="Marketing docs",
+            is_active=True,
+            company_id=other_company.id,
+            created_by=other_admin.id,
+        )
+        operations = Category(
+            name="Operations",
+            description="Operations docs",
+            is_active=True,
+            company_id=other_company.id,
+            created_by=other_admin.id,
+        )
         session.add(finance)
         session.add(hr)
         session.add(legal)
+        session.add(marketing)
+        session.add(operations)
         session.flush()
 
         session.add(UserCategoryLink(user_id=maker.id, category_id=finance.id))
@@ -247,9 +305,12 @@ def seeded_data(client):
             "admin_id": admin.id,
             "maker_id": maker.id,
             "superadmin_id": superadmin.id,
+            "other_admin_id": other_admin.id,
             "finance_category_id": finance.id,
             "hr_category_id": hr.id,
             "legal_category_id": legal.id,
+            "marketing_category_id": marketing.id,
+            "operations_category_id": operations.id,
             "finance_directory_id": finance_dir.id,
             "hr_directory_id": hr_dir.id,
             "finance_document_id": finance_doc.id,
@@ -258,6 +319,7 @@ def seeded_data(client):
             "medium_level_id": medium_level.id,
             "low_level_id": low_level.id,
             "company_id": test_company.id,
+            "other_company_id": other_company.id,
         }
 
 
@@ -267,4 +329,5 @@ def auth_headers(seeded_data):
         "admin": {"Authorization": f"Bearer {create_access_token(seeded_data['admin_id'])}"},
         "maker": {"Authorization": f"Bearer {create_access_token(seeded_data['maker_id'])}"},
         "superadmin": {"Authorization": f"Bearer {create_access_token(seeded_data['superadmin_id'])}"},
+        "other_admin": {"Authorization": f"Bearer {create_access_token(seeded_data['other_admin_id'])}"},
     }

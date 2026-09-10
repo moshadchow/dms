@@ -279,6 +279,7 @@ def resolve_azure_user(
         AuditService(session).log_event(
             action=AuditAction.LOGIN,
             module=AuditModule.AUTH,
+            company_id=existing.company_id,
             description=f"Azure login success: {email}",
             ip_address=ip_address,
             user=existing,
@@ -307,6 +308,7 @@ def resolve_azure_user(
         AuditService(session).log_event(
             action=AuditAction.LOGIN,
             module=AuditModule.AUTH,
+            company_id=existing.company_id,
             description=f"Linked Azure identity to existing local account: {email}",
             ip_address=ip_address,
             user=existing,
@@ -347,6 +349,7 @@ def resolve_azure_user(
     AuditService(session).log_event(
         action=AuditAction.CREATE_USER,
         module=AuditModule.AUTH,
+        company_id=new_user.company_id,
         description=f"JIT provisioned Azure user: {email} with role: {role.name.value if role else 'none'}",
         ip_address=ip_address,
         user=new_user,

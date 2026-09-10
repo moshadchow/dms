@@ -14,7 +14,7 @@ import type { RoleName } from '@/types/user.types'
 
 export default function DashboardPage() {
   const navigate  = useNavigate()
-  const { user, isAdmin } = useAuthStore()
+  const { user, isAdmin, isSuperAdmin } = useAuthStore()
   const { setSelectedCategory, refreshCategories } = useDirectoryStore()
 
   const [categories, setCategories] = useState<Category[]>([])
@@ -27,6 +27,12 @@ export default function DashboardPage() {
   const primaryRole = user?.roles[0]
 
   const loadCategories = useCallback(async () => {
+    // SUPERADMIN has no access to categories
+    if (isSuperAdmin()) {
+      setCategories([])
+      setLoading(false)
+      return
+    }
     try {
       const data = await categoriesApi.list(isAdmin())
       setCategories(data)
@@ -35,7 +41,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }, [isAdmin])
+  }, [isAdmin, isSuperAdmin])
 
   useEffect(() => { loadCategories() }, [loadCategories])
 
@@ -99,7 +105,7 @@ export default function DashboardPage() {
               {ROLE_LABELS[primaryRole.name as RoleName] ?? primaryRole.name}
             </span>
           )}
-          {isAdmin() && (
+          {isAdmin() && !isSuperAdmin() && (
             <button
               className="btn btn-primary"
               onClick={() => { setEditing(null); setFormOpen(true) }}
@@ -150,8 +156,10 @@ export default function DashboardPage() {
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" style={{ margin: '0 auto 1rem' }}>
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
           </svg>
-          <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>No categories yet</p>
-          {isAdmin() && (
+          <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>
+            {isSuperAdmin() ? 'Categories are managed by company administrators' : 'No categories yet'}
+          </p>
+          {isAdmin() && !isSuperAdmin() && (
             <button
               className="btn btn-primary"
               onClick={() => { setEditing(null); setFormOpen(true) }}

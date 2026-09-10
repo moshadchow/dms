@@ -3,7 +3,7 @@ import io
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session
 
@@ -11,9 +11,28 @@ from audit.models import AuditLogListResponse, AuditLogRead
 from audit.repository import AuditRepository
 from audit.service import AuditService
 from core.database import get_session
-from core.dependencies import AdminUser
+from core.dependencies import CurrentUser
 
 router = APIRouter()
+
+
+def _require_admin(current_user: CurrentUser) -> None:
+    """Raise 403 if user is not admin or superadmin."""
+    if not current_user.is_admin():
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def _resolve_company_id(
+    current_user: CurrentUser,
+    company_id: Optional[int] = None,
+) -> Optional[int]:
+    """Resolve company_id based on role. Admin is auto-scoped; superadmin can filter."""
+    user_roles = [r.name.value if hasattr(r.name, "value") else str(r.name) for r in current_user.roles]
+    is_superadmin = "superadmin" in user_roles
+
+    if is_superadmin:
+        return company_id
+    return getattr(current_user, "company_id", None)
 
 
 @router.get("", response_model=AuditLogListResponse, summary="List audit logs (Admin only)")
@@ -22,6 +41,7 @@ def list_audit_logs(
     limit:     int            = Query(50, ge=1, le=200),
     start_date: Optional[datetime] = Query(None, description="Filter from date (UTC)"),
     end_date:   Optional[datetime] = Query(None, description="Filter to date (UTC)"),
+    company_id: Optional[int]  = Query(None, description="Filter by company ID (superadmin only)"),
     user_id:    Optional[int]  = Query(None, description="Filter by user ID"),
     module:     Optional[str]  = Query(None, description="Filter by module"),
     action:     Optional[str]  = Query(None, description="Filter by action"),
@@ -35,15 +55,25 @@ def list_audit_logs(
     search:     Optional[str]  = Query(None, description="Keyword search"),
     sort_by:    str            = Query("timestamp", description="Sort field"),
     sort_order: str            = Query("desc", description="Sort order: asc or desc"),
-    _:          AdminUser      = None,
+    current_user: CurrentUser  = None,
     session:    Session        = Depends(get_session),
 ):
+    _require_admin(current_user)
+    resolved_company_id = _resolve_company_id(current_user, company_id)
+
+    # SuperAdmin must select a company to see records
+    user_roles = [r.name.value if hasattr(r.name, "value") else str(r.name) for r in current_user.roles]
+    is_superadmin = "superadmin" in user_roles
+    if is_superadmin and resolved_company_id is None:
+        return AuditLogListResponse(total=0, page=1, limit=limit, items=[])
+
     repo = AuditRepository(session)
     return repo.list_logs(
         skip=skip,
         limit=limit,
         start_date=start_date,
         end_date=end_date,
+        company_id=resolved_company_id,
         user_id=user_id,
         module=module,
         action=action,
@@ -60,24 +90,11 @@ def list_audit_logs(
     )
 
 
-@router.get("/{audit_id}", response_model=AuditLogRead, summary="Get audit log detail (Admin only)")
-def get_audit_log(
-    audit_id: int,
-    _:        AdminUser = None,
-    session:  Session   = Depends(get_session),
-):
-    repo = AuditRepository(session)
-    log = repo.get_by_id(audit_id)
-    if not log:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"Audit log {audit_id} not found")
-    return AuditLogRead.model_validate(log)
-
-
 @router.get("/export", summary="Export audit logs as CSV (Admin only)")
 def export_audit_logs(
     start_date: Optional[datetime] = Query(None),
     end_date:   Optional[datetime] = Query(None),
+    company_id: Optional[int]      = Query(None),
     user_id:    Optional[int]      = Query(None),
     module:     Optional[str]      = Query(None),
     action:     Optional[str]      = Query(None),
@@ -91,13 +108,38 @@ def export_audit_logs(
     search:     Optional[str]      = Query(None),
     sort_by:    str                = Query("timestamp"),
     sort_order: str                = Query("desc"),
-    _:          AdminUser          = None,
+    current_user: CurrentUser      = None,
     session:    Session            = Depends(get_session),
 ):
+    _require_admin(current_user)
+    resolved_company_id = _resolve_company_id(current_user, company_id)
+
+    # SuperAdmin must select a company to export records
+    user_roles = [r.name.value if hasattr(r.name, "value") else str(r.name) for r in current_user.roles]
+    is_superadmin = "superadmin" in user_roles
+    if is_superadmin and resolved_company_id is None:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "ID", "Timestamp", "Company ID", "User ID", "Username", "Full Name",
+            "Auth Provider", "Role", "User Level", "Module", "Entity Name",
+            "Entity ID", "Action", "Old Value", "New Value", "Description",
+            "IP Address", "Browser", "Operating System", "Device", "Request URL",
+            "HTTP Method", "HTTP Status", "Session ID", "Correlation ID",
+            "Success", "Failure Reason",
+        ])
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit-logs.csv"},
+        )
+
     repo = AuditRepository(session)
     result = repo.list_logs(
         skip=0, limit=10000,
         start_date=start_date, end_date=end_date,
+        company_id=resolved_company_id,
         user_id=user_id, module=module, action=action,
         entity_name=entity_name, entity_id=entity_id,
         role=role, user_level=user_level, auth_provider=auth_provider,
@@ -108,20 +150,21 @@ def export_audit_logs(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "ID", "Timestamp", "User ID", "Username", "Full Name", "Auth Provider",
-        "Role", "User Level", "Module", "Entity Name", "Entity ID", "Action",
-        "Old Value", "New Value", "Description", "IP Address", "Browser",
-        "Operating System", "Device", "Request URL", "HTTP Method", "HTTP Status",
-        "Session ID", "Correlation ID", "Success", "Failure Reason",
+        "ID", "Timestamp", "Company ID", "User ID", "Username", "Full Name",
+        "Auth Provider", "Role", "User Level", "Module", "Entity Name",
+        "Entity ID", "Action", "Old Value", "New Value", "Description",
+        "IP Address", "Browser", "Operating System", "Device", "Request URL",
+        "HTTP Method", "HTTP Status", "Session ID", "Correlation ID",
+        "Success", "Failure Reason",
     ])
     for log in result.items:
         writer.writerow([
-            log.id, log.timestamp, log.user_id, log.username, log.full_name,
-            log.auth_provider, log.role, log.user_level, log.module,
-            log.entity_name, log.entity_id, log.action, log.old_value,
-            log.new_value, log.description, log.ip_address, log.browser,
-            log.operating_system, log.device, log.request_url, log.http_method,
-            log.http_status, log.session_id, log.correlation_id,
+            log.id, log.timestamp, log.company_id, log.user_id, log.username,
+            log.full_name, log.auth_provider, log.role, log.user_level,
+            log.module, log.entity_name, log.entity_id, log.action,
+            log.old_value, log.new_value, log.description, log.ip_address,
+            log.browser, log.operating_system, log.device, log.request_url,
+            log.http_method, log.http_status, log.session_id, log.correlation_id,
             log.is_success, log.failure_reason,
         ])
 
@@ -131,3 +174,26 @@ def export_audit_logs(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=audit-logs.csv"},
     )
+
+
+@router.get("/{audit_id}", response_model=AuditLogRead, summary="Get audit log detail (Admin only)")
+def get_audit_log(
+    audit_id: int,
+    current_user: CurrentUser = None,
+    session:  Session   = Depends(get_session),
+):
+    _require_admin(current_user)
+    repo = AuditRepository(session)
+    log = repo.get_by_id(audit_id)
+    if not log:
+        raise HTTPException(status_code=404, detail=f"Audit log {audit_id} not found")
+
+    # Enforce company scoping: admin can only view own-company logs
+    user_roles = [r.name.value if hasattr(r.name, "value") else str(r.name) for r in current_user.roles]
+    is_superadmin = "superadmin" in user_roles
+    if not is_superadmin:
+        user_company_id = getattr(current_user, "company_id", None)
+        if log.company_id is not None and user_company_id is not None and log.company_id != user_company_id:
+            raise HTTPException(status_code=403, detail="Access denied to this audit log")
+
+    return AuditLogRead.model_validate(log)

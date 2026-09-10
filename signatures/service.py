@@ -6,7 +6,7 @@ Separated from workflow/ since it has no workflow dependencies.
 """
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import uuid
 
 from fastapi import HTTPException, UploadFile, status
@@ -44,12 +44,15 @@ class SignatureService:
         action: AuditAction,
         signature: Signature,
         description: str,
+        *,
+        company_id: Optional[int] = None,
     ) -> None:
         try:
             svc = AuditService(self.session)
             svc.log_event(
                 action=action,
                 module=AuditModule.WORKFLOW,
+                company_id=company_id,
                 entity_name="signature",
                 entity_id=str(signature.id),
                 new_value={
@@ -113,6 +116,7 @@ class SignatureService:
             AuditAction.CREATE_WORKFLOW,
             sig,
             f"User {current_user.id} uploaded {sig_type.value}",
+            company_id=current_user.company_id,
         )
 
         return self._to_read(sig)
@@ -210,6 +214,7 @@ class SignatureService:
             AuditAction.DELETE_WORKFLOW,
             sig,
             f"User {current_user.id} deleted signature {signature_id}",
+            company_id=current_user.company_id,
         )
 
         return self._to_read(sig)
@@ -308,6 +313,7 @@ class SignatureService:
             AuditAction.CREATE_WORKFLOW,
             sig,
             f"Admin {current_user.id} uploaded {sig_type.value} for user {target_user_id}",
+            company_id=current_user.company_id,
         )
 
         return self._to_read(sig)
@@ -377,6 +383,7 @@ class SignatureService:
             AuditAction.DELETE_WORKFLOW,
             sig,
             f"Admin {current_user.id} deleted signature {signature_id} for user {target_user_id}",
+            company_id=current_user.company_id,
         )
 
         return self._to_read(sig)

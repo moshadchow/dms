@@ -261,13 +261,14 @@ class UserService:
         self.session.add(user)
         self.session.flush()
         self._assign_roles(user.id, data.role_ids)
-        self._assign_categories(user.id, data.category_ids)
+        self._assign_categories(user.id, data.category_ids, current_user)
         self.session.commit()
 
         # Log audit event
         AuditService(self.session).log_event(
             action=AuditAction.CREATE_USER,
             module=AuditModule.USERS,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user.id),
             new_value={"email": data.email, "full_name": data.full_name},
@@ -335,7 +336,7 @@ class UserService:
             ).all():
                 self.session.delete(link)
             self.session.flush()
-            self._assign_categories(user_id, data.category_ids)
+            self._assign_categories(user_id, data.category_ids, current_user)
 
         if data.user_level_id is not None or (hasattr(data, 'user_level_id') and 'user_level_id' in data.model_fields_set):
             user.user_level_id = data.user_level_id
@@ -377,6 +378,7 @@ class UserService:
         AuditService(self.session).log_event(
             action=AuditAction.UPDATE_USER,
             module=AuditModule.USERS,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user_id),
             old_value=old_values,
@@ -399,6 +401,7 @@ class UserService:
         AuditService(self.session).log_event(
             action=AuditAction.DELETE_USER,
             module=AuditModule.USERS,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user_id),
             old_value={"email": email},
@@ -419,6 +422,7 @@ class UserService:
         AuditService(self.session).log_event(
             action=AuditAction.DEACTIVATE_USER,
             module=AuditModule.USERS,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user_id),
             old_value={"is_active": True},
@@ -462,6 +466,7 @@ class UserService:
         AuditService(self.session).log_event(
             action=AuditAction.PASSWORD_RESET,
             module=AuditModule.USERS,
+            company_id=user.company_id,
             entity_name="user",
             entity_id=str(user.id),
             description=f"Admin reset password for user {user.email}",
@@ -483,11 +488,19 @@ class UserService:
                 raise HTTPException(status_code=404, detail=f"Role {role_id} not found")
             self.session.add(UserRoleLink(user_id=user_id, role_id=role_id))
 
-    def _assign_categories(self, user_id: int, category_ids: List[int]) -> None:
+    def _assign_categories(self, user_id: int, category_ids: List[int], current_user: User = None) -> None:
         for category_id in category_ids:
             category = self.session.get(Category, category_id)
             if not category:
                 raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+            # Admin can only assign categories from their own company
+            if current_user is not None and current_user.is_admin():
+                is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+                if not is_superadmin and category.company_id != current_user.company_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Cannot assign categories from another company",
+                    )
             self.session.add(UserCategoryLink(user_id=user_id, category_id=category_id))
 
     # ──────────────────────────────────────────
@@ -539,6 +552,7 @@ class UserService:
         AuditService(self.session).log_event(
             action=AuditAction.CREATE_ROLE,
             module=AuditModule.USERS,
+            company_id=None,
             entity_name="role",
             entity_id=str(role.id),
             new_value={"name": data.name.value if hasattr(data.name, "value") else str(data.name)},

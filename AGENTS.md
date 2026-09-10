@@ -8,7 +8,7 @@ FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature 
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (330 tests, SQLite-in-memory)
+pytest                        # run all tests (352 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -62,11 +62,12 @@ The `memos/` module has a PDF generator (`memos/pdf_generator.py`) for final dra
 
 ## Audit Trail Module
 `audit/` records all significant user and system activities. Key details:
-- **`audit/service.py`** — `AuditService.log_event()` is the single centralized method. It uses its own `Session(engine)` to write audit logs independently of the caller's transaction, ensuring logs are committed even if the outer transaction rolls back. Never raises on failure.
-- **`middleware/audit.py`** — auto-logs auth events, security events (401/403), and document operations from HTTP requests. Registered after RBAC middleware in `main.py`.
-- **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV).
+- **`audit/service.py`** — `AuditService.log_event()` is the single centralized method. It uses its own `Session(engine)` to write audit logs independently of the caller's transaction, ensuring logs are committed even if the outer transaction rolls back. Never raises on failure. Accepts optional `company_id` parameter for company-scoped audit trails.
+- **`middleware/audit.py`** — auto-logs auth events, security events (401/403), and document operations from HTTP requests. Registered after RBAC middleware in `main.py`. Middleware events have `company_id=None` (no user context).
+- **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV). All endpoints enforce company scoping: ADMIN is auto-scoped to their company; SUPERADMIN must select a company via `company_id` query param (empty results if none selected).
+- **Company scoping**: `audit_logs.company_id` FK added via migration `c2d3e4f5a6b7`. All `log_event()` callers pass `company_id` from the acting user's company or the entity's company. Historical records are backfilled from `users.company_id`. Events from global entities (categories, user levels, roles) have `company_id=NULL`.
 - **Immutability**: no PUT/PATCH/DELETE endpoints exist for audit records. Users cannot edit or delete audit logs.
-- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py`, `company_profile/service.py` all call `AuditService.log_event()` after significant operations.
+- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py`, `company_profile/service.py`, `signatures/service.py`, `notifications/service.py`, `workflow/definition_service.py`, `workflow/instance_service.py`, `workflow/approval_service.py` all call `AuditService.log_event()` after significant operations.
 - **Legacy**: `core/audit.py` contains an old logger-based `log_audit_event` helper. It is dead code — all callers now use `AuditService`. Do not add new callers; use `AuditService` directly.
 
 ## Auth & User Injection
