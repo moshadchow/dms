@@ -37,6 +37,7 @@ def ensure_category_access(
             Category.id == category_id,
             Category.is_active == True,
             UserCategoryLink.user_id == user.id,
+            Category.company_id == user.company_id,
         )
     ).first()
     if not category:

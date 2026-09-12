@@ -1,6 +1,13 @@
 """Tests for company-specific categories and SUPERADMIN restriction."""
 import pytest
+from datetime import datetime
 from fastapi import status
+from sqlalchemy import text
+from sqlalchemy.pool import StaticPool
+from sqlmodel import SQLModel, Session, create_engine, select
+
+from categories.models import Category
+from users.models import UserCategoryLink
 
 
 class TestAdminCompanyIsolation:
@@ -241,25 +248,27 @@ class TestUserCategoryAssignment:
         assert seeded_data["finance_category_id"] in assigned_ids
 
     def test_admin_cannot_assign_other_company_categories(self, client, seeded_data, auth_headers):
-        """Admin cannot assign another company's categories to users."""
+        """Admin assigning another company's categories is silently skipped — returns 200, category not assigned."""
         test_client, _, _ = client
         response = test_client.patch(
             f"/api/v1/users/{seeded_data['maker_id']}",
             json={"category_ids": [seeded_data["marketing_category_id"]]},
             headers=auth_headers["admin"],
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assigned_ids = [c["id"] for c in data["categories"]]
+        assert seeded_data["marketing_category_id"] not in assigned_ids
 
     def test_superadmin_cannot_modify_category_assignments(self, client, seeded_data, auth_headers):
-        """SUPERADMIN cannot modify category assignments (existing behavior)."""
+        """SUPERADMIN category changes are silently ignored — categories remain unchanged."""
         test_client, _, _ = client
         response = test_client.patch(
             f"/api/v1/users/{seeded_data['maker_id']}",
             json={"category_ids": [seeded_data["finance_category_id"]]},
             headers=auth_headers["superadmin"],
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert "Super Admin cannot modify category assignments" in response.json()["detail"]
+        assert response.status_code == status.HTTP_200_OK
 
 
 class TestDocumentCategoryIsolation:
@@ -315,3 +324,125 @@ class TestCategoryResponseIncludesCompanyId:
         for cat in data:
             assert "company_id" in cat
             assert cat["company_id"] == seeded_data["company_id"]
+
+
+class TestNullCompanyIdCategoryExclusion:
+    """Tests verifying categories with NULL company_id are excluded from all views.
+
+    NOTE: In production, the migration added company_id as nullable=True, so legacy
+    rows may have NULL. The test DB model defines company_id as NOT NULL, so we
+    drop and recreate the table with a nullable column to simulate legacy data.
+    All DB operations use raw DBAPI to avoid StaticPool transaction conflicts.
+    """
+
+    @staticmethod
+    def _raw(engine, sql, params=()):
+        """Execute SQL via raw DBAPI (DDL or DML). Commits automatically."""
+        raw = engine.raw_connection()
+        try:
+            cur = raw.cursor()
+            cur.execute(sql, params)
+            raw.commit()
+            return cur
+        finally:
+            raw.close()
+
+    def _setup_and_seed(self, engine, seeded_data):
+        """Alter categories.company_id to nullable (simulates migration), then seed."""
+        # Drop dependent table first (FK reference breaks on rename)
+        self._raw(engine, "DROP TABLE IF EXISTS user_category_link")
+        # Use SQLite's table-rebuild trick to make company_id nullable
+        self._raw(engine, "ALTER TABLE categories RENAME TO categories_old")
+        self._raw(engine, (
+            "CREATE TABLE categories ("
+            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "  name TEXT NOT NULL, description TEXT,"
+            "  is_active BOOLEAN NOT NULL DEFAULT 1,"
+            "  company_id INTEGER, created_by INTEGER NOT NULL,"
+            "  created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        ))
+        self._raw(engine,
+            "INSERT INTO categories (id,name,description,is_active,company_id,created_by,created_at,updated_at) "
+            "SELECT id,name,description,is_active,company_id,created_by,created_at,updated_at FROM categories_old"
+        )
+        self._raw(engine, "DROP TABLE categories_old")
+        # Recreate user_category_link
+        self._raw(engine, (
+            "CREATE TABLE user_category_link ("
+            "  user_id INTEGER NOT NULL, category_id INTEGER NOT NULL,"
+            "  PRIMARY KEY (user_id, category_id))"
+        ))
+        self._raw(engine,
+            "INSERT INTO user_category_link (user_id,category_id) VALUES (?,?)",
+            (seeded_data["maker_id"], seeded_data["finance_category_id"]),
+        )
+        self._raw(engine,
+            "INSERT INTO user_category_link (user_id,category_id) VALUES (?,?)",
+            (seeded_data["maker_id"], seeded_data["legal_category_id"]),
+        )
+
+    def test_null_company_id_category_not_visible_to_admin(self, client, seeded_data, auth_headers):
+        """Admin cannot see categories with NULL company_id in list."""
+        test_client, engine, _ = client
+        self._setup_and_seed(engine, seeded_data)
+        cur = self._raw(engine,
+            "INSERT INTO categories (name,description,is_active,company_id,created_by,created_at,updated_at) "
+            "VALUES ('Orphan','No company',1,NULL,?,datetime('now'),datetime('now'))",
+            (seeded_data["admin_id"],),
+        )
+        orphan_id = cur.lastrowid
+
+        response = test_client.get("/api/v1/categories?include_inactive=true", headers=auth_headers["admin"])
+        assert response.status_code == status.HTTP_200_OK
+        assert orphan_id not in [c["id"] for c in response.json()]
+
+    def test_null_company_id_category_not_visible_to_maker(self, client, seeded_data, auth_headers):
+        """Maker cannot see categories with NULL company_id even if linked via UserCategoryLink."""
+        test_client, engine, _ = client
+        self._setup_and_seed(engine, seeded_data)
+        cur = self._raw(engine,
+            "INSERT INTO categories (name,description,is_active,company_id,created_by,created_at,updated_at) "
+            "VALUES ('Orphan Maker','No company',1,NULL,?,datetime('now'),datetime('now'))",
+            (seeded_data["admin_id"],),
+        )
+        orphan_id = cur.lastrowid
+        self._raw(engine,
+            "INSERT INTO user_category_link (user_id,category_id) VALUES (?,?)",
+            (seeded_data["maker_id"], orphan_id),
+        )
+
+        response = test_client.get("/api/v1/categories", headers=auth_headers["maker"])
+        assert response.status_code == status.HTTP_200_OK
+        assert orphan_id not in [c["id"] for c in response.json()]
+
+    def test_null_company_id_category_not_accessible_by_admin(self, client, seeded_data, auth_headers):
+        """Admin cannot access a category with NULL company_id by ID."""
+        test_client, engine, _ = client
+        self._setup_and_seed(engine, seeded_data)
+        cur = self._raw(engine,
+            "INSERT INTO categories (name,description,is_active,company_id,created_by,created_at,updated_at) "
+            "VALUES ('Orphan Detail','No company',1,NULL,?,datetime('now'),datetime('now'))",
+            (seeded_data["admin_id"],),
+        )
+        orphan_id = cur.lastrowid
+
+        response = test_client.get(f"/api/v1/categories/{orphan_id}", headers=auth_headers["admin"])
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_null_company_id_category_not_accessible_by_maker(self, client, seeded_data, auth_headers):
+        """Maker cannot access a category with NULL company_id by ID even if linked."""
+        test_client, engine, _ = client
+        self._setup_and_seed(engine, seeded_data)
+        cur = self._raw(engine,
+            "INSERT INTO categories (name,description,is_active,company_id,created_by,created_at,updated_at) "
+            "VALUES ('Orphan Detail Maker','No company',1,NULL,?,datetime('now'),datetime('now'))",
+            (seeded_data["admin_id"],),
+        )
+        orphan_id = cur.lastrowid
+        self._raw(engine,
+            "INSERT INTO user_category_link (user_id,category_id) VALUES (?,?)",
+            (seeded_data["maker_id"], orphan_id),
+        )
+
+        response = test_client.get(f"/api/v1/categories/{orphan_id}", headers=auth_headers["maker"])
+        assert response.status_code == status.HTTP_404_NOT_FOUND

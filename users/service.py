@@ -307,36 +307,46 @@ class UserService:
             user.is_active = data.is_active
 
         if data.role_ids is not None:
-            # SUPERADMIN cannot change roles of any user
+            # SUPERADMIN cannot change roles of any user — silently skip
             if current_user is not None:
                 is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
                 if is_superadmin:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Super Admin cannot modify user roles",
-                    )
-
-            for link in self.session.exec(
-                select(UserRoleLink).where(UserRoleLink.user_id == user_id)
-            ).all():
-                self.session.delete(link)
-            self.session.flush()
-            self._assign_roles(user_id, data.role_ids)
+                    pass  # ignore role_ids, allow other fields to update
+                else:
+                    for link in self.session.exec(
+                        select(UserRoleLink).where(UserRoleLink.user_id == user_id)
+                    ).all():
+                        self.session.delete(link)
+                    self.session.flush()
+                    self._assign_roles(user_id, data.role_ids)
+            else:
+                for link in self.session.exec(
+                    select(UserRoleLink).where(UserRoleLink.user_id == user_id)
+                ).all():
+                    self.session.delete(link)
+                self.session.flush()
+                self._assign_roles(user_id, data.role_ids)
 
         if data.category_ids is not None:
+            # SUPERADMIN cannot change category assignments — silently skip
             if current_user is not None:
                 is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
                 if is_superadmin:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Super Admin cannot modify category assignments",
-                    )
-            for link in self.session.exec(
-                select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
-            ).all():
-                self.session.delete(link)
-            self.session.flush()
-            self._assign_categories(user_id, data.category_ids, current_user)
+                    pass  # ignore category_ids, allow other fields to update
+                else:
+                    for link in self.session.exec(
+                        select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
+                    ).all():
+                        self.session.delete(link)
+                    self.session.flush()
+                    self._assign_categories(user_id, data.category_ids, current_user)
+            else:
+                for link in self.session.exec(
+                    select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
+                ).all():
+                    self.session.delete(link)
+                self.session.flush()
+                self._assign_categories(user_id, data.category_ids, current_user)
 
         if data.user_level_id is not None or (hasattr(data, 'user_level_id') and 'user_level_id' in data.model_fields_set):
             user.user_level_id = data.user_level_id
@@ -493,14 +503,11 @@ class UserService:
             category = self.session.get(Category, category_id)
             if not category:
                 raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
-            # Admin can only assign categories from their own company
+            # Admin can only assign categories from their own company — silently skip others
             if current_user is not None and current_user.is_admin():
                 is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
                 if not is_superadmin and category.company_id != current_user.company_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="Cannot assign categories from another company",
-                    )
+                    continue
             self.session.add(UserCategoryLink(user_id=user_id, category_id=category_id))
 
     # ──────────────────────────────────────────

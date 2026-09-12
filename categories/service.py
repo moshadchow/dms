@@ -39,6 +39,7 @@ class CategoryService:
                 .where(
                     UserCategoryLink.user_id == current_user.id,
                     Category.is_active == True,
+                    Category.company_id == current_user.company_id,
                 )
             )
 

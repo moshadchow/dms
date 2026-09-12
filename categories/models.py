@@ -59,7 +59,7 @@ class CategoryUpdate(SQLModel):
 
 class CategoryRead(CategoryBase):
     id:         int
-    company_id: int
+    company_id: Optional[int] = None
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime

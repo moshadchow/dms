@@ -827,7 +827,7 @@ def test_superadmin_edit_returns_superadmin_role(client, seeded_data, auth_heade
 
 
 def test_superadmin_cannot_change_role_via_api(client, seeded_data, auth_headers):
-    """SUPERADMIN cannot change role of any user via API."""
+    """SUPERADMIN role changes are silently ignored — roles remain unchanged."""
     _, engine, _ = client
     with Session(engine) as session:
         admin_role_id = _get_role_id(session, RoleName.ADMIN)
@@ -847,45 +847,61 @@ def test_superadmin_cannot_change_role_via_api(client, seeded_data, auth_headers
     with Session(engine) as session:
         superadmin_id = _create_superadmin_directly(session, company_id)
 
-    # Try to change ADMIN role to MAKER
+    # Try to change ADMIN role to MAKER — silently ignored, returns 200
     resp = client[0].patch(
         f"/api/v1/users/{admin_id}",
         json={"role_ids": [maker_role_id]},
         headers=auth_headers["superadmin"],
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    # Role should remain ADMIN
+    with Session(engine) as session:
+        user = session.get(User, admin_id)
+        assert any(r.name == RoleName.ADMIN for r in user.roles)
 
-    # Try to change MAKER role to ADMIN
+    # Try to change MAKER role to ADMIN — silently ignored
     resp = client[0].patch(
         f"/api/v1/users/{maker_id}",
         json={"role_ids": [admin_role_id]},
         headers=auth_headers["superadmin"],
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    with Session(engine) as session:
+        user = session.get(User, maker_id)
+        assert any(r.name == RoleName.MAKER for r in user.roles)
 
-    # Try to change CHECKER role to ADMIN
+    # Try to change CHECKER role to ADMIN — silently ignored
     resp = client[0].patch(
         f"/api/v1/users/{checker_id}",
         json={"role_ids": [admin_role_id]},
         headers=auth_headers["superadmin"],
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    with Session(engine) as session:
+        user = session.get(User, checker_id)
+        assert any(r.name == RoleName.CHECKER for r in user.roles)
 
-    # Try to change AUDITOR role to ADMIN
+    # Try to change AUDITOR role to ADMIN — silently ignored
     resp = client[0].patch(
         f"/api/v1/users/{auditor_id}",
         json={"role_ids": [admin_role_id]},
         headers=auth_headers["superadmin"],
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    with Session(engine) as session:
+        user = session.get(User, auditor_id)
+        assert any(r.name == RoleName.AUDITOR for r in user.roles)
 
-    # Try to remove SUPERADMIN role
+    # Try to remove SUPERADMIN role — silently ignored
     resp = client[0].patch(
         f"/api/v1/users/{superadmin_id}",
         json={"role_ids": [admin_role_id]},
         headers=auth_headers["superadmin"],
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    with Session(engine) as session:
+        user = session.get(User, superadmin_id)
+        assert any(r.name == RoleName.SUPERADMIN for r in user.roles)
 
 
 def test_superadmin_edit_does_not_show_company_dropdown(client, seeded_data, auth_headers):
