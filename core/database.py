@@ -29,13 +29,14 @@ def create_db_and_tables() -> None:
     In production, run: `alembic upgrade head` instead.
     """
     # Import all models so SQLModel metadata is populated before create_all
-    import categories.models   # noqa: F401
-    import directories.models  # noqa: F401
-    import documents.models    # noqa: F401
-    import users.models        # noqa: F401
-    import user_levels.models  # noqa: F401
-    import workflow.models     # noqa: F401
-    import memos.models        # noqa: F401
+    import categories.models       # noqa: F401
+    import directories.models      # noqa: F401
+    import documents.models        # noqa: F401
+    import users.models            # noqa: F401
+    import user_levels.models      # noqa: F401
+    import workflow.models         # noqa: F401
+    import memos.models            # noqa: F401
+    import company_profile.models  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
 

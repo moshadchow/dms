@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080    #  7 days
 
     # ── File Storage ──────────────────────────
-    STORAGE_ROOT:      str = "storage/uploads"
+    STORAGE_ROOT:      str = "storage"
     MAX_FILE_SIZE_MB:  int = 50
     ALLOWED_MIME_TYPES: List[str] = [
         "application/pdf",

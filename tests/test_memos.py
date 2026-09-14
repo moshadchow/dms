@@ -79,7 +79,10 @@ class TestMemoService:
             assert doc.file_type == FileType.HTML
             assert doc.mime_type == "text/html"
             assert doc.title == "Office Closure Notice"
-            assert (storage / doc.storage_path).exists()
+            # Storage path is company-relative; check with company root
+            from core.storage import storage_service
+            company = maker.company
+            assert (storage_service.get_company_root(company) / doc.storage_path).exists()
 
     def test_create_draft_auto_assigns_user_level(self, seeded_data, client):
         _, engine, _ = client
@@ -118,8 +121,11 @@ class TestMemoService:
             assert updated.subject == "Updated Subject"
             new_doc = session.get(Document, memo.document_id)
             assert new_doc.storage_path != old_path
-            assert not (storage / old_path).exists()
-            assert (storage / new_doc.storage_path).exists()
+            # Storage path is company-relative; check with company root
+            from core.storage import storage_service
+            company = maker.company
+            assert not (storage_service.get_company_root(company) / old_path).exists()
+            assert (storage_service.get_company_root(company) / new_doc.storage_path).exists()
 
     def test_update_memo_forbidden_for_non_author(self, seeded_data, client):
         _, engine, _ = client

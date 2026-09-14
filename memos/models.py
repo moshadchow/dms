@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
+    from company_profile.models import Company
     from documents.models import Document
     from users.models import User
     from workflow.models import Signature
@@ -47,6 +48,7 @@ class Memo(MemoBase, table=True):
     document_id: int = Field(foreign_key="documents.id", index=True, nullable=False, unique=True)
     author_signature_id: Optional[int] = Field(default=None, foreign_key="signatures.id")
     created_by: int = Field(foreign_key="users.id", nullable=False)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -58,6 +60,9 @@ class Memo(MemoBase, table=True):
     )
     author_signature: Optional["Signature"] = Relationship(
         sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[Memo.author_signature_id]"}
+    )
+    company: Optional["Company"] = Relationship(
+        sa_relationship_kwargs={"lazy": "selectin"}
     )
     attachments: List[MemoAttachment] = Relationship(
         back_populates="memo",
@@ -90,6 +95,7 @@ class MemoRead(SQLModel):
     body: str
     author_signature_id: Optional[int] = None
     created_by: int
+    company_id: Optional[int] = None
     created_by_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime

@@ -14,9 +14,10 @@ from sqlmodel import Session, select
 
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
-from core.config import settings
+from core.storage import storage_service
 from users.models import User
 from workflow.models import Signature, SignatureRead, SignatureType
+from company_profile.models import Company
 
 ALLOWED_SIGNATURE_MIME_TYPES = {"image/jpeg", "image/png"}
 
@@ -89,15 +90,22 @@ class SignatureService:
                 detail="Signature file size exceeds the 5 MB limit",
             )
 
-        storage_root = Path(settings.STORAGE_ROOT)
-        dest_dir = storage_root / "signatures" / str(current_user.id)
+        # Get company from current user
+        company: Company = current_user.company
+        if not company:
+            raise HTTPException(
+                status_code=400,
+                detail="User must belong to a company to upload signatures"
+            )
+
+        dest_dir = storage_service.get_signatures_root(company) / str(current_user.id)
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         safe_name = f"{uuid.uuid4().hex}_{Path(file.filename or 'signature').name}"
         dest_path = dest_dir / safe_name
         dest_path.write_bytes(content)
 
-        relative_path = str(dest_path.relative_to(storage_root))
+        relative_path = str(dest_path.relative_to(storage_service.get_company_root(company)))
 
         sig = Signature(
             user_id=current_user.id,
@@ -168,20 +176,16 @@ class SignatureService:
                 detail="You can only view your own signatures",
             )
 
-        storage_root = Path(settings.STORAGE_ROOT).resolve()
-        abs_path = (storage_root / sig.file_path).resolve()
-
-        if not str(abs_path).startswith(str(storage_root)):
+        # Get company from signature's user
+        sig_user = sig.user
+        company: Company = sig_user.company
+        if not company:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file path",
+                status_code=400,
+                detail="Signature user must belong to a company"
             )
 
-        if not abs_path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Signature file not found on disk",
-            )
+        abs_path = storage_service.resolve_path(company, sig.file_path)
 
         return abs_path
 
@@ -253,7 +257,7 @@ class SignatureService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Only admins can manage other users' signatures",
             )
-        self._validate_target_user(target_user_id)
+        target_user = self._validate_target_user(target_user_id)
 
         mime = file.content_type or ""
         if mime not in ALLOWED_SIGNATURE_MIME_TYPES:
@@ -272,6 +276,14 @@ class SignatureService:
                 detail="Signature file size exceeds the 5 MB limit",
             )
 
+        # Get company from target user
+        company: Company = target_user.company
+        if not company:
+            raise HTTPException(
+                status_code=400,
+                detail="Target user must belong to a company to upload signatures"
+            )
+
         # Soft-delete existing active signature (replace behavior)
         existing_query = (
             select(Signature)
@@ -286,15 +298,14 @@ class SignatureService:
             old_sig.is_active = False
             old_sig.updated_at = datetime.utcnow()
 
-        storage_root = Path(settings.STORAGE_ROOT)
-        dest_dir = storage_root / "signatures" / str(target_user_id)
+        dest_dir = storage_service.get_signatures_root(company) / str(target_user_id)
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         safe_name = f"{uuid.uuid4().hex}_{Path(file.filename or 'signature').name}"
         dest_path = dest_dir / safe_name
         dest_path.write_bytes(content)
 
-        relative_path = str(dest_path.relative_to(storage_root))
+        relative_path = str(dest_path.relative_to(storage_service.get_company_root(company)))
 
         sig = Signature(
             user_id=target_user_id,

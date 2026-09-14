@@ -13,12 +13,14 @@ from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from core.access import ensure_directory_access, ensure_document_access, ensure_document_user_level_access
 from core.config import settings
+from core.storage import storage_service
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
 from memos.models import Memo, MemoAttachment, MemoDetailRead, MemoListResponse, MemoRead
 from memos.schemas import MemoCreate, MemoSubmit, MemoUpdate
 from user_levels.models import UserLevel
-from users.models import User
+from users.models import User, RoleName
 from workflow.models import WorkflowInstance, WorkflowStatus, WorkflowStep
+from company_profile.models import Company
 
 
 # ──────────────────────────────────────────────
@@ -301,12 +303,17 @@ class MemoService:
 
     def _save_memo_html(self, memo: Memo, user: User) -> str:
         """Write the generated HTML backing file, return relative storage path."""
-        storage_root = Path(settings.STORAGE_ROOT)
-        dest_dir = storage_root / "memos" / str(user.id)
+        company: Company = user.company
+        if not company:
+            raise HTTPException(
+                status_code=400,
+                detail="User must belong to a company to create memos"
+            )
+        dest_dir = storage_service.get_memos_root(company) / str(user.id)
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / f"{uuid.uuid4().hex}.html"
         dest_path.write_text(build_memo_html(memo.subject, memo.body), encoding="utf-8")
-        return str(dest_path.relative_to(storage_root))
+        return str(dest_path.relative_to(storage_service.get_company_root(company)))
 
     def _validate_user_levels(self, user_level_ids: list[int]) -> set[int]:
         if not user_level_ids:
@@ -442,6 +449,7 @@ class MemoService:
             subject=data.subject,
             body=sanitize_memo_html(data.body),
             created_by=current_user.id,
+            company_id=current_user.company_id,
         )
 
         # Build backing document
@@ -454,7 +462,7 @@ class MemoService:
             file_name=f"{data.subject}.html",
             file_type=FileType.HTML,
             mime_type="text/html",
-            file_size=Path(settings.STORAGE_ROOT).joinpath(storage_path).stat().st_size,
+            file_size=storage_service.get_company_root(current_user.company).joinpath(storage_path).stat().st_size,
             storage_path=storage_path,
             status=DocumentStatus.ACTIVE,
         )
@@ -510,6 +518,13 @@ class MemoService:
         query = select(Memo)
         if not current_user.is_admin():
             query = query.where(Memo.created_by == current_user.id)
+        elif not any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+            # ADMIN (not SUPERADMIN) sees only their company's memos
+            if current_user.company_id:
+                query = query.where(Memo.company_id == current_user.company_id)
+            else:
+                # Admin with no company sees no memos
+                query = query.where(Memo.company_id.is_(None))
 
         all_memos = self.session.exec(query).all()
         total = len(all_memos)
@@ -543,10 +558,17 @@ class MemoService:
 
         body_changed = data.subject is not None or data.body is not None
         if body_changed:
-            storage_root = Path(settings.STORAGE_ROOT)
-            old_path = storage_root / memo.document.storage_path
+            # Determine company from memo author
+            company: Company = memo.author.company
+            if not company:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Memo author must belong to a company"
+                )
+            # Delete old file using company-aware resolution
+            from documents.utils import delete_from_disk
             try:
-                old_path.unlink(missing_ok=True)
+                delete_from_disk(memo.document.storage_path, company)
             except Exception:
                 pass
             new_storage_path = self._save_memo_html(memo, current_user)
@@ -554,7 +576,7 @@ class MemoService:
             memo.document.title = memo.subject
             memo.document.file_name = f"{memo.subject}.html"
             memo.document.file_size = (
-                storage_root.joinpath(new_storage_path).stat().st_size
+                storage_service.get_company_root(company).joinpath(new_storage_path).stat().st_size
             )
 
         if data.attachment_document_ids is not None:
@@ -716,7 +738,13 @@ class MemoService:
                 .order_by(Signature.created_at.desc())
             ).first()
             if action_sig:
-                signature_path = Path(settings.STORAGE_ROOT) / action_sig.file_path
+                # Use company-aware resolution for signature file
+                sig_company: Company = action_sig.user.company
+                if sig_company:
+                    try:
+                        signature_path = storage_service.resolve_path(sig_company, action_sig.file_path)
+                    except HTTPException:
+                        pass
 
             acted_by_name = action.acted_by_user.full_name if action.acted_by_user else f"User #{action.acted_by}"
             acted_at = action.acted_at.strftime("%Y-%m-%d %H:%M") if action.acted_at else ""
@@ -745,7 +773,13 @@ class MemoService:
             .order_by(Signature.created_at.desc())
         ).first()
         if author_sig:
-            author_signature_path = Path(settings.STORAGE_ROOT) / author_sig.file_path
+            # Use company-aware resolution for author signature
+            author_company: Company = author_sig.user.company
+            if author_company:
+                try:
+                    author_signature_path = storage_service.resolve_path(author_company, author_sig.file_path)
+                except HTTPException:
+                    pass
 
         # Format memo date
         memo_date = memo.memo_date.strftime("%Y-%m-%d") if memo.memo_date else ""
@@ -759,7 +793,14 @@ class MemoService:
         # Generate PDF
         from memos.pdf_generator import generate_memo_pdf
 
-        output_dir = Path(settings.STORAGE_ROOT) / "memos" / "final_drafts"
+        # Output directory under company memos
+        memo_company: Company = memo.author.company
+        if not memo_company:
+            raise HTTPException(
+                status_code=400,
+                detail="Memo author must belong to a company"
+            )
+        output_dir = storage_service.get_memos_root(memo_company) / "final_drafts"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"memo_{memo_id}_final_draft.pdf"
 

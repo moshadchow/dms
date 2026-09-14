@@ -24,7 +24,9 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile, status
 
 from core.config import settings
+from core.storage import storage_service
 from documents.models import ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, FileType
+from company_profile.models import Company
 
 
 # ──────────────────────────────────────────────
@@ -61,12 +63,13 @@ async def save_upload(
     file: UploadFile,
     category_id: int,
     directory_id: int,
+    company: Company,
 ) -> tuple[str, int]:
     """
     Persist an uploaded file to disk.
 
     Storage layout:
-        <STORAGE_ROOT>/<category_id>/<directory_id>/<uuid>_<original_filename>
+        <STORAGE_ROOT>/<company_short_name>/uploads/<category_id>/<directory_id>/<uuid>_<original_filename>
 
     Returns:
         (relative_storage_path, file_size_in_bytes)
@@ -75,8 +78,8 @@ async def save_upload(
     It is relative to STORAGE_ROOT so the app stays portable
     across deployments regardless of the absolute mount point.
     """
-    storage_root = Path(settings.STORAGE_ROOT)
-    dest_dir = storage_root / str(category_id) / str(directory_id)
+    uploads_root = storage_service.get_uploads_root(company)
+    dest_dir = uploads_root / str(category_id) / str(directory_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = f"{uuid.uuid4().hex}_{Path(file.filename or 'upload').name}"
@@ -94,7 +97,7 @@ async def save_upload(
 
     dest_path.write_bytes(content)
 
-    relative = str(dest_path.relative_to(storage_root))
+    relative = str(dest_path.relative_to(storage_service.get_company_root(company)))
     return relative, len(content)
 
 
@@ -104,21 +107,21 @@ def build_variant_storage_path(
     owner_user_id: int,
     variant_id: int,
     source_file_name: str,
+    company: Company,
 ) -> str:
-    storage_root = Path(settings.STORAGE_ROOT)
+    uploads_root = storage_service.get_uploads_root(company)
     safe_name = Path(source_file_name or "variant").name
     relative = Path(str(category_id)) / str(directory_id) / "_variants" / str(owner_user_id) / str(variant_id) / safe_name
-    abs_dir = storage_root / relative.parent
+    abs_dir = uploads_root / relative.parent
     abs_dir.mkdir(parents=True, exist_ok=True)
     return str(relative)
 
 
-def copy_into_storage(source_relative_path: str, dest_relative_path: str) -> int:
-    storage_root = Path(settings.STORAGE_ROOT)
-    source_path = resolve_storage_path(source_relative_path)
-    dest_path = (storage_root / dest_relative_path).resolve()
+def copy_into_storage(source_relative_path: str, dest_relative_path: str, company: Company) -> int:
+    source_path = resolve_storage_path(source_relative_path, company)
+    dest_path = (storage_service.get_company_root(company) / dest_relative_path).resolve()
 
-    if not str(dest_path).startswith(str(storage_root.resolve())):
+    if not str(dest_path).startswith(str(storage_service.get_company_root(company).resolve())):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file path")
 
     dest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,38 +243,26 @@ def extract_xlsx_preview_html(abs_path: Path) -> str:
 # Resolve
 # ──────────────────────────────────────────────
 
-def resolve_storage_path(relative_path: str) -> Path:
+def resolve_storage_path(relative_path: str, company: Company = None) -> Path:
     """
     Convert a relative DB storage path to a validated absolute Path.
 
     Raises HTTP 400 if the resolved path escapes STORAGE_ROOT
     (path-traversal guard).
     Raises HTTP 404 if the file does not exist on disk.
+    
+    Supports backward compatibility during migration:
+    - If company provided, tries new company-prefixed path first
+    - Falls back to old path without company prefix
     """
-    storage_root = Path(settings.STORAGE_ROOT).resolve()
-    abs_path = (storage_root / relative_path).resolve()
-
-    # Path-traversal guard
-    if not str(abs_path).startswith(str(storage_root)):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file path",
-        )
-
-    if not abs_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found on disk",
-        )
-
-    return abs_path
+    return storage_service.resolve_path_with_fallback(relative_path, company)
 
 
 # ──────────────────────────────────────────────
 # Delete
 # ──────────────────────────────────────────────
 
-def delete_from_disk(relative_path: str) -> None:
+def delete_from_disk(relative_path: str, company: Company = None) -> None:
     """
     Permanently remove a stored file from disk.
 
@@ -279,7 +270,7 @@ def delete_from_disk(relative_path: str) -> None:
     this makes hard-delete idempotent and safe to retry.
     """
     try:
-        path = resolve_storage_path(relative_path)
+        path = resolve_storage_path(relative_path, company)
         path.unlink(missing_ok=True)
     except HTTPException:
         # File not found or path invalid — nothing to delete

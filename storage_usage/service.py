@@ -7,6 +7,7 @@ from sqlmodel import Session, col, func, select
 
 from categories.models import Category
 from core.config import settings
+from core.storage import storage_service
 from directories.models import Directory
 from documents.models import Document, DocumentStatus
 from storage_usage.models import SystemSetting
@@ -16,6 +17,7 @@ from storage_usage.schemas import (
     StorageUsageResponse,
     _human_size,
 )
+from company_profile.models import Company
 
 DEFAULT_CAPACITY_GB = 100
 
@@ -104,33 +106,49 @@ def _get_db_usage(session: Session, company_id: int = None) -> Tuple[int, List[D
 
 def _get_disk_usage() -> Tuple[int, Dict[int, int]]:
     """Walk STORAGE_ROOT and sum file sizes.
+    
+    New structure:
+    - storage/{company_short_name}/uploads/{category_id}/{directory_id}/...
+    - storage/{company_short_name}/signatures/{user_id}/...
+    - storage/{company_short_name}/memos/{user_id}/...
 
     Returns (total_bytes, {category_id: bytes})
     """
-    storage_root = str(Path(settings.STORAGE_ROOT).resolve())
-    if not os.path.isdir(storage_root):
+    storage_root = Path(settings.STORAGE_ROOT).resolve()
+    if not storage_root.is_dir():
         return 0, {}
 
     total = 0
     by_category: Dict[int, int] = {}
 
-    for dirpath, _dirnames, filenames in os.walk(storage_root):
-        for fname in filenames:
-            fpath = os.path.join(dirpath, fname)
-            try:
-                size = os.path.getsize(fpath)
-            except OSError:
-                continue
-            total += size
+    # Walk all company directories
+    for company_dir in storage_root.iterdir():
+        if not company_dir.is_dir():
+            continue
+        
+        # Check if this is a company directory (uploads, signatures, memos inside)
+        uploads_dir = company_dir / "uploads"
+        if not uploads_dir.is_dir():
+            continue
 
-            # Extract category_id from path: STORAGE_ROOT/<category_id>/...
-            rel = os.path.relpath(fpath, storage_root)
-            parts = rel.split(os.sep)
-            try:
-                cat_id = int(parts[0])
-                by_category[cat_id] = by_category.get(cat_id, 0) + size
-            except (ValueError, IndexError):
-                pass  # files not under a category directory (e.g. signatures/)
+        # Walk uploads directory: {category_id}/{directory_id}/...
+        for dirpath, _dirnames, filenames in os.walk(uploads_dir):
+            for fname in filenames:
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    size = os.path.getsize(fpath)
+                except OSError:
+                    continue
+                total += size
+
+                # Extract category_id from path: uploads/{category_id}/{directory_id}/...
+                rel = os.path.relpath(fpath, uploads_dir)
+                parts = rel.split(os.sep)
+                try:
+                    cat_id = int(parts[0])
+                    by_category[cat_id] = by_category.get(cat_id, 0) + size
+                except (ValueError, IndexError):
+                    pass  # files not under a category directory
 
     return total, by_category
 

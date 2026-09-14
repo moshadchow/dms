@@ -1,5 +1,7 @@
 import re
+import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -13,6 +15,7 @@ from company_profile.models import (
     CompanyRead,
     CompanyUpdate,
 )
+from core.storage import storage_service
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 
@@ -143,15 +146,19 @@ class CompanyService:
                     detail=f"Company ID '{data.company_id}' already exists",
                 )
 
+        # Handle short_name change - move storage directory
+        old_short_name = company.short_name
+        new_short_name = data.short_name if data.short_name is not None else company.short_name
+
         # Check unique short_name if changed
-        if data.short_name is not None and data.short_name != company.short_name:
+        if new_short_name != old_short_name:
             existing_short = self.session.exec(
-                select(Company).where(Company.short_name == data.short_name)
+                select(Company).where(Company.short_name == new_short_name)
             ).first()
             if existing_short:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Short name '{data.short_name}' already exists",
+                    detail=f"Short name '{new_short_name}' already exists",
                 )
 
         old_values = {
@@ -168,6 +175,22 @@ class CompanyService:
         self.session.add(company)
         self.session.commit()
         self.session.refresh(company)
+
+        # Move storage directory if short_name changed
+        if new_short_name != old_short_name:
+            try:
+                old_company_root = storage_service.storage_root / old_short_name
+                new_company_root = storage_service.storage_root / new_short_name
+                
+                if old_company_root.exists():
+                    # Ensure parent exists
+                    new_company_root.parent.mkdir(parents=True, exist_ok=True)
+                    # Move the entire company storage directory
+                    shutil.move(str(old_company_root), str(new_company_root))
+            except Exception as e:
+                # Log error but don't fail the update - storage can be manually moved
+                import logging
+                logging.error(f"Failed to move storage directory for company {company_id}: {e}")
 
         new_values = {
             "company_id": company.company_id,

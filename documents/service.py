@@ -25,6 +25,7 @@ from documents.models import (
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
 from users.models import User, UserCategoryLink
 from user_levels.models import UserLevel
+from company_profile.models import Company
 
 
 class DocumentService:
@@ -202,9 +203,17 @@ class DocumentService:
         # Validate file type
         file_type = validate_file(file)
 
+        # Get company from authenticated user
+        company: Company = current_user.company
+        if not company:
+            raise HTTPException(
+                status_code=400,
+                detail="User must belong to a company to upload documents"
+            )
+
         # Save to disk
         storage_path, file_size = await save_upload(
-            file, directory.category_id, directory_id
+            file, directory.category_id, directory_id, company
         )
 
         doc = Document(
@@ -351,7 +360,9 @@ class DocumentService:
         doc = self._get_orm(document_id, current_user)
         old_values = {"status": doc.status.value, "title": doc.title}
         if hard:
-            delete_from_disk(doc.storage_path)
+            # Determine company from document's directory -> category -> company
+            company = doc.directory.category.company
+            delete_from_disk(doc.storage_path, company)
             self.session.delete(doc)
         else:
             doc.status = DocumentStatus.DELETED
@@ -384,5 +395,7 @@ class DocumentService:
         """
         doc = self._get_orm(document_id, current_user)
         ensure_document_user_level_access(self.session, current_user, doc)
-        abs_path = resolve_storage_path(doc.storage_path)
+        # Determine company from document's directory -> category -> company
+        company = doc.directory.category.company
+        abs_path = resolve_storage_path(doc.storage_path, company)
         return abs_path, self._to_read(doc)
