@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/authStore'
 import { getErrorMessage } from '@/api/client'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import ucbLogo from '@/assets/ucb_logo.png'
+import type { AzureProviderCompany } from '@/types/company.types'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -18,13 +19,19 @@ export default function LoginPage() {
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
   const [azureEnabled, setAzureEnabled] = useState(false)
+  const [azureCompanies, setAzureCompanies] = useState<AzureProviderCompany[]>([])
+  const [selectedCompanyId, setSelectedCompanyId] = useState<number | ''>('')
+  const [showCompanySelector, setShowCompanySelector] = useState(false)
 
   useEffect(() => {
     if (isAuthenticated()) navigate('/dashboard', { replace: true })
-    // Check if Azure AD is enabled
+    // Check if Azure AD is enabled and get company list
     fetch(`${apiRoot}/auth/azure/config`)
       .then((r) => r.json())
-      .then((data) => setAzureEnabled(data.enabled))
+      .then((data) => {
+        setAzureEnabled(data.global_enabled || data.companies?.length > 0)
+        setAzureCompanies(data.companies || [])
+      })
       .catch(() => {})
   }, [])
 
@@ -49,6 +56,27 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleAzureLogin = () => {
+    if (azureCompanies.length === 1) {
+      // Auto-select the only company
+      window.location.href = `${apiRoot}/auth/azure/login?company_id=${azureCompanies[0].id}`
+    } else if (azureCompanies.length > 1) {
+      // Show company selector
+      setShowCompanySelector(true)
+    } else if (azureEnabled) {
+      // Global Azure only (no company selector)
+      window.location.href = `${apiRoot}/auth/azure/login`
+    }
+  }
+
+  const handleCompanySelected = () => {
+    if (selectedCompanyId === '') {
+      setError('Please select a company.')
+      return
+    }
+    window.location.href = `${apiRoot}/auth/azure/login?company_id=${selectedCompanyId}`
   }
 
   return (
@@ -107,52 +135,93 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit}>
-          {/* Email */}
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Email</label>
-            <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" disabled={loading} className="input" />
-          </div>
-
-          {/* Password */}
-          <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Password</label>
-            <div style={{ position: 'relative' }}>
-              <input type={showPass ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" disabled={loading} className="input" style={{ paddingRight: '2.5rem' }} />
-              <button type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0, lineHeight: 1 }}>
-                {showPass
-                  ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                  : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                }
+        {/* Company selector modal for Azure AD */}
+        {showCompanySelector ? (
+          <div>
+            <h2 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.75rem' }}>
+              Select your company
+            </h2>
+            <p style={{ color: 'var(--text-tertiary)', fontSize: '0.82rem', marginBottom: '1rem' }}>
+              Choose the company you want to sign in with.
+            </p>
+            <div style={{ marginBottom: '1rem' }}>
+              <select
+                className="input"
+                value={selectedCompanyId}
+                onChange={(e) => setSelectedCompanyId(e.target.value ? Number(e.target.value) : '')}
+                style={{ width: '100%', fontSize: '0.875rem' }}
+              >
+                <option value="">-- Select company --</option>
+                {azureCompanies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={handleCompanySelected}
+                className="btn btn-primary"
+                style={{ flex: 1, padding: '0.75rem', fontSize: '0.95rem', fontWeight: 700 }}
+              >
+                Continue with Microsoft
+              </button>
+              <button
+                onClick={() => { setShowCompanySelector(false); setSelectedCompanyId('') }}
+                className="btn btn-secondary"
+                style={{ padding: '0.75rem 1rem', fontSize: '0.875rem' }}
+              >
+                Back
               </button>
             </div>
           </div>
+        ) : (
+          <form onSubmit={handleSubmit}>
+            {/* Email */}
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Email</label>
+              <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" disabled={loading} className="input" />
+            </div>
 
-          {/* Submit */}
-          <button type="submit" disabled={loading} aria-busy={loading} className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontSize: '0.95rem', fontWeight: 700 }}>
-            {loading ? (
-              <><span style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'currentColor', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />Signing in…</>
-            ) : 'Sign In'}
-          </button>
-        </form>
+            {/* Password */}
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.4rem' }}>Password</label>
+              <div style={{ position: 'relative' }}>
+                <input type={showPass ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" disabled={loading} className="input" style={{ paddingRight: '2.5rem' }} />
+                <button type="button" onClick={() => setShowPass(!showPass)} aria-label={showPass ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: 0, lineHeight: 1 }}>
+                  {showPass
+                    ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                    : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  }
+                </button>
+              </div>
+            </div>
+
+            {/* Submit */}
+            <button type="submit" disabled={loading} aria-busy={loading} className="btn btn-primary" style={{ width: '100%', padding: '0.75rem', fontSize: '0.95rem', fontWeight: 700 }}>
+              {loading ? (
+                <><span style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'currentColor', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />Signing in…</>
+              ) : 'Sign In'}
+            </button>
+          </form>
+        )}
 
         {/* Azure AD SSO */}
-        {azureEnabled && (
+        {azureEnabled && !showCompanySelector && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', margin: '1.5rem 0', gap: '0.75rem' }}>
               <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
               <span style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>or</span>
               <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--border)' }} />
             </div>
-            <a
-              href={`${apiRoot}/auth/azure/login`}
+            <button
+              onClick={handleAzureLogin}
               className="btn btn-secondary"
               style={{
                 width: '100%',
                 padding: '0.75rem',
                 fontSize: '0.95rem',
                 fontWeight: 600,
-                textDecoration: 'none',
+                display: 'flex',
                 justifyContent: 'center',
                 gap: '0.75rem',
               }}
@@ -164,7 +233,7 @@ export default function LoginPage() {
                 <rect x="12" y="12" width="10" height="10" fill="#ffb900" />
               </svg>
               Sign in with Microsoft
-            </a>
+            </button>
           </>
         )}
 

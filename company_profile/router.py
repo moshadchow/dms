@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlmodel import Session
 
 from core.database import get_session
-from core.dependencies import SuperAdminUser
+from core.dependencies import AdminUser, CurrentUser, SuperAdminUser
 from company_profile.models import (
+    AzureConfigRead,
+    AzureConfigUpdate,
     CompanyCreate,
     CompanyRead,
     CompanyUpdate,
@@ -13,6 +15,64 @@ from company_profile.models import (
 from company_profile.service import CompanyService
 
 router = APIRouter()
+
+
+# ─────────────────────────────────────────────────
+# Azure AD configuration (per-company)
+# ─────────────────────────────────────────────────
+
+@router.get(
+    "/{company_id}/azure-config",
+    response_model=AzureConfigRead,
+    summary="Get Azure AD config for a company",
+)
+def get_azure_config(
+    company_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    """SuperAdmin can view any company config; Admin can view own company only."""
+    from fastapi import HTTPException
+    from users.models import RoleName
+    # SuperAdmin can view any company
+    is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+    if not is_superadmin:
+        # Admin: only own company
+        if not current_user.is_admin() or current_user.company_id != company_id:
+            raise HTTPException(status_code=403, detail="Admin or SuperAdmin access required")
+    return CompanyService(session).get_azure_config(company_id)
+
+
+@router.put(
+    "/{company_id}/azure-config",
+    response_model=AzureConfigRead,
+    summary="Set Azure AD config for a company (SuperAdmin only)",
+)
+def update_azure_config(
+    company_id: int,
+    payload: AzureConfigUpdate,
+    _: SuperAdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return CompanyService(session).update_azure_config(company_id, payload)
+
+
+@router.delete(
+    "/{company_id}/azure-config",
+    response_model=AzureConfigRead,
+    summary="Remove Azure AD config from a company (SuperAdmin only)",
+)
+def delete_azure_config(
+    company_id: int,
+    _: SuperAdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return CompanyService(session).delete_azure_config(company_id)
+
+
+# ─────────────────────────────────────────────────
+# Company CRUD (SuperAdmin only)
+# ─────────────────────────────────────────────────
 
 
 @router.get("", response_model=dict, summary="List all companies (Super Admin only)")

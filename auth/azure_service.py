@@ -3,17 +3,21 @@
 Handles:
 - PKCE code-verifier / code-challenge generation
 - Authorization URL construction
-- Authorization code → token exchange
+- Authorization code -> token exchange
 - ID token validation (JWT, issuer, audience, nonce, expiry)
 - User resolution (JIT provisioning and account linking)
+
+Supports company-scoped Azure AD configurations. When a company_id is provided,
+the company's Azure AD config is used; otherwise falls back to global .env config.
 """
 
 import base64
 import hashlib
+import json
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -44,9 +48,53 @@ AUTHORIZE_ENDPOINT = (
     "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
 )
 
-# Cache for signing keys: {kid: (keys_data, fetched_at)}
+# Cache for signing keys: {tenant_id: (keys_data, fetched_at)}
 _jwks_cache: dict[str, tuple[list[dict], float]] = {}
 _JWKS_CACHE_TTL = 3600  # 1 hour
+
+
+# ── Company-scoped Azure config resolver ──────────
+
+def get_azure_config_for_company(
+    session: Session, company_id: Optional[int]
+) -> dict[str, Any]:
+    """Return Azure AD config dict for the given company, or global fallback.
+
+    Returns dict with keys: client_id, client_secret, tenant_id, redirect_uri,
+    scopes, default_role_name.
+
+    Raises HTTPException 503 if no valid config found.
+    """
+    if company_id is not None:
+        from company_profile.models import Company
+        company = session.get(Company, company_id)
+        if company and company.azure_enabled and company.azure_client_id and company.azure_tenant_id:
+            return {
+                "client_id": company.azure_client_id,
+                "client_secret": company.azure_client_secret or "",
+                "tenant_id": company.azure_tenant_id,
+                "redirect_uri": settings.AZURE_REDIRECT_URI,
+                "scopes": settings.AZURE_SCOPES,
+                "default_role_name": company.azure_default_role_name or settings.AZURE_DEFAULT_ROLE_NAME,
+                "company_id": company.id,
+            }
+
+    # Fallback to global config
+    if settings.AZURE_ENABLED:
+        return {
+            "client_id": settings.AZURE_CLIENT_ID,
+            "client_secret": settings.AZURE_CLIENT_SECRET,
+            "tenant_id": settings.AZURE_TENANT_ID,
+            "redirect_uri": settings.AZURE_REDIRECT_URI,
+            "scopes": settings.AZURE_SCOPES,
+            "default_role_name": settings.AZURE_DEFAULT_ROLE_NAME,
+            "company_id": None,
+        }
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Azure AD authentication is not configured",
+    )
 
 
 # ── PKCE helpers ──────────────────────────────────
@@ -59,9 +107,28 @@ def generate_pkce_pair() -> tuple[str, str]:
     return code_verifier, code_challenge
 
 
-def generate_state() -> str:
-    """Generate a cryptographically random state parameter for CSRF protection."""
-    return secrets.token_urlsafe(32)
+def generate_state(nonce: str, company_id: Optional[int] = None) -> str:
+    """Generate a state parameter encoding nonce and optional company_id.
+
+    The state is base64-encoded JSON: {"n":nonce,"cid":company_id_or_null}
+    """
+    payload = {"n": nonce, "cid": company_id}
+    return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
+
+
+def decode_state(state: str) -> tuple[str, Optional[int]]:
+    """Decode state parameter, returning (nonce, company_id).
+
+    Raises HTTPException if state is invalid.
+    """
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(state))
+        return payload["n"], payload.get("cid")
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid state parameter",
+        )
 
 
 def generate_nonce() -> str:
@@ -71,40 +138,42 @@ def generate_nonce() -> str:
 
 # ── Authorization URL ─────────────────────────────
 
-def build_authorization_url(state: str, code_challenge: str, nonce: str) -> str:
+def build_authorization_url(
+    state: str, code_challenge: str, nonce: str, azure_config: dict
+) -> str:
     """Build the Microsoft authorization endpoint URL."""
     params = {
-        "client_id": settings.AZURE_CLIENT_ID,
+        "client_id": azure_config["client_id"],
         "response_type": "code",
-        "redirect_uri": settings.AZURE_REDIRECT_URI,
+        "redirect_uri": azure_config["redirect_uri"],
         "response_mode": "query",
-        "scope": " ".join(settings.AZURE_SCOPES),
+        "scope": " ".join(azure_config["scopes"]),
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "nonce": nonce,
     }
-    return f"{AUTHORIZE_ENDPOINT.format(tenant_id=settings.AZURE_TENANT_ID)}?{urlencode(params)}"
+    return f"{AUTHORIZE_ENDPOINT.format(tenant_id=azure_config['tenant_id'])}?{urlencode(params)}"
 
 
 # ── Token exchange ────────────────────────────────
 
 async def exchange_code_for_tokens(
-    code: str, code_verifier: str
+    code: str, code_verifier: str, azure_config: dict
 ) -> dict:
     """Exchange an authorization code for tokens at the Microsoft token endpoint."""
     data = {
-        "client_id": settings.AZURE_CLIENT_ID,
-        "client_secret": settings.AZURE_CLIENT_SECRET,
+        "client_id": azure_config["client_id"],
+        "client_secret": azure_config["client_secret"],
         "code": code,
-        "redirect_uri": settings.AZURE_REDIRECT_URI,
+        "redirect_uri": azure_config["redirect_uri"],
         "grant_type": "authorization_code",
         "code_verifier": code_verifier,
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
-            TOKEN_ENDPOINT.format(tenant_id=settings.AZURE_TENANT_ID),
+            TOKEN_ENDPOINT.format(tenant_id=azure_config["tenant_id"]),
             data=data,
         )
 
@@ -120,9 +189,9 @@ async def exchange_code_for_tokens(
 
 # ── JWKS fetching & caching ───────────────────────
 
-async def _get_signing_keys() -> list[dict]:
+async def _get_signing_keys(tenant_id: str) -> list[dict]:
     """Fetch Azure AD signing keys with caching."""
-    cache_key = settings.AZURE_TENANT_ID
+    cache_key = tenant_id
     now = time.time()
 
     if cache_key in _jwks_cache:
@@ -130,7 +199,7 @@ async def _get_signing_keys() -> list[dict]:
         if now - fetched_at < _JWKS_CACHE_TTL:
             return keys
 
-    url = JWKS_URL_TEMPLATE.format(tenant_id=settings.AZURE_TENANT_ID)
+    url = JWKS_URL_TEMPLATE.format(tenant_id=tenant_id)
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(url)
         resp.raise_for_status()
@@ -142,7 +211,7 @@ async def _get_signing_keys() -> list[dict]:
 
 # ── ID token validation ───────────────────────────
 
-async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
+async def validate_id_token(id_token: str, expected_nonce: str, azure_config: dict) -> dict:
     """Validate an Azure AD id_token and return the decoded claims.
 
     Validates:
@@ -152,6 +221,9 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
     - Expiration
     - Nonce (replay protection)
     """
+    tenant_id = azure_config["tenant_id"]
+    client_id = azure_config["client_id"]
+
     # Decode header to find kid
     try:
         header = jwt.get_unverified_header(id_token)
@@ -169,7 +241,7 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
         )
 
     # Fetch signing keys and find the matching one
-    signing_keys = await _get_signing_keys()
+    signing_keys = await _get_signing_keys(tenant_id)
     key_data = None
     for k in signing_keys:
         if k.get("kid") == kid:
@@ -200,13 +272,13 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
         public_key = rsa.RSAPublicNumbers(e, n).public_key()
 
     # Decode and validate
-    expected_issuer = f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}/v2.0"
+    expected_issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
     try:
         claims = jwt.decode(
             id_token,
             public_key,
             algorithms=["RS256"],
-            audience=settings.AZURE_CLIENT_ID,
+            audience=client_id,
             issuer=expected_issuer,
             options={
                 "verify_exp": True,
@@ -240,13 +312,17 @@ def resolve_azure_user(
     session: Session,
     claims: dict,
     ip_address: Optional[str] = None,
+    company_id: Optional[int] = None,
+    default_role_name: Optional[str] = None,
 ) -> User:
     """Resolve an Azure AD identity to a DMS user.
 
     Resolution order:
     1. Match by azure_object_id (returning Azure-linked users immediately).
     2. Match by email (link Azure identity to existing local account).
-    3. No match → JIT provision a new user.
+    3. No match -> JIT provision a new user.
+
+    When company_id is provided, JIT-provisioned users are assigned to that company.
 
     Raises HTTPException on unrecoverable errors (email mismatch, inactive account).
     """
@@ -317,9 +393,9 @@ def resolve_azure_user(
         return existing
 
     # 3. JIT provision a new user
-    default_role_name = settings.AZURE_DEFAULT_ROLE_NAME
+    role_name = default_role_name or settings.AZURE_DEFAULT_ROLE_NAME
     role = session.exec(
-        select(Role).where(Role.name == default_role_name)
+        select(Role).where(Role.name == role_name)
     ).first()
     if not role:
         # Fallback to auditor if configured role doesn't exist
@@ -336,6 +412,7 @@ def resolve_azure_user(
         azure_tenant_id=tenant_id,
         azure_display_name=display_name,
         azure_last_login_at=datetime.now(timezone.utc),
+        company_id=company_id,
     )
     session.add(new_user)
     session.flush()

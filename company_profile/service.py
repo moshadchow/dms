@@ -10,6 +10,8 @@ from sqlmodel import Session, select
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from company_profile.models import (
+    AzureConfigRead,
+    AzureConfigUpdate,
     Company,
     CompanyCreate,
     CompanyRead,
@@ -267,3 +269,97 @@ class CompanyService:
         )
 
         return _company_to_read(company)
+
+    # ──────────────────────────────────────────
+    # Azure AD configuration (per-company)
+    # ──────────────────────────────────────────
+
+    def get_azure_config(self, company_id: int) -> AzureConfigRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+        return AzureConfigRead(
+            configured=bool(company.azure_client_id and company.azure_tenant_id),
+            azure_client_id=company.azure_client_id,
+            azure_tenant_id=company.azure_tenant_id,
+            azure_enabled=company.azure_enabled,
+            azure_default_role_name=company.azure_default_role_name,
+        )
+
+    def update_azure_config(self, company_id: int, data: AzureConfigUpdate) -> AzureConfigRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        update_data = data.model_dump(exclude_unset=True)
+        old_values = {}
+        for field in update_data:
+            if field.startswith("azure_"):
+                old_values[field] = getattr(company, field)
+                setattr(company, field, update_data[field])
+
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value=old_values,
+            new_value=update_data,
+            description=f"Updated Azure AD config for company {company.company_id}",
+            is_success=True,
+        )
+
+        return AzureConfigRead(
+            configured=bool(company.azure_client_id and company.azure_tenant_id),
+            azure_client_id=company.azure_client_id,
+            azure_tenant_id=company.azure_tenant_id,
+            azure_enabled=company.azure_enabled,
+            azure_default_role_name=company.azure_default_role_name,
+        )
+
+    def delete_azure_config(self, company_id: int) -> AzureConfigRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        old_values = {
+            "azure_client_id": company.azure_client_id,
+            "azure_tenant_id": company.azure_tenant_id,
+            "azure_enabled": company.azure_enabled,
+        }
+
+        company.azure_client_id = None
+        company.azure_client_secret = None
+        company.azure_tenant_id = None
+        company.azure_enabled = False
+        company.azure_default_role_name = None
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value=old_values,
+            new_value={"azure_client_id": None, "azure_tenant_id": None, "azure_enabled": False},
+            description=f"Removed Azure AD config from company {company.company_id}",
+            is_success=True,
+        )
+
+        return AzureConfigRead(
+            configured=False,
+            azure_client_id=None,
+            azure_tenant_id=None,
+            azure_enabled=False,
+            azure_default_role_name=None,
+        )

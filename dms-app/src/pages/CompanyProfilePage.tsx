@@ -4,6 +4,7 @@ import { toast } from 'react-hot-toast'
 import { companiesApi } from '@/api/companies.api'
 import { useAuthStore } from '@/store/authStore'
 import CompanyFormModal from '@/components/admin/CompanyFormModal'
+import AzureConfigModal from '@/components/admin/AzureConfigModal'
 import type { Company } from '@/types/company.types'
 
 export default function CompanyProfilePage() {
@@ -20,6 +21,8 @@ export default function CompanyProfilePage() {
   const [filterActive, setFilterActive] = useState<string>('')
   const [formOpen, setFormOpen] = useState(false)
   const [editingCompany, setEditingCompany] = useState<Company | null>(null)
+  const [azureModalOpen, setAzureModalOpen] = useState(false)
+  const [azureCompany, setAzureCompany] = useState<Company | null>(null)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const LIMIT = 20
@@ -119,16 +122,16 @@ export default function CompanyProfilePage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                {['Company ID', 'Full Name', 'Short Name', 'Contact Person', 'Email', 'Status', 'Actions'].map((h) => (
+                {['Company ID', 'Full Name', 'Short Name', 'Contact Person', 'Email', 'Status', 'Azure AD', 'Actions'].map((h) => (
                   <th key={h} style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</td></tr>
+                <tr><td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</td></tr>
               ) : companies.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No companies found</td></tr>
+                <tr><td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>No companies found</td></tr>
               ) : companies.map((company) => (
                 <tr key={company.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text)' }}>{company.company_id}</td>
@@ -140,6 +143,14 @@ export default function CompanyProfilePage() {
                     <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '3px 8px', borderRadius: '999px', backgroundColor: company.is_active ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', color: company.is_active ? '#16a34a' : '#dc2626' }}>
                       {company.is_active ? 'Active' : 'Inactive'}
                     </span>
+                  </td>
+                  <td style={{ padding: '0.75rem 1rem' }}>
+                    <button
+                      onClick={() => { setAzureCompany(company); setAzureModalOpen(true) }}
+                      style={{ padding: '4px 8px', fontSize: '0.75rem', borderRadius: '6px', border: '1px solid var(--border)', backgroundColor: company.azure_enabled ? 'rgba(34,197,94,0.1)' : 'var(--surface)', color: company.azure_enabled ? '#16a34a' : 'var(--text-secondary)', cursor: 'pointer', fontFamily: 'inherit' }}
+                    >
+                      {company.azure_enabled ? 'Configured' : 'Configure'}
+                    </button>
                   </td>
                   <td style={{ padding: '0.75rem 1rem' }}>
                     <div style={{ display: 'flex', gap: '6px' }}>
@@ -178,6 +189,14 @@ export default function CompanyProfilePage() {
         isOpen={formOpen}
         editing={editingCompany}
         onClose={() => { setFormOpen(false); setEditingCompany(null) }}
+        onSuccess={loadCompanies}
+      />
+
+      {/* Azure AD config modal */}
+      <AzureConfigModal
+        isOpen={azureModalOpen}
+        company={azureCompany}
+        onClose={() => { setAzureModalOpen(false); setAzureCompany(null) }}
         onSuccess={loadCompanies}
       />
     </div>

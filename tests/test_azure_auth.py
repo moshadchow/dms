@@ -43,12 +43,28 @@ class TestPkceGeneration:
 
 class TestStateAndNonce:
     def test_generate_state_is_url_safe(self):
-        state = generate_state()
+        nonce = generate_nonce()
+        state = generate_state(nonce)
         assert isinstance(state, str)
         assert len(state) > 20
-        # Should be URL-safe base64
+        # Should be URL-safe base64 (may have = padding)
         import re
-        assert re.match(r'^[A-Za-z0-9_-]+$', state)
+        assert re.match(r'^[A-Za-z0-9_-]+=*$', state)
+
+    def test_generate_state_encodes_company_id(self):
+        import base64, json
+        nonce = generate_nonce()
+        state = generate_state(nonce, company_id=42)
+        decoded = json.loads(base64.urlsafe_b64decode(state))
+        assert decoded["cid"] == 42
+        assert decoded["n"] == nonce
+
+    def test_generate_state_no_company(self):
+        import base64, json
+        nonce = generate_nonce()
+        state = generate_state(nonce, company_id=None)
+        decoded = json.loads(base64.urlsafe_b64decode(state))
+        assert decoded["cid"] is None
 
     def test_generate_nonce_is_unique(self):
         n1 = generate_nonce()
@@ -59,7 +75,7 @@ class TestStateAndNonce:
 # ── Azure config endpoint ────────────────────────
 
 class TestAzureConfigEndpoint:
-    def test_azure_config_returns_enabled_false_when_not_configured(self, client, monkeypatch):
+    def test_azure_config_returns_global_enabled_false_when_not_configured(self, client, monkeypatch):
         test_client, _, _ = client
         monkeypatch.setattr("auth.router.settings", type("S", (), {
             "AZURE_CLIENT_ID": "",
@@ -70,9 +86,11 @@ class TestAzureConfigEndpoint:
 
         resp = test_client.get("/api/v1/auth/azure/config")
         assert resp.status_code == 200
-        assert resp.json() == {"enabled": False}
+        data = resp.json()
+        assert data["global_enabled"] is False
+        assert "companies" in data
 
-    def test_azure_config_returns_enabled_true_when_configured(self, client, monkeypatch):
+    def test_azure_config_returns_global_enabled_true_when_configured(self, client, monkeypatch):
         test_client, _, _ = client
         monkeypatch.setattr("auth.router.settings", type("S", (), {
             "AZURE_CLIENT_ID": "test-client-id",
@@ -83,18 +101,28 @@ class TestAzureConfigEndpoint:
 
         resp = test_client.get("/api/v1/auth/azure/config")
         assert resp.status_code == 200
-        assert resp.json() == {"enabled": True}
+        data = resp.json()
+        assert data["global_enabled"] is True
+        assert "companies" in data
 
 
 # ── Azure login redirect ─────────────────────────
 
 class TestAzureLoginRedirect:
-    def test_azure_login_returns_503_when_not_configured(self, client, monkeypatch):
+    def test_azure_login_returns_503_when_no_config_anywhere(self, client, monkeypatch):
         test_client, _, _ = client
-        # Patch the router's imported settings reference
-        monkeypatch.setattr("auth.router.settings", type("S", (), {
+        # Patch both router and service settings to have no Azure config
+        mock_settings = type("S", (), {
             "AZURE_ENABLED": False,
-        })())
+            "AZURE_CLIENT_ID": "",
+            "AZURE_CLIENT_SECRET": "",
+            "AZURE_TENANT_ID": "",
+            "AZURE_SCOPES": ["openid"],
+            "AZURE_REDIRECT_URI": "http://localhost:8000/api/v1/auth/azure/callback",
+            "AZURE_DEFAULT_ROLE_NAME": "auditor",
+        })()
+        monkeypatch.setattr("auth.router.settings", mock_settings)
+        monkeypatch.setattr("auth.azure_service.settings", mock_settings)
 
         resp = test_client.get("/api/v1/auth/azure/login", follow_redirects=False)
         assert resp.status_code == 503
@@ -104,9 +132,11 @@ class TestAzureLoginRedirect:
         mock_settings = type("S", (), {
             "AZURE_ENABLED": True,
             "AZURE_CLIENT_ID": "test-client-id",
+            "AZURE_CLIENT_SECRET": "test-secret",
             "AZURE_TENANT_ID": "test-tenant-id",
             "AZURE_SCOPES": ["openid", "profile", "email"],
             "AZURE_REDIRECT_URI": "http://localhost:8000/api/v1/auth/azure/callback",
+            "AZURE_DEFAULT_ROLE_NAME": "auditor",
         })()
         monkeypatch.setattr("auth.router.settings", mock_settings)
         monkeypatch.setattr("auth.azure_service.settings", mock_settings)
@@ -117,6 +147,43 @@ class TestAzureLoginRedirect:
         assert "test-client-id" in resp.headers["location"]
         assert "code_challenge" in resp.headers["location"]
         assert "state=" in resp.headers["location"]
+
+    def test_azure_login_with_company_id_uses_company_config(self, client, seeded_data, auth_headers, monkeypatch):
+        """When company_id is provided, the company's Azure config is used."""
+        test_client, _, _ = client
+        company_id = seeded_data["company_id"]
+
+        # Set Azure config on the company
+        test_client.put(
+            f"/api/v1/companies/{company_id}/azure-config",
+            json={
+                "azure_client_id": "company-client-id",
+                "azure_tenant_id": "company-tenant-id",
+                "azure_client_secret": "company-secret",
+                "azure_enabled": True,
+            },
+            headers=auth_headers["superadmin"],
+        )
+
+        # Also patch global settings to return False (so company config is used)
+        mock_settings = type("S", (), {
+            "AZURE_ENABLED": False,
+            "AZURE_CLIENT_ID": "",
+            "AZURE_CLIENT_SECRET": "",
+            "AZURE_TENANT_ID": "",
+            "AZURE_SCOPES": ["openid"],
+            "AZURE_REDIRECT_URI": "http://localhost:8000/api/v1/auth/azure/callback",
+            "AZURE_DEFAULT_ROLE_NAME": "auditor",
+        })()
+        monkeypatch.setattr("auth.router.settings", mock_settings)
+        monkeypatch.setattr("auth.azure_service.settings", mock_settings)
+
+        resp = test_client.get(
+            f"/api/v1/auth/azure/login?company_id={company_id}",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert "company-client-id" in resp.headers["location"]
 
 
 # ── User resolution / JIT provisioning ───────────
@@ -204,6 +271,26 @@ class TestAzureUserResolution:
             assert resolved.is_active is True
             # Should have a role assigned (auditor fallback)
             assert len(resolved.roles) > 0
+
+    def test_jit_provision_assigns_company(self, seeded_data, client):
+        """JIT-provisioned users get assigned to the specified company."""
+        _, engine, _ = client
+        company_id = seeded_data["company_id"]
+        with Session(engine) as session:
+            auditor = session.exec(select(Role).where(Role.name == RoleName.AUDITOR)).first()
+            if not auditor:
+                auditor = Role(name=RoleName.AUDITOR, description="Auditor")
+                session.add(auditor)
+                session.flush()
+
+            claims = self._make_claims(
+                oid="company-user-oid",
+                email="companyuser@company.com",
+                name="Company User",
+            )
+            resolved = resolve_azure_user(session, claims, company_id=company_id)
+
+            assert resolved.company_id == company_id
 
     def test_reject_inactive_user(self, seeded_data, client):
         _, engine, _ = client

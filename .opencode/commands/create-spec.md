@@ -39,7 +39,7 @@ Read these files before writing the spec:
 - `seed.py` — existing roles and permissions
 - `middleware/rbac.py` — ROUTE_PERMISSION_MAP (must add new endpoints here)
 - `middleware/audit.py` — audit logging middleware
-- All files in `.opencode/specs/` — avoid duplicating existing specs
+- All files in `plans/` — avoid duplicating existing plans
 
 Check `AGENTS.md` to confirm the requested step is not already
 marked complete. If it is, warn the user and stop.
@@ -111,18 +111,18 @@ something that can be verified by running the app.
 ---
 
 ## Step 4 — Save the spec
-Save to: `.opencode/specs/<step_number>-<feature_slug>.md`
+Save to: `plans/<step_number>-<feature_slug>.md`
 
 ## Step 5 — Report to the user
 Print a short summary in this exact format:
 ```
 Branch:    <branch_name>
-Spec file: .opencode/specs/<step_number>-<feature_slug>.md
+Spec file: plans/<step_number>-<feature_slug>.md
 Title:     <feature_title>
 ```
 
 Then tell the user:
-"Review the spec at `.opencode/specs/<step_number>-<feature_slug>.md`
+"Review the spec at `plans/<step_number>-<feature_slug>.md`
 then enter Plan Mode with Shift+Tab twice to begin implementation."
 
 Do not print the full spec in chat unless explicitly asked.

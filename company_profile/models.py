@@ -17,6 +17,12 @@ class CompanyBase(SQLModel):
     contact_no: Optional[str] = Field(default=None, max_length=50)
     email_address: Optional[str] = Field(default=None, max_length=255)
     is_active: bool = Field(default=True)
+    # ── Azure AD (per-company) ────────────────
+    azure_client_id: Optional[str] = Field(default=None, max_length=255)
+    azure_client_secret: Optional[str] = Field(default=None, max_length=500)
+    azure_tenant_id: Optional[str] = Field(default=None, max_length=255)
+    azure_enabled: bool = Field(default=False)
+    azure_default_role_name: Optional[str] = Field(default=None, max_length=50)
 
 
 class Company(CompanyBase, table=True):
@@ -40,6 +46,25 @@ class CompanyUpdate(SQLModel):
     contact_no: Optional[str] = None
     email_address: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class AzureConfigUpdate(SQLModel):
+    """Request schema for updating a company's Azure AD configuration."""
+    azure_client_id: Optional[str] = None
+    azure_client_secret: Optional[str] = None
+    azure_tenant_id: Optional[str] = None
+    azure_enabled: Optional[bool] = None
+    azure_default_role_name: Optional[str] = None
+
+
+class AzureConfigRead(SQLModel):
+    """Response schema for a company's Azure AD configuration (never exposes secret)."""
+    configured: bool = False
+    azure_client_id: Optional[str] = None
+    azure_tenant_id: Optional[str] = None
+    azure_enabled: bool = False
+    azure_default_role_name: Optional[str] = None
+    model_config = {"from_attributes": True}
 
 
 class CompanyRead(CompanyBase):

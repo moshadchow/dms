@@ -9,10 +9,12 @@ from sqlmodel import Session
 
 from auth.azure_service import (
     build_authorization_url,
+    decode_state,
     exchange_code_for_tokens,
     generate_nonce,
     generate_pkce_pair,
     generate_state,
+    get_azure_config_for_company,
     resolve_azure_user,
     validate_id_token,
 )
@@ -132,7 +134,7 @@ def change_password(
 
 
 # ─────────────────────────────────────────────────
-# Azure AD Authentication
+# Azure AD Authentication (company-scoped)
 # ─────────────────────────────────────────────────
 
 @router.get(
@@ -140,30 +142,37 @@ def change_password(
     summary="Initiate Azure AD login",
     response_class=RedirectResponse,
 )
-async def azure_login(request: Request):
+async def azure_login(
+    request: Request,
+    company_id: int = Query(None, description="Company ID for company-scoped Azure AD"),
+):
     """
     Redirect the browser to the Microsoft Entra ID login page.
 
-    Generates PKCE code_verifier + code_challenge, state, and nonce,
-    stores them temporarily, and redirects to Azure's authorize endpoint.
+    When company_id is provided, uses that company's Azure AD config.
+    Otherwise falls back to the global .env Azure AD config.
+
+    Generates PKCE code_verifier + code_challenge, state (encoding nonce + company_id),
+    and redirects to Azure's authorize endpoint.
     """
-    if not settings.AZURE_ENABLED:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Azure AD authentication is not configured",
-        )
+    session = next(get_session())
+    try:
+        azure_config = get_azure_config_for_company(session, company_id)
+    finally:
+        session.close()
 
     code_verifier, code_challenge = generate_pkce_pair()
-    state = generate_state()
     nonce = generate_nonce()
+    state = generate_state(nonce, company_id)
 
     # Store temporarily (keyed by state) — production should use encrypted cookie or Redis
     _pending_auth[state] = {
         "code_verifier": code_verifier,
         "nonce": nonce,
+        "company_id": company_id,
     }
 
-    auth_url = build_authorization_url(state, code_challenge, nonce)
+    auth_url = build_authorization_url(state, code_challenge, nonce, azure_config)
     return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
 
 
@@ -222,6 +231,7 @@ async def azure_callback(
     pending = _pending_auth.pop(state)
     code_verifier = pending["code_verifier"]
     expected_nonce = pending["nonce"]
+    company_id = pending.get("company_id")
 
     if not code:
         AuditService(session).log_event(
@@ -238,8 +248,11 @@ async def azure_callback(
         )
 
     try:
+        # Get Azure config for this company (or global fallback)
+        azure_config = get_azure_config_for_company(session, company_id)
+
         # Exchange code for tokens
-        token_data = await exchange_code_for_tokens(code, code_verifier)
+        token_data = await exchange_code_for_tokens(code, code_verifier, azure_config)
         raw_id_token = token_data.get("id_token")
 
         if not raw_id_token:
@@ -257,10 +270,16 @@ async def azure_callback(
             )
 
         # Validate the id_token
-        claims = await validate_id_token(raw_id_token, expected_nonce)
+        claims = await validate_id_token(raw_id_token, expected_nonce, azure_config)
 
         # Resolve user (JIT provisioning)
-        user = resolve_azure_user(session, claims, ip_address=ip_address)
+        user = resolve_azure_user(
+            session,
+            claims,
+            ip_address=ip_address,
+            company_id=company_id,
+            default_role_name=azure_config.get("default_role_name"),
+        )
 
         if not user.is_active:
             return RedirectResponse(
@@ -316,6 +335,24 @@ async def azure_callback(
     "/azure/config",
     summary="Check if Azure AD is enabled",
 )
-def azure_config():
-    """Return whether Azure AD authentication is available."""
-    return {"enabled": settings.AZURE_ENABLED}
+def azure_config(session: Session = Depends(get_session)):
+    """Return whether Azure AD authentication is available and which companies have it enabled."""
+    global_enabled = settings.AZURE_ENABLED
+
+    # Find companies with Azure enabled
+    from company_profile.models import Company
+    companies = session.exec(
+        select(Company).where(Company.azure_enabled == True)  # noqa: E712
+    ).all()
+
+    return {
+        "global_enabled": global_enabled,
+        "companies": [
+            {"id": c.id, "name": c.full_name, "short_name": c.short_name}
+            for c in companies
+        ],
+    }
+
+
+# Need select for azure_config
+from sqlmodel import select  # noqa: E402

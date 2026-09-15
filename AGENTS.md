@@ -1,14 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend feature modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
 alembic upgrade head          # apply DB migrations (required before first run)
 python seed.py                # seed roles, permissions, and admin user (run once after migrate)
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (352 tests, SQLite-in-memory)
+pytest                        # run all tests (383 tests, SQLite-in-memory)
 ```
 
 **`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
@@ -17,7 +17,7 @@ pytest                        # run all tests (352 tests, SQLite-in-memory)
 ```
 cd dms-app && npm install
 npm run dev      # Vite dev server on :5173 (proxies /api to backend :8000)
-npm run build    # tsc + vite build
+npm run build    # tsc + vite build (includes typecheck)
 npm run lint     # ESLint
 ```
 
@@ -90,13 +90,15 @@ Backend module: `auth/azure_service.py` handles PKCE, token exchange, ID token v
 - `core/config.py` — `AZURE_*` and `FRONTEND_URL` settings
 - `dms-app/src/pages/AzureCallbackPage.tsx` — frontend callback handler
 
+**Company-scoped Azure AD:** Each company can have its own Azure AD config (`azure_client_id`, `azure_tenant_id`, `azure_client_secret`, `azure_enabled`, `azure_scopes`) stored on the `Company` model. The login flow accepts an optional `company_id` query param; the callback extracts the company from the state parameter. Falls back to global `.env` config when no company config is found.
+
 **Azure callback flow:** Login → Azure → callback exchanges code for tokens → validates ID token → resolves/creates user → redirects to `{FRONTEND_URL}/auth/callback?access_token=...&refresh_token=...`
 
 **Error surfacing:** `azure_callback` in `auth/router.py` has separate `except HTTPException` and `except Exception` handlers. In DEBUG mode, the actual error message is URL-encoded in the `?error=` query param. Audit events go to `dms.auth` logger.
 
-**JWK parsing:** `python-jose`'s `jwk.construct()` fails with Azure AD signing keys that include `x5c` fields. `azure_service.py:188-203` uses the `cryptography` library to build RSA public keys from the X.509 certificate chain instead. Do not revert to `jwk.construct()`.
+**JWK parsing:** `python-jose`'s `jwk.construct()` fails with Azure AD signing keys that include `x5c` fields. `azure_service.py` uses the `cryptography` library to build RSA public keys from the X.509 certificate chain instead. Do not revert to `jwk.construct()`.
 
-Azure is enabled when all three of `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are set. Copy `.env.example` to `.env` for local setup.
+Azure is enabled when either a company has `azure_enabled=True` with valid credentials, or when all three of `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are set globally. Copy `.env.example` to `.env` for local setup.
 
 ## Frontend Auth Flow
 - Zustand store (`store/authStore.ts`) persists only tokens to localStorage; the `user` object is re-fetched on every page load via `ProtectedRoute` calling `authApi.me()`.
@@ -138,6 +140,7 @@ All API files import `apiClient` from `./client` (the Axios instance with interc
 - Unique constraints: `company_id` and `short_name`.
 - SUPERADMIN-only endpoints mounted at `/api/v1/companies`.
 - `users.company_id` FK (nullable) links users to companies. SUPERADMIN assigns company when creating ADMIN users; company is required for ADMIN creation, ignored for other roles. ADMIN users can update their own company via `PATCH /users/{id}`; SUPERADMIN cannot change company for non-ADMIN users.
+- Azure AD config endpoints: `GET/PUT/DELETE /api/v1/companies/{id}/azure-config` — PUT/DELETE are superadmin-only, GET allows admin for own company or superadmin for any.
 
 **Admin self-edit company rules** (`users/service.py` `update_user()`):
 - Admin cannot change their own `company_id` through the API (returns 403).
@@ -180,7 +183,7 @@ Default admin: `admin@dms.local` / `Admin@1234`.
 Short imperative subjects (`Fix archieve & Restore feature`). PRs: clear summary, migration notes for schema changes, screenshots for UI.
 
 ## Security
-Copy `.env.example` to `.env` for local setup. Never commit `.env` (it contains Azure AD client secrets). GitHub secret scanning will reject pushes containing Azure secrets. Treat `storage/uploads/` as runtime data. Ensure `__pycache__/` and `*.pyc` are in `.gitignore` before committing.
+Copy `.env.example` to `.env` for local setup. Never commit `.env` (it contains Azure AD client secrets). GitHub secret scanning will reject pushes containing Azure secrets. Treat `storage/uploads/` as runtime data. Ensure `__pycache__` and `*.pyc` are in `.gitignore` before committing.
 
 ---
 
