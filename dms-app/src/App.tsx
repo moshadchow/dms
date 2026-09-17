@@ -17,6 +17,10 @@ const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
 const PendingApprovalPage = lazy(() => import('@/pages/PendingApprovalPage'))
 const ApprovalHistoryPage = lazy(() => import('@/pages/ApprovalHistoryPage'))
 const ForceChangePasswordPage = lazy(() => import('@/pages/ForceChangePasswordPage'))
+const CorrespondenceListPage = lazy(() => import('@/pages/CorrespondenceListPage'))
+const CorrespondenceCreatePage = lazy(() => import('@/pages/CorrespondenceCreatePage'))
+const CorrespondenceDetailPage = lazy(() => import('@/pages/CorrespondenceDetailPage'))
+const CorrespondenceEditPage = lazy(() => import('@/pages/CorrespondenceEditPage'))
 const NotFoundPage  = lazy(() => import('@/pages/NotFoundPage'))
 const ForbiddenPage = lazy(() => import('@/pages/ForbiddenPage'))
 
@@ -91,6 +95,10 @@ export default function App() {
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
               <Route path="/approvals/pending"    element={<PendingApprovalPage />} />
               <Route path="/approvals/history"    element={<ApprovalHistoryPage />} />
+              <Route path="/correspondence"         element={<CorrespondenceListPage />} />
+              <Route path="/correspondence/new"      element={<CorrespondenceCreatePage />} />
+              <Route path="/correspondence/:id"      element={<CorrespondenceDetailPage />} />
+              <Route path="/correspondence/:id/edit" element={<CorrespondenceEditPage />} />
               <Route path="/memos"           element={<MemoListPage />} />
               <Route path="/memos/new"       element={<MemoDraftPage key="new" />} />
               <Route path="/memos/:id"       element={<MemoDetailPage />} />

@@ -19,6 +19,7 @@ from user_levels.router  import router as user_levels_router
 from workflow.router import router as workflow_router, instance_router as workflow_instance_router, signature_router as workflow_signature_router
 from storage_usage.router import router as storage_router
 from company_profile.router import router as company_profile_router
+from correspondence.router import router as correspondence_router
 
 
 @asynccontextmanager
@@ -86,6 +87,7 @@ app.include_router(workflow_signature_router, prefix=f"{API}/signatures",       
 app.include_router(memos_router,             prefix=f"{API}/memos",               tags=["Memos"])
 app.include_router(storage_router,           prefix=f"{API}/storage",              tags=["Storage"])
 app.include_router(company_profile_router,   prefix=f"{API}/companies",            tags=["Companies"])
+app.include_router(correspondence_router,    prefix=f"{API}/correspondences",       tags=["Correspondence"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

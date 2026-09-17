@@ -73,6 +73,12 @@ class StorageService:
         root.mkdir(parents=True, exist_ok=True)
         return root
 
+    def get_correspondence_root(self, company: Company) -> Path:
+        """STORAGE_ROOT/<short_name>/correspondence/"""
+        root = self.get_company_root(company) / "correspondence"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+
     def resolve_path(self, company: Company, relative_path: str) -> Path:
         """Resolve a DB-relative path to absolute, validating it stays in company root."""
         company_root = self.get_company_root(company)

@@ -87,6 +87,18 @@ class AuditAction(str, Enum):
     ACTIVATE_COMPANY = "activate_company"
     DEACTIVATE_COMPANY = "deactivate_company"
 
+    # Correspondence
+    CREATE_CORRESPONDENCE = "create_correspondence"
+    UPDATE_CORRESPONDENCE = "update_correspondence"
+    SUBMIT_CORRESPONDENCE = "submit_correspondence"
+    ASSIGN_CORRESPONDENCE = "assign_correspondence"
+    FORWARD_CORRESPONDENCE = "forward_correspondence"
+    DISPATCH_CORRESPONDENCE = "dispatch_correspondence"
+    DOWNLOAD_CORRESPONDENCE = "download_correspondence"
+    DOWNLOAD_FINAL_CORRESPONDENCE = "download_final_correspondence"
+    COMPLETE_CORRESPONDENCE = "complete_correspondence"
+    ARCHIVE_CORRESPONDENCE = "archive_correspondence"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"
@@ -98,6 +110,7 @@ class AuditModule(str, Enum):
     SECURITY = "security"
     WORKFLOW = "workflow"
     COMPANIES = "companies"
+    CORRESPONDENCE = "correspondence"
 
 
 # ──────────────────────────────────────────────

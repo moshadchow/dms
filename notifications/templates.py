@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Tuple
+from typing import Optional, Tuple
 
 from core.config import settings
 from core.security import create_token_pair
@@ -309,5 +309,209 @@ If you did not request this change, please contact your administrator immediatel
     text = _build_text_template("Password Reset", text_content)
 
     subject = "[DMS] Your Password Has Been Reset"
+
+    return subject, html, text
+
+
+def build_correspondence_assigned_email(
+    reference_number: str,
+    subject_line: str,
+    direction: str,
+    assigned_by: str,
+    remarks: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """Build email for correspondence assignment notification."""
+    view_url = f"{settings.FRONTEND_URL}/correspondence"
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Correspondence Assigned to You</h2>
+        <p style="margin: 0 0 24px; color: #475569;">A {direction} correspondence has been assigned to you for action.</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; width: 140px;">Reference No:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-family: monospace;">{reference_number}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Subject:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{subject_line}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Direction:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{direction.title()}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Assigned By:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{assigned_by}</td>
+            </tr>
+        </table>
+
+        {f'<div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin-bottom: 24px;"><p style="margin: 0; font-weight: 600; color: #334155;">Remarks:</p><p style="margin: 8px 0 0; color: #475569;">{remarks}</p></div>' if remarks else ''}
+
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{view_url}" style="display: inline-block; background-color: #2563eb; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">View Correspondence</a>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If the button above doesn't work, copy and paste this link into your browser:<br><span style="word-break: break-all;">{view_url}</span></p>
+    """
+
+    text_content = f"""
+Correspondence Assigned to You
+
+A {direction} correspondence has been assigned to you for action.
+
+Reference No: {reference_number}
+Subject: {subject_line}
+Direction: {direction.title()}
+Assigned By: {assigned_by}
+
+{f"Remarks: {remarks}" if remarks else ""}
+
+View Correspondence: {view_url}
+"""
+
+    html = _build_html_template("Correspondence Assigned", html_content)
+    text = _build_text_template("Correspondence Assigned", text_content)
+
+    subject = f"[DMS] Correspondence Assigned: {reference_number}"
+
+    return subject, html, text
+
+
+def build_correspondence_dispatched_email(
+    reference_number: str,
+    subject_line: str,
+    direction: str,
+    dispatched_by: str,
+    dispatch_method: str,
+    dispatch_reference: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """Build email for correspondence dispatch notification."""
+    view_url = f"{settings.FRONTEND_URL}/correspondence"
+
+    dispatch_info = f"Dispatch Reference: {dispatch_reference}" if dispatch_reference else "No dispatch reference provided"
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Correspondence Dispatched</h2>
+        <p style="margin: 0 0 24px; color: #475569;">A {direction} correspondence has been dispatched.</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; width: 140px;">Reference No:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-family: monospace;">{reference_number}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Subject:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{subject_line}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Direction:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{direction.title()}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Dispatched By:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{dispatched_by}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Method:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{dispatch_method.replace('_', ' ').title()}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Details:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{dispatch_info}</td>
+            </tr>
+        </table>
+
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{view_url}" style="display: inline-block; background-color: #2563eb; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">View Correspondence</a>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If the button above doesn't work, copy and paste this link into your browser:<br><span style="word-break: break-all;">{view_url}</span></p>
+    """
+
+    text_content = f"""
+Correspondence Dispatched
+
+A {direction} correspondence has been dispatched.
+
+Reference No: {reference_number}
+Subject: {subject_line}
+Direction: {direction.title()}
+Dispatched By: {dispatched_by}
+Method: {dispatch_method.replace('_', ' ').title()}
+{dispatch_info}
+
+View Correspondence: {view_url}
+"""
+
+    html = _build_html_template("Correspondence Dispatched", html_content)
+    text = _build_text_template("Correspondence Dispatched", text_content)
+
+    subject = f"[DMS] Correspondence Dispatched: {reference_number}"
+
+    return subject, html, text
+
+
+def build_correspondence_forwarded_email(
+    reference_number: str,
+    subject_line: str,
+    direction: str,
+    forwarded_by: str,
+    remarks: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """Build email for correspondence forward notification."""
+    view_url = f"{settings.FRONTEND_URL}/correspondence"
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Correspondence Forwarded to You</h2>
+        <p style="margin: 0 0 24px; color: #475569;">A {direction} correspondence has been forwarded to you for review.</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; width: 140px;">Reference No:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-family: monospace;">{reference_number}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Subject:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{subject_line}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Direction:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{direction.title()}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Forwarded By:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{forwarded_by}</td>
+            </tr>
+        </table>
+
+        {f'<div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin-bottom: 24px;"><p style="margin: 0; font-weight: 600; color: #334155;">Remarks:</p><p style="margin: 8px 0 0; color: #475569;">{remarks}</p></div>' if remarks else ''}
+
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{view_url}" style="display: inline-block; background-color: #2563eb; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">View Correspondence</a>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If the button above doesn't work, copy and paste this link into your browser:<br><span style="word-break: break-all;">{view_url}</span></p>
+    """
+
+    text_content = f"""
+Correspondence Forwarded to You
+
+A {direction} correspondence has been forwarded to you for review.
+
+Reference No: {reference_number}
+Subject: {subject_line}
+Direction: {direction.title()}
+Forwarded By: {forwarded_by}
+
+{f"Remarks: {remarks}" if remarks else ""}
+
+View Correspondence: {view_url}
+"""
+
+    html = _build_html_template("Correspondence Forwarded", html_content)
+    text = _build_text_template("Correspondence Forwarded", text_content)
+
+    subject = f"[DMS] Correspondence Forwarded: {reference_number}"
 
     return subject, html, text

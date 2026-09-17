@@ -64,6 +64,13 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     ("PATCH",  "/api/v1/companies"):            PermissionAction.UPDATE,
     ("PUT",    "/api/v1/companies/"):           PermissionAction.UPDATE,
     ("DELETE", "/api/v1/companies/"):           PermissionAction.DELETE,
+    # ── Correspondence ─────────────────────────
+    ("GET",    "/api/v1/correspondences"):      PermissionAction.VIEW,
+    ("POST",   "/api/v1/correspondences"):      PermissionAction.CREATE,
+    ("PATCH",  "/api/v1/correspondences"):      PermissionAction.UPDATE,
+    ("POST",   "/api/v1/correspondences/"):     PermissionAction.UPDATE,
+    ("GET",    "/api/v1/correspondences/"):     PermissionAction.VIEW,
+    ("DELETE", "/api/v1/correspondences/"):     PermissionAction.UPDATE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)

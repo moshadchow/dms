@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`, `correspondence/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
 
 ## Backend: Key Commands
 ```
@@ -157,6 +157,20 @@ All API files import `apiClient` from `./client` (the Axios instance with interc
 `storage_usage/` — tracks storage consumption per user/company.
 - `StorageUsageService` — calculates used space, enforces quotas.
 - Admin endpoints at `/api/v1/storage`.
+
+### Correspondence
+`correspondence/` — manages incoming, outgoing, and internal correspondence with file attachments.
+- `CorrespondenceService` — CRUD, workflow submission, dispatch/deliver/acknowledge lifecycle, attachments.
+- `CorrespondenceAttachment` table — junction linking correspondence to documents (supports multiple files per correspondence).
+- `AttachmentType` enum: `original` (inbound received doc), `supporting` (reference files), `working` (drafts).
+
+**Key gotchas:**
+- `document_id` on `Correspondence` is nullable (migration `f8a9b0c1d2e3`). Inbound correspondence can be created without a primary document.
+- Outbound/internal auto-generate an HTML backing document from `body` text via `_save_correspondence_html()`.
+- Attachments require a valid `directory_id` on the `Document` record. `add_attachment()` resolves a directory from `corr.category_id` — correspondence **must** have a category to upload attachments.
+- Download endpoint (`/{id}/download`) falls back to the first attachment when no primary document exists.
+- RBAC: `DELETE /api/v1/correspondences/` maps to `UPDATE` permission in `middleware/rbac.py`.
+- Frontend create flow: correspondence is created first (JSON), then file is uploaded as attachment via `POST /{id}/attachments`.
 
 ## Frontend: TypeScript Typecheck
 `npm run build` runs `tsc && vite build` — typecheck is part of the build step, no separate `typecheck` script.
