@@ -19,6 +19,7 @@ export default function WorkflowConfigPanel() {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<boolean | ''>('')
+  const [docTypeFilter, setDocTypeFilter] = useState<string>('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<WorkflowDefinitionDetail | null>(null)
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null)
@@ -31,6 +32,11 @@ export default function WorkflowConfigPanel() {
         limit: LIMIT,
       }
       if (statusFilter !== '') params.is_active = statusFilter
+      if (docTypeFilter === 'null') {
+        params.document_type_is_null = true
+      } else if (docTypeFilter !== '') {
+        params.document_type = docTypeFilter
+      }
       if (isSuperAdmin && selectedCompanyId) params.company_id = selectedCompanyId
       const data = await workflowApi.list(params as { skip?: number; limit?: number; is_active?: boolean; company_id?: number })
       setDefinitions(data.items)
@@ -40,10 +46,10 @@ export default function WorkflowConfigPanel() {
     } finally {
       setLoading(false)
     }
-  }, [page, statusFilter, isSuperAdmin, selectedCompanyId])
+  }, [page, statusFilter, docTypeFilter, isSuperAdmin, selectedCompanyId])
 
   useEffect(() => { loadDefinitions() }, [loadDefinitions])
-  useEffect(() => { setPage(1) }, [statusFilter, selectedCompanyId])
+  useEffect(() => { setPage(1) }, [statusFilter, docTypeFilter, selectedCompanyId])
 
   const totalPages = Math.ceil(total / LIMIT) || 1
 
@@ -152,9 +158,28 @@ export default function WorkflowConfigPanel() {
                 <option value="false">Inactive</option>
               </select>
 
-              {statusFilter !== '' && (
+              <label style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Type
+              </label>
+              <select
+                value={docTypeFilter}
+                onChange={(e) => setDocTypeFilter(e.target.value)}
+                style={{
+                  padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border)',
+                  backgroundColor: 'var(--bg)', color: 'var(--text)', fontSize: '0.82rem',
+                  fontFamily: 'inherit', minWidth: '160px',
+                }}
+              >
+                <option value="">All Types</option>
+                <option value="null">Memo</option>
+                <option value="correspondence_inbound">Inbound Correspondence</option>
+                <option value="correspondence_outbound">Outbound Correspondence</option>
+                <option value="correspondence_internal">Internal Correspondence</option>
+              </select>
+
+              {(statusFilter !== '' || docTypeFilter !== '') && (
                 <button
-                  onClick={() => setStatusFilter('')}
+                  onClick={() => { setStatusFilter(''); setDocTypeFilter('') }}
                   style={{
                     padding: '5px 10px', borderRadius: '7px', border: '1px solid var(--border)',
                     backgroundColor: 'var(--surface)', color: 'var(--text-secondary)', fontSize: '0.78rem',
@@ -186,6 +211,7 @@ export default function WorkflowConfigPanel() {
                   <thead>
                     <tr style={{ borderBottom: '1px solid var(--border)' }}>
                       <th style={thStyle}>Name</th>
+                      <th style={thStyle}>Type</th>
                       <th style={{ ...thStyle, textAlign: 'center' }}>Steps</th>
                       <th style={thStyle}>Status</th>
                       <th style={thStyle}>Created</th>
@@ -204,6 +230,16 @@ export default function WorkflowConfigPanel() {
                               </span>
                             )}
                           </div>
+                        </td>
+                        <td style={tdStyle}>
+                          <span style={{
+                            display: 'inline-block', padding: '2px 8px', borderRadius: '999px',
+                            fontSize: '0.72rem', fontWeight: 600,
+                            backgroundColor: !def.document_type ? '#e0e7ff' : '#dbeafe',
+                            color: !def.document_type ? '#3730a3' : '#1e40af',
+                          }}>
+                            {!def.document_type ? 'Memo' : def.document_type.replace('correspondence_', '').charAt(0).toUpperCase() + def.document_type.replace('correspondence_', '').slice(1)}
+                          </span>
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'center' }}>
                           <span style={{ color: 'var(--text-tertiary)' }}>--</span>

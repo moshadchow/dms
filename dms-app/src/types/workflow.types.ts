@@ -27,6 +27,7 @@ export interface WorkflowDefinition {
   is_active: boolean
   created_by: number
   company_id: number | null
+  document_type: string | null
   created_at: string
   updated_at: string
 }
@@ -57,6 +58,7 @@ export interface WorkflowStepCreate {
 export interface WorkflowDefinitionCreate {
   name: string
   description?: string
+  document_type?: string | null
   steps: WorkflowStepCreate[]
 }
 
@@ -64,6 +66,7 @@ export interface WorkflowDefinitionUpdate {
   name?: string
   description?: string
   is_active?: boolean
+  document_type?: string | null
   steps?: WorkflowStepCreate[]
 }
 
@@ -88,6 +91,7 @@ export interface WorkflowInstance {
   document_title: string | null
   workflow_definition_id: number
   workflow_name: string | null
+  document_type: string | null
   current_step_order: number
   current_step_name: string | null
   status: WorkflowStatus

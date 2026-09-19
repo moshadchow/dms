@@ -51,6 +51,8 @@ signature_router = APIRouter()
 def list_workflow_definitions(
     is_active:  Optional[bool] = Query(None, description="Filter by active status"),
     company_id: Optional[int]  = Query(None, description="Filter by company (SUPERADMIN only)"),
+    document_type: Optional[str] = Query(None, description="Filter by document type"),
+    document_type_is_null: Optional[bool] = Query(None, description="Filter for null document_type (Memo workflows)"),
     skip:       int            = Query(0, ge=0),
     limit:      int            = Query(50, ge=1, le=200),
     current_user: CurrentUser  = None,
@@ -58,7 +60,9 @@ def list_workflow_definitions(
 ):
     return WorkflowDefinitionService(session).list_definitions(
         skip=skip, limit=limit, is_active=is_active,
-        company_id=company_id, current_user=current_user,
+        company_id=company_id, document_type=document_type,
+        document_type_is_null=document_type_is_null,
+        current_user=current_user,
     )
 
 

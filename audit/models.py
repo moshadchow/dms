@@ -94,6 +94,8 @@ class AuditAction(str, Enum):
     ASSIGN_CORRESPONDENCE = "assign_correspondence"
     FORWARD_CORRESPONDENCE = "forward_correspondence"
     DISPATCH_CORRESPONDENCE = "dispatch_correspondence"
+    DELIVER_CORRESPONDENCE = "deliver_correspondence"
+    ACKNOWLEDGE_CORRESPONDENCE = "acknowledge_correspondence"
     DOWNLOAD_CORRESPONDENCE = "download_correspondence"
     DOWNLOAD_FINAL_CORRESPONDENCE = "download_final_correspondence"
     COMPLETE_CORRESPONDENCE = "complete_correspondence"

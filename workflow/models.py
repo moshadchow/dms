@@ -45,6 +45,7 @@ class WorkflowDefinitionBase(SQLModel):
     description: Optional[str] = Field(default=None, max_length=1000)
     is_active: bool = Field(default=True, index=True)
     company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
+    document_type: Optional[str] = Field(default=None, max_length=50, index=True)
 
 
 class WorkflowDefinition(WorkflowDefinitionBase, table=True):
@@ -298,6 +299,7 @@ class WorkflowDefinitionRead(SQLModel):
     is_active: bool
     created_by: int
     company_id: Optional[int] = None
+    document_type: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
@@ -351,6 +353,7 @@ class WorkflowInstanceRead(SQLModel):
     document_title: Optional[str] = None
     workflow_definition_id: int
     workflow_name: Optional[str] = None
+    document_type: Optional[str] = None
     current_step_order: int
     current_step_name: Optional[str] = None
     status: WorkflowStatus

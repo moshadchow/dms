@@ -7,6 +7,7 @@ import CorrespondenceTimeline from '@/components/correspondence/CorrespondenceTi
 import CorrespondenceResponsePanel from '@/components/correspondence/CorrespondenceResponsePanel'
 import CorrespondenceDispatchDialog from '@/components/correspondence/CorrespondenceDispatchDialog'
 import CorrespondenceAssignDialog from '@/components/correspondence/CorrespondenceAssignDialog'
+import CorrespondenceSubmitDialog from '@/components/correspondence/CorrespondenceSubmitDialog'
 import Button from '@/components/ui/Button'
 import { formatDateTime } from '@/utils/formatters'
 import { getErrorMessage } from '@/api/client'
@@ -19,9 +20,13 @@ const PRIORITY_BADGES: Record<string, { bg: string; color: string }> = {
 
 const STATUS_BADGES: Record<string, { bg: string; color: string }> = {
   draft: { bg: '#f1f5f9', color: '#64748b' }, received: { bg: '#dbeafe', color: '#1e40af' },
+  registered: { bg: '#dbeafe', color: '#1e40af' }, assigned: { bg: '#e0e7ff', color: '#3730a3' },
+  processing: { bg: '#fef3c7', color: '#92400e' },
   submitted: { bg: '#e0e7ff', color: '#3730a3' }, pending_approval: { bg: '#fef3c7', color: '#92400e' },
-  approved: { bg: '#d1fae5', color: '#065f46' }, dispatched: { bg: '#e0e7ff', color: '#3730a3' },
-  delivered: { bg: '#d1fae5', color: '#065f46' }, completed: { bg: '#d1fae5', color: '#065f46' },
+  approved: { bg: '#d1fae5', color: '#065f46' }, ready_for_dispatch: { bg: '#d1fae5', color: '#065f46' },
+  dispatched: { bg: '#e0e7ff', color: '#3730a3' },
+  delivered: { bg: '#d1fae5', color: '#065f46' }, acknowledged: { bg: '#d1fae5', color: '#065f46' },
+  completed: { bg: '#d1fae5', color: '#065f46' },
   cancelled: { bg: '#f1f5f9', color: '#64748b' }, archived: { bg: '#f1f5f9', color: '#64748b' },
   rejected: { bg: '#fee2e2', color: '#dc2626' }, returned: { bg: '#ffedd5', color: '#c2410c' },
 }
@@ -39,6 +44,7 @@ export default function CorrespondenceDetailPage() {
   const [dispatchOpen, setDispatchOpen] = useState(false)
   const [assignOpen, setAssignOpen] = useState(false)
   const [forwardOpen, setForwardOpen] = useState(false)
+  const [submitOpen, setSubmitOpen] = useState(false)
   const user = useAuthStore(s => s.user)
 
   const fetchCorr = async () => {
@@ -115,6 +121,7 @@ export default function CorrespondenceDetailPage() {
   const sBadge = STATUS_BADGES[corr.status] ?? STATUS_BADGES.draft
   const isAdmin = user?.roles?.some(r => r.name === 'admin' || r.name === 'superadmin')
   const canEdit = corr.status === 'draft' || corr.status === 'received' || corr.status === 'returned'
+  const canSubmit = corr.status === 'draft' || corr.status === 'received' || corr.status === 'returned'
   const canDispatch = (corr.status === 'approved' || corr.status === 'ready_for_dispatch') && isAdmin
   const canDeliver = corr.status === 'dispatched' && isAdmin
   const canAcknowledge = corr.status === 'delivered' && isAdmin
@@ -134,10 +141,11 @@ export default function CorrespondenceDetailPage() {
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           {canEdit && <Button variant="outline" size="sm" onClick={() => navigate(`/correspondence/${corr.id}/edit`)}>Edit</Button>}
+          {canSubmit && <Button size="sm" onClick={() => setSubmitOpen(true)}>Submit for Approval</Button>}
           {canDispatch && <Button size="sm" onClick={() => setDispatchOpen(true)}>Dispatch</Button>}
           {canDeliver && <Button size="sm" onClick={handleDeliver}>Mark Delivered</Button>}
           {canAcknowledge && <Button size="sm" onClick={handleAcknowledge}>Mark Acknowledged</Button>}
-          {corr.status === 'approved' && <Button variant="accent" size="sm" onClick={handleDownloadFinal}>Download PDF</Button>}
+          {corr.workflow_instance_id && <Button variant="accent" size="sm" onClick={handleDownloadFinal}>Download PDF</Button>}
         </div>
       </div>
 
@@ -171,7 +179,7 @@ export default function CorrespondenceDetailPage() {
                     <button
                       onClick={async () => {
                         try {
-                          const blob = await correspondenceApi.download(att.correspondence_id)
+                          const blob = await correspondenceApi.downloadAttachment(att.correspondence_id, att.id)
                           const url = URL.createObjectURL(blob)
                           const a = document.createElement('a'); a.href = url; a.download = att.file_name || 'attachment'; a.click()
                           URL.revokeObjectURL(url)
@@ -255,7 +263,7 @@ export default function CorrespondenceDetailPage() {
                   <Button variant="outline" size="sm" fullWidth onClick={() => setForwardOpen(true)}>Forward</Button>
                 </>
               )}
-              {corr.document_id && (
+              {corr.attachments && corr.attachments.length > 0 && (
                 <Button variant="ghost" size="sm" fullWidth onClick={async () => {
                   try {
                     const blob = await correspondenceApi.download(corr.id)
@@ -280,6 +288,13 @@ export default function CorrespondenceDetailPage() {
       <CorrespondenceDispatchDialog isOpen={dispatchOpen} onClose={() => setDispatchOpen(false)} onConfirm={handleDispatch} />
       <CorrespondenceAssignDialog isOpen={assignOpen} onClose={() => setAssignOpen(false)} onConfirm={handleAssign} />
       <CorrespondenceAssignDialog isOpen={forwardOpen} onClose={() => setForwardOpen(false)} onConfirm={handleForward} />
+      <CorrespondenceSubmitDialog
+        isOpen={submitOpen}
+        correspondenceId={corr.id}
+        direction={corr.direction}
+        onClose={() => setSubmitOpen(false)}
+        onSuccess={fetchCorr}
+      />
     </div>
   )
 }

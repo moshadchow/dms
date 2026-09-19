@@ -20,6 +20,8 @@ export const workflowApi = {
     category_id?: number
     is_active?: boolean
     company_id?: number
+    document_type?: string
+    document_type_is_null?: boolean
     skip?: number
     limit?: number
   }): Promise<WorkflowDefinitionListResponse> => {

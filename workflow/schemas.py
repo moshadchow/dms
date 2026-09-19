@@ -56,6 +56,11 @@ class WorkflowDefinitionCreate(BaseModel):
         examples=["Invoice Approval"],
     )
     description: Optional[str] = Field(None, max_length=1000)
+    document_type: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Document type: null for memo, 'correspondence_inbound', 'correspondence_outbound', 'correspondence_internal'",
+    )
     steps: List[WorkflowStepCreate] = Field(
         ...,
         min_length=1,
@@ -79,6 +84,7 @@ class WorkflowDefinitionUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
     is_active: Optional[bool] = None
+    document_type: Optional[str] = Field(None, max_length=50)
     steps: Optional[List[WorkflowStepCreate]] = Field(
         None,
         description="If provided, replaces all existing steps and approvers",

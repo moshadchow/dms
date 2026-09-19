@@ -14,6 +14,13 @@ interface WorkflowFormModalProps {
   onSuccess: () => void
 }
 
+const DOCUMENT_TYPE_OPTIONS = [
+  { value: '', label: 'Memo (Default)' },
+  { value: 'correspondence_inbound', label: 'Inbound Correspondence' },
+  { value: 'correspondence_outbound', label: 'Outbound Correspondence' },
+  { value: 'correspondence_internal', label: 'Internal Correspondence' },
+]
+
 interface StepForm {
   step_name: string
   approval_mode: ApprovalMode
@@ -41,6 +48,7 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
   const isSuperAdmin = useAuthStore((state) => state.isSuperAdmin())
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [documentType, setDocumentType] = useState('')
   const [steps, setSteps] = useState<StepForm[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingData, setLoadingData] = useState(false)
@@ -66,6 +74,7 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
       workflowApi.get(editing.id).then((detail) => {
         setName(detail.name)
         setDescription(detail.description || '')
+        setDocumentType(detail.document_type || '')
         setSteps(
           detail.steps.map((s) => ({
             step_name: s.step_name,
@@ -84,6 +93,7 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
     } else {
       setName('')
       setDescription('')
+      setDocumentType('')
       setSteps([])
     }
   }, [editing, isOpen])
@@ -177,6 +187,7 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
         await workflowApi.create({
           name: name.trim(),
           description: description.trim() || undefined,
+          document_type: documentType || undefined,
           steps: stepsData,
         })
         toast.success('Workflow created')
@@ -232,6 +243,25 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
               <div style={{ marginBottom: '0.75rem' }}>
                 <label style={labelStyle}>Description</label>
                 <textarea className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Optional description" disabled={loading} rows={2} style={{ resize: 'vertical' }} />
+              </div>
+
+              <div style={{ marginBottom: '0.75rem' }}>
+                <label style={labelStyle}>Document Type</label>
+                <select
+                  className="input"
+                  value={documentType}
+                  onChange={(e) => setDocumentType(e.target.value)}
+                  disabled={loading || !!editing}
+                >
+                  {DOCUMENT_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                {editing && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                    Document type cannot be changed after creation.
+                  </div>
+                )}
               </div>
 
               {/* Steps Section */}

@@ -65,6 +65,7 @@ class WorkflowInstanceService:
     def _to_instance_read(self, instance: WorkflowInstance) -> WorkflowInstanceRead:
         doc_title = instance.document.title if instance.document else None
         wf_name = instance.workflow_definition.name if instance.workflow_definition else None
+        doc_type = instance.workflow_definition.document_type if instance.workflow_definition else None
         submitter_name = instance.submitted_by_user.full_name if instance.submitted_by_user else None
 
         current_step = self._get_current_step(instance)
@@ -76,6 +77,7 @@ class WorkflowInstanceService:
             document_title=doc_title,
             workflow_definition_id=instance.workflow_definition_id,
             workflow_name=wf_name,
+            document_type=doc_type,
             current_step_order=instance.current_step_order,
             current_step_name=step_name,
             status=instance.status,

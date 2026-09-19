@@ -15,7 +15,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm, mm
 from reportlab.platypus import (
-    BaseDocTemplate,
+    SimpleDocTemplate,
     Frame,
     Image,
     PageTemplate,
@@ -169,7 +169,7 @@ def generate_correspondence_pdf(
 
     # Build PDF in memory
     buffer = io.BytesIO()
-    doc = BaseDocTemplate(
+    doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
         leftMargin=2.5 * cm,

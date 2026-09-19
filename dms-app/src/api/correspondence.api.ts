@@ -104,4 +104,14 @@ export const correspondenceApi = {
   removeAttachment: async (correspondenceId: number, attachmentId: number): Promise<void> => {
     await apiClient.delete(`/correspondences/${correspondenceId}/attachments/${attachmentId}`)
   },
+
+  getByDocument: async (documentId: number): Promise<CorrespondenceDetail> => {
+    const res = await apiClient.get<CorrespondenceDetail>(`/correspondences/by-document/${documentId}`)
+    return res.data
+  },
+
+  downloadAttachment: async (correspondenceId: number, attachmentId: number): Promise<Blob> => {
+    const res = await apiClient.get(`/correspondences/${correspondenceId}/attachments/${attachmentId}/download`, { responseType: 'blob' })
+    return res.data
+  },
 }

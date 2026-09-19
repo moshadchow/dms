@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
 import { memoApi } from '@/api/memo.api'
+import { correspondenceApi } from '@/api/correspondence.api'
 import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { useWorkflowStore } from '@/store/workflowStore'
@@ -11,6 +12,7 @@ import type {
   ApprovalAction,
 } from '@/types/workflow.types'
 import type { MemoDetail } from '@/types/memo.types'
+import type { CorrespondenceDetail } from '@/types/correspondence.types'
 import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 const LIMIT = 20
@@ -40,6 +42,7 @@ export default function PendingApprovalPage() {
   const [remarks, setRemarks] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [memoDetail, setMemoDetail] = useState<MemoDetail | null>(null)
+  const [corrDetail, setCorrDetail] = useState<CorrespondenceDetail | null>(null)
   const [memoLoading, setMemoLoading] = useState(false)
 
   const loadPending = useCallback(async () => {
@@ -66,14 +69,22 @@ export default function PendingApprovalPage() {
     setSelectedInstance(instance)
     setRemarks('')
     setMemoDetail(null)
+    setCorrDetail(null)
     setModalOpen(true)
 
     setMemoLoading(true)
     try {
-      const memo = await memoApi.getByDocument(instance.document_id)
-      setMemoDetail(memo)
+      if (!instance.document_type) {
+        // Memo workflow (document_type is null)
+        const memo = await memoApi.getByDocument(instance.document_id)
+        setMemoDetail(memo)
+      } else {
+        // Correspondence workflow
+        const corr = await correspondenceApi.getByDocument(instance.document_id)
+        setCorrDetail(corr)
+      }
     } catch {
-      toast.error('Unable to load memo content')
+      toast.error('Unable to load document content')
     } finally {
       setMemoLoading(false)
     }
@@ -84,6 +95,7 @@ export default function PendingApprovalPage() {
     setSelectedInstance(null)
     setRemarks('')
     setMemoDetail(null)
+    setCorrDetail(null)
   }
 
   const handleSubmit = async (action: ApprovalAction) => {
@@ -299,7 +311,7 @@ export default function PendingApprovalPage() {
               {/* Memo Content */}
               {memoLoading ? (
                 <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-tertiary)', fontSize: '0.82rem' }}>
-                  Loading memo content…
+                  Loading document content…
                 </div>
               ) : memoDetail ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -343,6 +355,78 @@ export default function PendingApprovalPage() {
                               onClick={async () => {
                                 try {
                                   await documentsApi.download(a.document_id, a.file_name || a.document_title || 'download')
+                                } catch (err) {
+                                  toast.error(getErrorMessage(err))
+                                }
+                              }}
+                              style={{ fontSize: '0.78rem', color: '#4f46e5', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}
+                            >
+                              Download
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : corrDetail ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <div>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Subject</p>
+                    <p style={{ fontSize: '0.88rem', color: 'var(--text)', fontWeight: 600, margin: 0 }}>{corrDetail.subject}</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                    <span>Direction: <strong>{corrDetail.direction}</strong></span>
+                    <span>Priority: <strong>{corrDetail.priority}</strong></span>
+                    <span>Reference: <strong>{corrDetail.reference_number}</strong></span>
+                  </div>
+                  {corrDetail.body && (
+                    <div>
+                      <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Content</p>
+                      <div
+                        style={{
+                          padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)',
+                          backgroundColor: 'var(--bg, #f8fafc)', maxHeight: '300px', overflowY: 'auto',
+                          lineHeight: 1.7, fontSize: '0.88rem', color: '#1e293b',
+                        }}
+                        dangerouslySetInnerHTML={{ __html: corrDetail.body }}
+                      />
+                    </div>
+                  )}
+                  {corrDetail.sender_name && (
+                    <div>
+                      <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Sender</p>
+                      <p style={{ fontSize: '0.88rem', color: 'var(--text)', margin: 0 }}>{corrDetail.sender_name}{corrDetail.sender_organization ? ` (${corrDetail.sender_organization})` : ''}</p>
+                    </div>
+                  )}
+                  {corrDetail.attachments && corrDetail.attachments.length > 0 && (
+                    <div>
+                      <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>
+                        Attachments ({corrDetail.attachments.length})
+                      </p>
+                      <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none' }}>
+                        {corrDetail.attachments.map((a) => (
+                          <li key={a.id} style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid var(--border)',
+                            backgroundColor: 'var(--bg, #f8fafc)', marginBottom: '0.35rem',
+                          }}>
+                            <span style={{ fontSize: '0.82rem' }}>
+                              <strong>{a.file_name}</strong>{' '}
+                              <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>
+                                ({a.file_type?.toUpperCase()}, {a.file_size != null ? `${(a.file_size / 1024).toFixed(1)} KB` : '—'})
+                              </span>
+                            </span>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const blob = await correspondenceApi.downloadAttachment(a.correspondence_id, a.id)
+                                  const url = URL.createObjectURL(blob)
+                                  const el = document.createElement('a')
+                                  el.href = url
+                                  el.download = a.file_name || 'attachment'
+                                  el.click()
+                                  URL.revokeObjectURL(url)
                                 } catch (err) {
                                   toast.error(getErrorMessage(err))
                                 }

@@ -75,6 +75,7 @@ class WorkflowDefinitionService:
             is_active=wf.is_active,
             created_by=wf.created_by,
             company_id=wf.company_id,
+            document_type=wf.document_type,
             created_at=wf.created_at,
             updated_at=wf.updated_at,
         )
@@ -188,6 +189,7 @@ class WorkflowDefinitionService:
         wf = WorkflowDefinition(
             name=data.name,
             description=data.description,
+            document_type=data.document_type,
             created_by=current_user.id,
             company_id=current_user.company_id,
         )
@@ -260,6 +262,8 @@ class WorkflowDefinitionService:
         limit: int = 50,
         is_active: Optional[bool] = None,
         company_id: Optional[int] = None,
+        document_type: Optional[str] = None,
+        document_type_is_null: Optional[bool] = None,
         current_user: Optional[User] = None,
     ) -> WorkflowDefinitionListResponse:
         query = select(WorkflowDefinition)
@@ -268,6 +272,13 @@ class WorkflowDefinitionService:
         if is_active is not None:
             query = query.where(WorkflowDefinition.is_active == is_active)
             count_query = count_query.where(WorkflowDefinition.is_active == is_active)
+
+        if document_type_is_null is True:
+            query = query.where(WorkflowDefinition.document_type.is_(None))
+            count_query = count_query.where(WorkflowDefinition.document_type.is_(None))
+        elif document_type is not None:
+            query = query.where(WorkflowDefinition.document_type == document_type)
+            count_query = count_query.where(WorkflowDefinition.document_type == document_type)
 
         if current_user is not None and not self._is_superadmin(current_user):
             query = query.where(WorkflowDefinition.company_id == current_user.company_id)
@@ -310,6 +321,7 @@ class WorkflowDefinitionService:
             "name": wf.name,
             "description": wf.description,
             "is_active": wf.is_active,
+            "document_type": wf.document_type,
         }
 
         if data.name is not None:
@@ -329,6 +341,9 @@ class WorkflowDefinitionService:
 
         if data.is_active is not None:
             wf.is_active = data.is_active
+
+        if data.document_type is not None:
+            wf.document_type = data.document_type
 
         if data.steps is not None:
             self._validate_step_approvers(data.steps)

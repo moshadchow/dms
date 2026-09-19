@@ -604,3 +604,291 @@ class TestCorrespondenceAttachments:
             headers=auth_headers["maker"],
         )
         assert resp.status_code == 404
+
+    def test_replace_original_attachment_on_inbound(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        create_resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, direction="inbound", body=None, date_received="2026-09-17T06:50:00Z"),
+            headers=auth_headers["maker"],
+        )
+        corr_id = create_resp.json()["id"]
+
+        import io
+        resp1 = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/attachments",
+            files={"file": ("original_letter.pdf", io.BytesIO(b"original content"), "application/pdf")},
+            data={"attachment_type": "original"},
+            headers=auth_headers["maker"],
+        )
+        assert resp1.status_code == 201
+        first_att_id = resp1.json()["id"]
+
+        resp2 = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/attachments",
+            files={"file": ("replacement_letter.pdf", io.BytesIO(b"replacement content"), "application/pdf")},
+            data={"attachment_type": "original"},
+            headers=auth_headers["maker"],
+        )
+        assert resp2.status_code == 201
+
+        detail = test_client.get(f"/api/v1/correspondences/{corr_id}", headers=auth_headers["maker"])
+        originals = [a for a in detail.json()["attachments"] if a["attachment_type"] == "original"]
+        assert len(originals) == 2
+
+        test_client.delete(
+            f"/api/v1/correspondences/{corr_id}/attachments/{first_att_id}",
+            headers=auth_headers["maker"],
+        )
+        detail2 = test_client.get(f"/api/v1/correspondences/{corr_id}", headers=auth_headers["maker"])
+        originals2 = [a for a in detail2.json()["attachments"] if a["attachment_type"] == "original"]
+        assert len(originals2) == 1
+        assert originals2[0]["file_name"] == "replacement_letter.pdf"
+
+    def test_download_original_attachment(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        create_resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, direction="inbound", body=None, date_received="2026-09-17T06:50:00Z"),
+            headers=auth_headers["maker"],
+        )
+        corr_id = create_resp.json()["id"]
+
+        import io
+        test_client.post(
+            f"/api/v1/correspondences/{corr_id}/attachments",
+            files={"file": ("letter.pdf", io.BytesIO(b"letter content"), "application/pdf")},
+            data={"attachment_type": "original"},
+            headers=auth_headers["maker"],
+        )
+
+        resp = test_client.get(
+            f"/api/v1/correspondences/{corr_id}/download",
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 200
+        assert resp.content == b"letter content"
+
+    def test_cannot_remove_attachment_in_terminal_status(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        create_resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["maker"],
+        )
+        corr_id = create_resp.json()["id"]
+
+        import io
+        attach_resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/attachments",
+            files={"file": ("doc.pdf", io.BytesIO(b"content"), "application/pdf")},
+            data={"attachment_type": "supporting"},
+            headers=auth_headers["maker"],
+        )
+        attachment_id = attach_resp.json()["id"]
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            from correspondence.models import Correspondence, CorrespondenceStatus
+            corr = session.get(Correspondence, corr_id)
+            corr.status = CorrespondenceStatus.APPROVED
+            session.add(corr)
+            session.commit()
+
+        del_resp = test_client.delete(
+            f"/api/v1/correspondences/{corr_id}/attachments/{attachment_id}",
+            headers=auth_headers["maker"],
+        )
+        assert del_resp.status_code == 409
+
+
+# ── Workflow Status Sync Tests ───────────────────
+
+
+class TestCorrespondenceWorkflowSync:
+    def test_submit_saves_workflow_instance_id(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_payload = {
+            "name": "Correspondence WF",
+            "description": "Correspondence approval",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        assert wf_resp.status_code == 201
+        wf_def_id = wf_resp.json()["id"]
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            result = svc.submit_correspondence(
+                corr.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            assert result.workflow_instance_id is not None
+
+    def test_workflow_approval_syncs_correspondence_status(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_payload = {
+            "name": "Correspondence WF",
+            "description": "Correspondence approval",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        wf_def_id = wf_resp.json()["id"]
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            result = svc.submit_correspondence(
+                corr.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            wf_instance_id = result.workflow_instance_id
+
+            # Simulate admin approval
+            from workflow.models import WorkflowInstance, WorkflowStatus
+            orm_instance = session.get(WorkflowInstance, wf_instance_id)
+            orm_instance.status = WorkflowStatus.APPROVED
+            session.add(orm_instance)
+            session.commit()
+
+            # Fetch detail — should sync status
+            detail = svc.get_correspondence(corr.id, maker)
+            assert detail.status == CorrespondenceStatus.APPROVED
+
+    def test_dispatch_works_after_workflow_approval(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_payload = {
+            "name": "Correspondence WF",
+            "description": "Correspondence approval",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        wf_def_id = wf_resp.json()["id"]
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            result = svc.submit_correspondence(
+                corr.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            wf_instance_id = result.workflow_instance_id
+
+            # Simulate approval
+            from workflow.models import WorkflowInstance, WorkflowStatus
+            orm_instance = session.get(WorkflowInstance, wf_instance_id)
+            orm_instance.status = WorkflowStatus.APPROVED
+            session.add(orm_instance)
+            session.commit()
+
+            # Dispatch should now work
+            dispatch_result = svc.dispatch_correspondence(
+                corr.id,
+                CorrespondenceDispatch(
+                    dispatch_method=DispatchMethod.EMAIL,
+                    dispatch_reference="EMAIL-001",
+                    remarks="Sent via email",
+                ),
+                admin,
+            )
+            assert dispatch_result.status == CorrespondenceStatus.DISPATCHED
+
+
+class TestInboundSubmitWithAttachment:
+    def test_submit_inbound_without_document_uses_first_attachment(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_payload = {
+            "name": "Inbound Correspondence WF",
+            "description": "Inbound approval",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        assert wf_resp.status_code == 201
+        wf_def_id = wf_resp.json()["id"]
+
+        with Session(engine) as session:
+            from users.models import User
+            from correspondence.models import CorrespondenceAttachment
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+
+            # Create inbound correspondence WITHOUT a document_id
+            corr = svc.create_draft(
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="inbound", body=None)),
+                maker,
+            )
+            assert corr.document_id is None
+            assert corr.status == CorrespondenceStatus.RECEIVED
+
+            # Upload an attachment via the service (creates Document + CorrespondenceAttachment)
+            import io
+            from starlette.datastructures import UploadFile as StarletteUploadFile
+            from starlette.datastructures import Headers
+            from documents.models import DocumentUserLevelLink
+            upload_file = StarletteUploadFile(
+                file=io.BytesIO(b"fake letter content"),
+                filename="letter.pdf",
+                headers=Headers({"content-type": "application/pdf"}),
+            )
+            svc.add_attachment(corr.id, upload_file, "original", maker)
+
+            # Add user level link so maker can access the document
+            link = session.exec(
+                select(CorrespondenceAttachment)
+                .where(CorrespondenceAttachment.correspondence_id == corr.id)
+            ).first()
+            assert link is not None
+            doc_link = DocumentUserLevelLink(
+                document_id=link.document_id,
+                user_level_id=seeded_data["medium_level_id"],
+            )
+            session.add(doc_link)
+            session.commit()
+
+            # Verify document_id is still None on the correspondence
+            assert corr.document_id is None
+
+            # Now submit — should auto-fallback to the attachment's document
+            result = svc.submit_correspondence(
+                corr.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            assert result.workflow_instance_id is not None
+            assert result.status == CorrespondenceStatus.SUBMITTED
+            assert result.document_id == link.document_id

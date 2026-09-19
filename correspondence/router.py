@@ -95,6 +95,19 @@ def get_next_reference(
 
 
 @router.get(
+    "/by-document/{document_id}",
+    response_model=CorrespondenceDetailRead,
+    summary="Get correspondence by document ID",
+)
+def get_correspondence_by_document(
+    document_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return CorrespondenceService(session).get_correspondence_by_document(document_id, current_user)
+
+
+@router.get(
     "/{correspondence_id}",
     response_model=CorrespondenceDetailRead,
     summary="Get correspondence detail",
@@ -258,6 +271,46 @@ def remove_attachment(
     session: Session = Depends(get_session),
 ):
     CorrespondenceService(session).remove_attachment(correspondence_id, attachment_id, current_user)
+
+
+@router.get(
+    "/{correspondence_id}/attachments/{attachment_id}/download",
+    summary="Download a specific attachment",
+)
+def download_attachment(
+    correspondence_id: int,
+    attachment_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    from fastapi import HTTPException
+    from sqlmodel import select
+    from company_profile.models import Company
+    from correspondence.models import Correspondence, CorrespondenceAttachment
+    from documents.utils import resolve_storage_path
+
+    svc = CorrespondenceService(session)
+    corr = svc._get_correspondence_or_404(correspondence_id)
+    svc._check_view_access(corr, current_user)
+
+    link = session.get(CorrespondenceAttachment, attachment_id)
+    if not link or link.correspondence_id != correspondence_id:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    company = session.get(Company, corr.company_id)
+    if not company:
+        raise HTTPException(status_code=400, detail="Company not found")
+
+    doc = link.document
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for this attachment")
+
+    abs_path = resolve_storage_path(doc.storage_path, company)
+    return FileResponse(
+        path=str(abs_path),
+        media_type=doc.mime_type,
+        filename=doc.file_name,
+    )
 
 
 @router.get(

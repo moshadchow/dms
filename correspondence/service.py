@@ -136,7 +136,6 @@ class CorrespondenceService:
             return
         if correspondence.document_id is not None:
             ensure_document_access(self.session, user, correspondence.document_id)
-            ensure_document_user_level_access(self.session, user, correspondence.document)
 
     def _check_edit_access(self, correspondence: Correspondence, user: User) -> None:
         self._check_view_access(correspondence, user)
@@ -400,6 +399,34 @@ class CorrespondenceService:
         )
 
     # ──────────────────────────────────────────
+    # Workflow Status Sync
+    # ──────────────────────────────────────────
+
+    def _sync_workflow_status(self, corr: Correspondence) -> None:
+        """Sync correspondence status from its linked workflow instance."""
+        if not corr.workflow_instance_id:
+            return
+        instance = self.session.get(WorkflowInstance, corr.workflow_instance_id)
+        if not instance:
+            return
+
+        STATUS_MAP = {
+            WorkflowStatus.SUBMITTED: CorrespondenceStatus.SUBMITTED,
+            WorkflowStatus.PENDING_APPROVAL: CorrespondenceStatus.PENDING_APPROVAL,
+            WorkflowStatus.APPROVED: CorrespondenceStatus.APPROVED,
+            WorkflowStatus.REJECTED: CorrespondenceStatus.REJECTED,
+            WorkflowStatus.RETURNED: CorrespondenceStatus.RETURNED,
+            WorkflowStatus.CANCELLED: CorrespondenceStatus.CANCELLED,
+        }
+
+        new_status = STATUS_MAP.get(instance.status)
+        if new_status and corr.status != new_status:
+            corr.status = new_status
+            corr.updated_at = datetime.utcnow()
+            self.session.add(corr)
+            self.session.commit()
+
+    # ──────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────
 
@@ -527,6 +554,19 @@ class CorrespondenceService:
     def get_correspondence(self, correspondence_id: int, current_user: User) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._sync_workflow_status(corr)
+        return self._to_detail(corr)
+
+    def get_correspondence_by_document(self, document_id: int, current_user: User) -> "CorrespondenceDetailRead":
+        from sqlmodel import select as sqlmodel_select
+        corr = self.session.exec(
+            sqlmodel_select(Correspondence).where(Correspondence.document_id == document_id)
+        ).first()
+        if not corr:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Correspondence not found for this document")
+        self._check_view_access(corr, current_user)
+        self._sync_workflow_status(corr)
         return self._to_detail(corr)
 
     def list_correspondences(
@@ -614,6 +654,9 @@ class CorrespondenceService:
 
         items = self.session.exec(query).all()
 
+        for item in items:
+            self._sync_workflow_status(item)
+
         return CorrespondenceListResponse(
             total=total,
             items=[self._to_read(c) for c in items],
@@ -626,6 +669,7 @@ class CorrespondenceService:
         current_user: User,
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
+        self._sync_workflow_status(corr)
         self._check_edit_access(corr, current_user)
 
         if data.subject is not None:
@@ -723,7 +767,7 @@ class CorrespondenceService:
         if not current_user.is_admin() and corr.created_by != current_user.id:
             raise HTTPException(status_code=403, detail="Only the author can submit")
 
-        if corr.status not in (CorrespondenceStatus.DRAFT, CorrespondenceStatus.RECEIVED):
+        if corr.status not in (CorrespondenceStatus.DRAFT, CorrespondenceStatus.RECEIVED, CorrespondenceStatus.RETURNED):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot submit correspondence in '{corr.status.value}' status",
@@ -737,10 +781,26 @@ class CorrespondenceService:
                 raise HTTPException(status_code=403, detail="You can only attach your own signatures")
             corr.author_signature_id = data.signature_id
 
+        # Auto-fallback: use first attachment if no primary document
+        if corr.document_id is None:
+            first_attachment = self.session.exec(
+                select(CorrespondenceAttachment)
+                .where(CorrespondenceAttachment.correspondence_id == corr.id)
+                .order_by(CorrespondenceAttachment.id)
+            ).first()
+            if first_attachment:
+                corr.document_id = first_attachment.document_id
+                self.session.add(corr)
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="No document available for workflow submission. Upload an attachment first.",
+                )
+
         # Delegate to workflow
         from workflow.schemas import WorkflowInstanceCreate
         from workflow.service import WorkflowInstanceService
-        WorkflowInstanceService(self.session).submit_instance(
+        wf_instance = WorkflowInstanceService(self.session).submit_instance(
             WorkflowInstanceCreate(
                 document_id=corr.document_id,
                 workflow_definition_id=data.workflow_definition_id,
@@ -748,6 +808,7 @@ class CorrespondenceService:
             current_user,
             background_tasks,
         )
+        corr.workflow_instance_id = wf_instance.id
 
         corr.status = CorrespondenceStatus.SUBMITTED
         corr.updated_at = datetime.utcnow()
@@ -859,6 +920,8 @@ class CorrespondenceService:
         if not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Admin access required for dispatch")
 
+        self._sync_workflow_status(corr)
+
         if corr.status not in (CorrespondenceStatus.APPROVED, CorrespondenceStatus.READY_FOR_DISPATCH):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -936,6 +999,14 @@ class CorrespondenceService:
         self.session.commit()
         self.session.refresh(corr)
 
+        self._log_audit(
+            AuditAction.DELIVER_CORRESPONDENCE,
+            corr,
+            f"Marked correspondence '{corr.subject}' as delivered",
+            current_user,
+            company_id=corr.company_id,
+        )
+
         corr = self._get_correspondence_or_404(corr.id)
         return self._to_detail(corr)
 
@@ -971,6 +1042,14 @@ class CorrespondenceService:
         self.session.add(corr)
         self.session.commit()
         self.session.refresh(corr)
+
+        self._log_audit(
+            AuditAction.ACKNOWLEDGE_CORRESPONDENCE,
+            corr,
+            f"Marked correspondence '{corr.subject}' as acknowledged",
+            current_user,
+            company_id=corr.company_id,
+        )
 
         corr = self._get_correspondence_or_404(corr.id)
         return self._to_detail(corr)
@@ -1064,6 +1143,19 @@ class CorrespondenceService:
         )
         self.session.add(doc)
         self.session.flush()
+
+        # Copy user level links from correspondence's existing document,
+        # or fall back to the uploader's user level
+        if corr.document_id is not None:
+            existing_links = self.session.exec(
+                select(DocumentUserLevelLink).where(
+                    DocumentUserLevelLink.document_id == corr.document_id
+                )
+            ).all()
+            for link_record in existing_links:
+                self.session.add(DocumentUserLevelLink(document_id=doc.id, user_level_id=link_record.user_level_id))
+        elif current_user.user_level_id is not None:
+            self.session.add(DocumentUserLevelLink(document_id=doc.id, user_level_id=current_user.user_level_id))
 
         link = CorrespondenceAttachment(
             correspondence_id=corr.id,

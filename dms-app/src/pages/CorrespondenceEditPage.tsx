@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { correspondenceApi } from '@/api/correspondence.api'
@@ -18,6 +18,15 @@ const labelStyle: React.CSSProperties = {
   display: 'block', fontSize: '0.78rem', fontWeight: 600,
   color: 'var(--text-secondary)', marginBottom: '4px',
 }
+
+const ALLOWED_MIME = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'image/jpeg',
+  'image/png',
+]
 
 export default function CorrespondenceEditPage() {
   const { id } = useParams<{ id: string }>()
@@ -41,6 +50,10 @@ export default function CorrespondenceEditPage() {
   const [recipientPhone, setRecipientPhone] = useState('')
   const [responseRequired, setResponseRequired] = useState(false)
   const [responseDeadline, setResponseDeadline] = useState('')
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [uploadingFile, setUploadingFile] = useState(false)
+  const [removingAttId, setRemovingAttId] = useState<number | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!id) return
@@ -69,6 +82,50 @@ export default function CorrespondenceEditPage() {
     }).finally(() => setLoading(false))
   }, [id])
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!ALLOWED_MIME.includes(file.type)) {
+      toast.error('File type not supported. Use PDF, DOCX, Excel, or images.')
+      return
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error('File size exceeds 50 MB limit')
+      return
+    }
+    setSelectedFile(file)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+    if (!ALLOWED_MIME.includes(file.type)) {
+      toast.error('File type not supported. Use PDF, DOCX, Excel, or images.')
+      return
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error('File size exceeds 50 MB limit')
+      return
+    }
+    setSelectedFile(file)
+  }
+
+  const handleRemoveAttachment = async (attId: number) => {
+    if (!corr) return
+    setRemovingAttId(attId)
+    try {
+      await correspondenceApi.removeAttachment(corr.id, attId)
+      toast.success('Attachment removed')
+      const refreshed = await correspondenceApi.get(corr.id)
+      setCorr(refreshed)
+    } catch (err) {
+      toast.error(getErrorMessage(err))
+    } finally {
+      setRemovingAttId(null)
+    }
+  }
+
   const handleSave = async () => {
     if (!corr) return
     if (!subject.trim()) { toast.error('Subject is required'); return }
@@ -91,6 +148,22 @@ export default function CorrespondenceEditPage() {
         response_deadline: responseDeadline ? new Date(responseDeadline).toISOString() : undefined,
       }
       await correspondenceApi.update(corr.id, data)
+
+      if (selectedFile) {
+        setUploadingFile(true)
+        try {
+          const existingOriginal = corr.attachments?.find(a => a.attachment_type === 'original')
+          await correspondenceApi.addAttachment(corr.id, selectedFile, 'original')
+          if (existingOriginal) {
+            await correspondenceApi.removeAttachment(corr.id, existingOriginal.id)
+          }
+        } catch (uploadErr) {
+          toast.error(`Correspondence updated but file upload failed: ${getErrorMessage(uploadErr)}`)
+        } finally {
+          setUploadingFile(false)
+        }
+      }
+
       toast.success('Correspondence updated')
       navigate(`/correspondence/${corr.id}`)
     } catch (err) {
@@ -171,9 +244,100 @@ export default function CorrespondenceEditPage() {
               <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={10} style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit' }} />
             </div>
           )}
+          {corr.direction === 'inbound' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {corr.attachments && corr.attachments.length > 0 && (
+                <div>
+                  <label style={labelStyle}>Received Document</label>
+                  <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {corr.attachments.map(att => (
+                      <li key={att.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: '0.8rem' }}>
+                        <span>
+                          <strong>{att.file_name}</strong>{' '}
+                          <span style={{ color: '#64748b' }}>({att.file_type?.toUpperCase()}, {att.file_size != null ? `${(att.file_size / 1024).toFixed(1)} KB` : '—'})</span>
+                          <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 4, fontSize: '0.7rem', background: att.attachment_type === 'original' ? '#dbeafe' : '#f1f5f9', color: att.attachment_type === 'original' ? '#1e40af' : '#64748b' }}>{att.attachment_type}</span>
+                        </span>
+                        <span style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const blob = await correspondenceApi.downloadAttachment(att.correspondence_id, att.id)
+                                const url = URL.createObjectURL(blob)
+                                const a = document.createElement('a'); a.href = url; a.download = att.file_name || 'document'; a.click()
+                                URL.revokeObjectURL(url)
+                              } catch (err) { toast.error(getErrorMessage(err)) }
+                            }}
+                            style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.8rem' }}
+                          >
+                            Download
+                          </button>
+                          {(corr.status === 'draft' || corr.status === 'received' || corr.status === 'returned') && (
+                            <button
+                              onClick={() => handleRemoveAttachment(att.id)}
+                              disabled={removingAttId === att.id}
+                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.8rem', opacity: removingAttId === att.id ? 0.5 : 1 }}
+                            >
+                              {removingAttId === att.id ? 'Removing...' : 'Remove'}
+                            </button>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <label style={labelStyle}>
+                  {corr.attachments && corr.attachments.length > 0 ? 'Replace Document' : 'Received Document *'}
+                </label>
+                <div
+                  style={{
+                    border: '2px dashed #cbd5e1',
+                    borderRadius: 8,
+                    padding: '1.25rem',
+                    textAlign: 'center',
+                    cursor: 'pointer',
+                    transition: 'border-color 150ms',
+                  }}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDrop={handleDrop}
+                  onDragOver={(e) => e.preventDefault()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf,.docx,.xlsx,.xls,.jpg,.jpeg,.png"
+                    style={{ display: 'none' }}
+                    onChange={handleFileSelect}
+                  />
+                  {selectedFile ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', textAlign: 'left' }}>
+                      <span style={{ fontSize: '0.85rem' }}>
+                        <strong>{selectedFile.name}</strong>{' '}
+                        <span style={{ color: '#64748b' }}>({(selectedFile.size / 1024).toFixed(1)} KB)</span>
+                      </span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setSelectedFile(null) }}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem' }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p style={{ margin: 0, fontSize: '0.85rem', color: '#334155' }}>
+                        Drag &amp; drop or click to upload the received document
+                      </p>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: '#94a3b8' }}>PDF, DOCX, Excel, Images (max 50 MB)</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px', borderTop: '1px solid var(--border)' }}>
             <Button variant="secondary" onClick={() => navigate(`/correspondence/${corr.id}`)}>Cancel</Button>
-            <Button onClick={handleSave} loading={saving}>Save Changes</Button>
+            <Button onClick={handleSave} loading={saving || uploadingFile}>{uploadingFile ? 'Uploading...' : 'Save Changes'}</Button>
           </div>
         </div>
       </div>
