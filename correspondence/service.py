@@ -30,7 +30,9 @@ from correspondence.models import (
     DispatchMethod,
 )
 from correspondence.schemas import (
+    CorrespondenceArchive,
     CorrespondenceAssign,
+    CorrespondenceComplete,
     CorrespondenceCreate,
     CorrespondenceDeliver,
     CorrespondenceDispatch,
@@ -242,7 +244,7 @@ class CorrespondenceService:
             svc = AuditService(self.session)
             svc.log_event(
                 action=action,
-                module=AuditModule.DOCUMENTS,
+                module=AuditModule.CORRESPONDENCE,
                 company_id=company_id or correspondence.company_id,
                 entity_name="correspondence",
                 entity_id=str(correspondence.id),
@@ -287,6 +289,10 @@ class CorrespondenceService:
             dispatched_at=corr.dispatched_at,
             delivered_at=corr.delivered_at,
             acknowledged_at=corr.acknowledged_at,
+            completed_at=corr.completed_at,
+            completed_by_id=corr.completed_by_id,
+            archived_at=corr.archived_at,
+            archived_by_id=corr.archived_by_id,
             created_by_name=corr.created_by_user.full_name if corr.created_by_user else None,
             category_name=corr.category.name if corr.category else None,
             created_at=corr.created_at,
@@ -403,11 +409,27 @@ class CorrespondenceService:
     # ──────────────────────────────────────────
 
     def _sync_workflow_status(self, corr: Correspondence) -> None:
-        """Sync correspondence status from its linked workflow instance."""
+        """Sync correspondence status from its linked workflow instance.
+
+        Does not override post-workflow statuses (DISPATCHED, DELIVERED,
+        ACKNOWLEDGED, COMPLETED, ARCHIVED) as these represent physical
+        delivery lifecycle states beyond the approval workflow.
+        """
         if not corr.workflow_instance_id:
             return
         instance = self.session.get(WorkflowInstance, corr.workflow_instance_id)
         if not instance:
+            return
+
+        # Post-workflow statuses should not be overridden by workflow sync
+        post_workflow_statuses = {
+            CorrespondenceStatus.DISPATCHED,
+            CorrespondenceStatus.DELIVERED,
+            CorrespondenceStatus.ACKNOWLEDGED,
+            CorrespondenceStatus.COMPLETED,
+            CorrespondenceStatus.ARCHIVED,
+        }
+        if corr.status in post_workflow_statuses:
             return
 
         STATUS_MAP = {
@@ -1225,6 +1247,120 @@ class CorrespondenceService:
             new_value={"attachment_id": attachment_id},
             company_id=corr.company_id,
         )
+
+    def complete_correspondence(
+        self,
+        correspondence_id: int,
+        data: CorrespondenceComplete,
+        current_user: User,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> "CorrespondenceDetailRead":
+        corr = self._get_correspondence_or_404(correspondence_id)
+        self._check_view_access(corr, current_user)
+        self._sync_workflow_status(corr)
+
+        if corr.status != CorrespondenceStatus.ACKNOWLEDGED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cannot complete correspondence in "
+                    f"'{corr.status.value}' status"
+                ),
+            )
+
+        now = datetime.utcnow()
+        corr.status = CorrespondenceStatus.COMPLETED
+        corr.completed_at = now
+        corr.completed_by_id = current_user.id
+        corr.updated_at = now
+        self.session.add(
+            CorrespondenceMovement(
+                correspondence_id=corr.id,
+                action="complete",
+                remarks=data.remarks or "Correspondence completed",
+                created_by=current_user.id,
+                created_at=now,
+            )
+        )
+        self.session.add(corr)
+        self.session.commit()
+        self.session.refresh(corr)
+
+        self._log_audit(
+            AuditAction.COMPLETE_CORRESPONDENCE,
+            corr,
+            f"Completed correspondence '{corr.reference_number}'",
+            current_user,
+            company_id=corr.company_id,
+        )
+
+        # Trigger notification for completion
+        if background_tasks:
+            background_tasks.add_task(
+                send_notification_task,
+                notification_type="correspondence_completed",
+                instance_id=corr.workflow_instance_id or 0,
+                document_id=corr.document_id,
+                step_order=None,
+            )
+        return self._to_read(corr)
+
+    def archive_correspondence(
+        self,
+        correspondence_id: int,
+        data: CorrespondenceArchive,
+        current_user: User,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> "CorrespondenceDetailRead":
+        corr = self._get_correspondence_or_404(correspondence_id)
+        self._check_view_access(corr, current_user)
+        self._sync_workflow_status(corr)
+
+        if corr.status != CorrespondenceStatus.COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Cannot archive correspondence in "
+                    f"'{corr.status.value}' status"
+                ),
+            )
+
+        now = datetime.utcnow()
+        corr.status = CorrespondenceStatus.ARCHIVED
+        corr.archived_at = now
+        corr.archived_by_id = current_user.id
+        corr.updated_at = now
+        self.session.add(
+            CorrespondenceMovement(
+                correspondence_id=corr.id,
+                action="archive",
+                remarks=data.remarks or "Correspondence archived",
+                created_by=current_user.id,
+                created_at=now,
+            )
+        )
+        self.session.add(corr)
+        self.session.commit()
+        self.session.refresh(corr)
+
+        self._log_audit(
+            AuditAction.ARCHIVE_CORRESPONDENCE,
+            corr,
+            f"Archived correspondence '{corr.reference_number}'",
+            current_user,
+            company_id=corr.company_id,
+        )
+
+        # Trigger notification for archive
+        if background_tasks:
+            background_tasks.add_task(
+                send_notification_task,
+                notification_type="correspondence_archived",
+                instance_id=corr.workflow_instance_id or 0,
+                document_id=corr.document_id,
+                step_order=None,
+            )
+        return self._to_read(corr)
 
     def get_next_reference(self, current_user: User) -> str:
         company = self._resolve_company(current_user)

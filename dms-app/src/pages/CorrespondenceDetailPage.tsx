@@ -125,6 +125,28 @@ export default function CorrespondenceDetailPage() {
   const canDispatch = (corr.status === 'approved' || corr.status === 'ready_for_dispatch') && isAdmin
   const canDeliver = corr.status === 'dispatched' && isAdmin
   const canAcknowledge = corr.status === 'delivered' && isAdmin
+  const canComplete = corr.status === 'acknowledged' && isAdmin
+  const canArchive = corr.status === 'completed' && isAdmin
+
+  const handleComplete = async () => {
+    try {
+      await correspondenceApi.complete(corr.id, "Completed")
+      toast.success("Correspondence completed")
+      await fetchCorr()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to complete")
+    }
+  }
+
+  const handleArchive = async () => {
+    try {
+      await correspondenceApi.archive(corr.id, "Archived")
+      toast.success("Correspondence archived")
+      await fetchCorr()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to archive")
+    }
+  }
 
   return (
     <div style={{ padding: '1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
@@ -146,6 +168,11 @@ export default function CorrespondenceDetailPage() {
           {canDeliver && <Button size="sm" onClick={handleDeliver}>Mark Delivered</Button>}
           {canAcknowledge && <Button size="sm" onClick={handleAcknowledge}>Mark Acknowledged</Button>}
           {corr.workflow_instance_id && <Button variant="accent" size="sm" onClick={handleDownloadFinal}>Download PDF</Button>}
+          {corr.workflow_instance_id && corr.status === 'pending_approval' && <Button size="sm" onClick={handleApprove}>Approve</Button>}
+          {corr.workflow_instance_id && corr.status === 'pending_approval' && <Button size="sm" onClick={handleReject}>Reject</Button>}
+          {corr.workflow_instance_id && corr.status === 'pending_approval' && <Button size="sm" onClick={handleReturn}>Return</Button>}
+          {canComplete && <Button size="sm" onClick={handleComplete}>Finalize</Button>}
+          {canArchive && <Button size="sm" onClick={handleArchive}>Archive</Button>}
         </div>
       </div>
 

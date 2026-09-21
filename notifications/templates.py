@@ -452,6 +452,204 @@ View Correspondence: {view_url}
     return subject, html, text
 
 
+def build_correspondence_submit_email(
+    reference_number: str,
+    subject_line: str,
+    direction: str,
+    submitted_by: str,
+    workflow_definition: str,
+    remarks: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """Build email for correspondence submission notification to workflow approvers."""
+    view_url = f"{settings.FRONTEND_URL}/correspondence"
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Correspondence Submitted for Approval</h2>
+        <p style="margin: 0 0 24px; color: #475569;">A {direction} correspondence has been submitted and requires your approval.</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; width: 140px;">Reference No:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-family: monospace;">{reference_number}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Subject:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{subject_line}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Direction:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{direction.title()}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Submitted By:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{submitted_by}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Workflow:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{workflow_definition}</td>
+            </tr>
+        </table>
+
+        {f'<div style="background-color: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin-bottom: 24px;"><p style="margin: 0; font-weight: 600; color: #334155;">Remarks:</p><p style="margin: 8px 0 0; color: #475569;">{remarks}</p></div>' if remarks else ''}
+
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{view_url}" style="display: inline-block; background-color: #2563eb; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">View Correspondence</a>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If the button above doesn't work, copy and paste this link into your browser.<br><span style="word-break: break-all;">{view_url}</span></p>
+    """
+
+    text_content = f"""
+Correspondence Submitted for Approval
+
+A {direction} correspondence has been submitted and requires your approval.
+
+Reference No: {reference_number}
+Subject: {subject_line}
+Direction: {direction.title()}
+Submitted By: {submitted_by}
+Workflow: {workflow_definition}
+{f"Remarks: {remarks}" if remarks else ""}
+
+View Correspondence: {view_url}
+"""
+
+    html = _build_html_template("Correspondence Submitted for Approval", html_content)
+    text = _build_text_template("Correspondence Submitted for Approval", text_content)
+
+    subject = f"[DMS] Correspondence Submitted: {reference_number}"
+
+    return subject, html, text
+
+
+def build_correspondence_action_email(
+    reference_number: str,
+    subject_line: str,
+    direction: str,
+    action: str,
+    actor_name: str,
+    remarks: Optional[str] = None,
+) -> Tuple[str, str, str]:
+    """Build email for correspondence action (approve/reject/return) notification."""
+    view_url = f"{settings.FRONTEND_URL}/correspondence"
+
+    action_titles = {"approve": "Approved", "reject": "Rejected", "return": "Returned"}
+    action_title = action_titles.get(action.lower(), action.title())
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Correspondence {action_title}</h2>
+        <p style="margin: 0 0 24px; color: #475569;">Correspondence {reference_number} has been {action.lower()} by {actor_name}.</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; width: 140px;">Reference No:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-family: monospace;">{reference_number}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Subject:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{subject_line}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Direction:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{direction.title()}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Action:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{action_title}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">By:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{actor_name}</td>
+            </tr>
+        </table>
+
+        {f'<div style="background-color: #fef3c7; border: 1px solid #fcd34d; border-radius: 6px; padding: 16px; margin-bottom: 24px;"><p style="margin: 0; font-weight: 600; color: #92400e;">Remarks:</p><p style="margin: 8px 0 0; color: #78350f;">{remarks}</p></div>' if remarks else ''}
+
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{view_url}" style="display: inline-block; background-color: #2563eb; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">View Correspondence</a>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If the button above doesn't work, copy and paste this link into your browser.<br><span style="word-break: break-all;">{view_url}</span></p>
+    """
+
+    text_content = f"""
+Correspondence {action_title}
+
+Correspondence {reference_number} has been {action_lower} by {actor_name}.
+
+Reference No: {reference_number}
+Subject: {subject_line}
+Direction: {direction.title()}
+Action: {action_title}
+By: {actor_name}
+
+{f"Remarks: {remarks}" if remarks else ""}
+
+View Correspondence: {view_url}
+"""
+
+    html = _build_html_template(f"Correspondence {action_title}", html_content)
+    text = _build_text_template(f"Correspondence {action_title}", text_content)
+
+    subject = f"[DMS] Correspondence {action_title}: {reference_number}"
+
+    return subject, html, text
+
+
+def build_correspondence_completed_email(
+    reference_number: str,
+    subject_line: str,
+    direction: str,
+) -> Tuple[str, str, str]:
+    """Build email for correspondence completion notification."""
+    view_url = f"{settings.FRONTEND_URL}/correspondence"
+
+    html_content = f"""
+        <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b;">Correspondence Completed</h2>
+        <p style="margin: 0 0 24px; color: #475569;">Correspondence {reference_number} has been completed and archived.</p>
+
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px;">
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155; width: 140px;">Reference No:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b; font-family: monospace;">{reference_number}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Subject:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{subject_line}</td>
+            </tr>
+            <tr>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #334155;">Direction:</td>
+                <td style="padding: 12px 0; border-bottom: 1px solid #e2e8f0; color: #1e293b;">{direction.title()}</td>
+            </tr>
+        </table>
+
+        <div style="text-align: center; margin: 24px 0;">
+            <a href="{view_url}" style="display: inline-block; background-color: #2563eb; color: white; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 16px;">View Correspondence</a>
+        </div>
+
+        <p style="margin: 0; font-size: 14px; color: #64748b;">If the button above doesn't work, copy and paste this link into your browser.<br><span style="word-break: break-all;">{view_url}</span></p>
+    """
+
+    text_content = f"""
+Correspondence Completed
+
+Correspondence {reference_number} has been completed and archived.
+
+Reference No: {reference_number}
+Subject: {subject_line}
+Direction: {direction.title()}
+
+View Correspondence: {view_url}
+"""
+
+    html = _build_html_template("Correspondence Completed", html_content)
+    text = _build_text_template("Correspondence Completed", text_content)
+
+    subject = f"[DMS] Correspondence Completed: {reference_number}"
+
+    return subject, html, text
+
+
 def build_correspondence_forwarded_email(
     reference_number: str,
     subject_line: str,

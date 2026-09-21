@@ -6,17 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working in this
 
 Dual-app repo: **FastAPI backend** at repo root + **React + Vite frontend** in `dms-app/`.
 
+Backend modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`, `correspondence/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+
 Backend features follow a consistent module convention:
 - `models.py` — SQLModel ORM models + Pydantic read schemas
 - `service.py` — Business logic (class-based, takes `Session`)
 - `router.py` — FastAPI router
 - `schemas.py` — Additional request/response schemas (where separate from models)
 
-Shared infra in `core/`, middleware in `middleware/`, migrations in `migrations/`.
-
 ## Commands
 
-Backend (Python / FastAPI)
+### Backend (Python / FastAPI)
 ```bash
 alembic upgrade head          # Apply DB migrations (required before first run)
 python seed.py                # Seed roles, permissions, admin user (run after migrate)
@@ -27,7 +27,7 @@ pytest tests/foo/test_bar.py::test_baz  # Single test function
 ruff check . && black .       # Lint / format
 ```
 
-Frontend (dms-app)
+### Frontend (dms-app)
 ```bash
 cd dms-app && npm install
 npm run dev       # Vite dev server on :5173 (proxies /api to backend)
@@ -54,7 +54,7 @@ Tests use SQLite in-memory with `StaticPool`. `conftest.py` monkeypatches `engin
 If you add a new module that imports `engine` at import time, update `conftest.py` or use lazy access.
 
 ### RBAC
-New routes **must** be added to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`, or the middleware silently skips protection for unknown prefixes.
+New routes **must** be added to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`, or the middleware silently skips protection for unknown prefixes. Paths under `/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, and `/health` bypass RBAC entirely.
 
 ### Dependency Pins
 - `bcrypt==4.0.1` — passlib 1.7.4 breaks with bcrypt 4.1+
@@ -65,6 +65,7 @@ New routes **must** be added to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`, 
 - Import `apiClient` from `./client`, not `apiRoot` from `./base`
 - Use `getErrorMessage()` for error display
 - `npm run build` includes `tsc` typecheck — no separate typecheck script
+- Frontend env: `dms-app/.env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`. Frontend uses Tailwind CSS (via `@tailwind` directives in `index.css`); no `tailwind.config.js` exists — utilities are used directly.
 
 ### Dependency Injection
 Use `CurrentUser` from `core/dependencies.py` for authenticated user injection. `AdminUser` allows both ADMIN and SUPERADMIN. `SuperAdminUser` restricts to SUPERADMIN only.
@@ -74,3 +75,154 @@ Use `CurrentUser` from `core/dependencies.py` for authenticated user injection. 
 
 ### Audit Trail
 Always use `AuditService.log_event()` for significant operations. Never create alternate audit sinks.
+
+### Notable Module Details
+- **Documents**: Has two service classes: `DocumentService` and `DocumentVariantService`
+- **Workflow**: Has three router objects in `router.py`: `router` (workflow definitions), `instance_router` (workflow instances), and `signature_router` (signatures). Service classes are split into separate files: `definition_service.py`, `instance_service.py`, `approval_service.py`.
+- **Memos**: Uses markdown-to-reportlab XML conversion with special handling for italic markers to avoid malformed nesting.
+- **User Levels**: Documents are linked to user levels via `DocumentUserLevelLink`. Users can only see documents linked to their level (enforced in `documents/service.py`). Admin bypasses all level restrictions.
+- **Company Profile**: Multi-tenancy foundation. SUPERADMIN-only endpoints at `/api/v1/companies`. Azure AD config endpoints: `GET/PUT/DELETE /api/v1/companies/{id}/azure-config` — PUT/DELETE are superadmin-only, GET allows admin for own company or superadmin for any.
+- **Storage Usage**: Tracks storage consumption per user/company. Admin endpoints at `/api/v1/storage`.
+- **Correspondence**: Manages incoming, outgoing, and internal correspondence with file attachments. `document_id` on `Correspondence` is nullable. Outbound/internal auto-generate an HTML backing document from `body` text.
+
+### Approval Workflow System
+Generic, document-type-agnostic approval engine. Reuses existing auth, RBAC, users, user_levels, audit, documents, directories. No new auth, permission, or audit mechanisms.
+
+- **Workflow Status**: `draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved` | `cancelled`) → `published` (optional) → `archived`
+- **RBAC Integration**: Add new prefixes to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`:
+  - `(POST, /api/v1/workflows)` → admin-only config actions
+  - `(POST, /api/v1/workflow-instances)` → create (Maker)
+  - `(POST, /api/v1/workflow-instances/{id}/actions)` → update (Checker/approver tiers)
+  - `(GET, /api/v1/workflow-instances/pending)` and `/mine` → view
+- **User Level Integration**: `workflow_instances` inherits visibility rules from `documents/service.py` via `DocumentUserLevelLink`. Admin bypass still applies.
+- **Instance Snapshot**: `WorkflowInstanceService.submit_instance()` snapshots the workflow definition's steps at creation time. Definition changes do **not** affect running instances.
+- **Workflow Audit**: Every `workflow_actions` write must also call `AuditService.log_event()` — do not build a second audit mechanism.
+
+### Seed Data
+`seed.py` creates five roles with fixed permission matrices:
+- SuperAdmin: view, download, create, update, delete (full system access)
+- Admin: view, download, create, update, delete
+- Maker: view, download, create, update
+- Checker: view, download, update
+- Auditor: view, download
+Default admin: `admin@dms.local` / `Admin@1234`.
+
+### Coding Style
+4-space indent in Python, 2-space in TypeScript/TSX. `snake_case` for Python, `PascalCase` for React components, `camelCase` for hooks/stores/utils.
+
+### Security
+Copy `.env.example` to `.env` for local setup. Never commit `.env` (it contains Azure AD client secrets). GitHub secret scanning will reject pushes containing Azure secrets. Treat `storage/uploads/` as runtime data. Ensure `__pycache__` and `*.pyc` are in `.gitignore` before committing.
+
+## Windows / Bash Environment
+
+This project is located on Windows at:
+
+`E:\xfl-projects\dms`
+
+When executing commands through Bash/Git Bash, use:
+
+`/e/xfl-projects/dms`
+
+Never use `/xfl-projects/dms`.
+
+Before running project commands, verify the working directory with:
+
+```bash
+pwd
+
+## Verification Rules
+
+When running tests, linting, builds, or other verification commands:
+
+1. Run each verification command once.
+2. Always capture and inspect stdout and stderr.
+3. A non-zero exit code is not automatically a tool failure.
+4. Never blindly retry an identical failed command.
+5. Diagnose the underlying error before retrying.
+6. If a command fails, use a diagnostic variant if necessary rather
+   than repeating the same command.
+7. Distinguish:
+   - test assertion failures
+   - test collection errors
+   - fixture/configuration errors
+   - lint violations
+   - build errors
+   - environment/tool errors
+8. Do not modify unrelated existing failures merely to make the
+   verification command pass.
+9. Clearly separate pre-existing failures from failures introduced
+   by the current change.
+10. Report the exact test counts:
+    - passed
+    - failed
+    - errors
+    - skipped
+
+## Test Failure Handling
+
+If a test command returns a non-zero exit code:
+
+- Do not immediately rerun the same command.
+- Read the failure output.
+- Identify the failing test or collection error.
+- Determine whether it is related to the current change.
+- Only then decide whether a fix or another diagnostic command is required.
+
+## Windows Bash Path Rules
+
+This project runs on Windows.
+
+Project root:
+
+E:\xfl-projects\dms
+
+When using Bash/Git Bash commands:
+
+- NEVER use Windows paths such as:
+  E:\xfl-projects\dms\...
+- NEVER use backslash (`\`) path separators in Bash commands.
+- Use relative paths from the project root whenever possible.
+- Use forward-slash paths for absolute paths.
+
+Correct:
+
+```bash
+rm migrations/versions/example.py
+
+cd /e/xfl-projects/dms
+rm migrations/versions/example.py
+
+Incorrect:
+
+rm E:\xfl-projects\dms\migrations\versions\example.py
+cd E:\xfl-projects\dms
+
+Before executing a Bash command involving a project file, assume the
+current working directory is the project root and prefer relative paths.
+
+
+### I would add one more rule
+
+This is particularly useful with Claude Code:
+
+```markdown
+## Shell Command Rules
+
+Use Bash syntax consistently when invoking the Bash tool.
+
+For file operations:
+
+- `rm` → Bash/Git Bash paths
+- `mv` → Bash/Git Bash paths
+- `cp` → Bash/Git Bash paths
+- `mkdir` → Bash/Git Bash paths
+
+Do not mix PowerShell/Windows path syntax with Bash commands.
+
+If an absolute path is necessary, convert:
+
+E:\xfl-projects\dms
+
+to:
+
+/e/xfl-projects/dms

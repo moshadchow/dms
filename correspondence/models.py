@@ -122,6 +122,12 @@ class Correspondence(SQLModel, table=True):
     delivered_at: Optional[datetime] = Field(default=None)
     acknowledged_at: Optional[datetime] = Field(default=None)
 
+    # Completion/Archive
+    completed_at: Optional[datetime] = Field(default=None)
+    completed_by_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    archived_at: Optional[datetime] = Field(default=None)
+    archived_by_id: Optional[int] = Field(default=None, foreign_key="users.id")
+
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
     updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
@@ -250,6 +256,10 @@ class CorrespondenceRead(SQLModel):
     dispatched_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
     acknowledged_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    completed_by_id: Optional[int] = None
+    archived_at: Optional[datetime] = None
+    archived_by_id: Optional[int] = None
     created_by_name: Optional[str] = None
     category_name: Optional[str] = None
     created_at: datetime

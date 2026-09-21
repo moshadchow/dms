@@ -108,3 +108,15 @@ class CorrespondenceAcknowledge(BaseModel):
 
     acknowledged_at: Optional[datetime] = None
     remarks: Optional[str] = None
+
+
+class CorrespondenceComplete(BaseModel):
+    """Body for POST /correspondences/{id}/complete — mark as completed."""
+
+    remarks: Optional[str] = None
+
+
+class CorrespondenceArchive(BaseModel):
+    """Body for POST /correspondences/{id}/archive — mark as archived."""
+
+    remarks: Optional[str] = None

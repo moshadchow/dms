@@ -20,7 +20,9 @@ from correspondence.models import (
     CorrespondenceStatus,
 )
 from correspondence.schemas import (
+    CorrespondenceArchive,
     CorrespondenceAssign,
+    CorrespondenceComplete,
     CorrespondenceCreate,
     CorrespondenceDispatch,
     CorrespondenceSubmit,
@@ -226,6 +228,44 @@ def mark_acknowledged(
     return CorrespondenceService(session).mark_acknowledged(correspondence_id, current_user)
 
 
+@router.post(
+    "/{correspondence_id}/complete",
+    response_model=CorrespondenceDetailRead,
+    status_code=status.HTTP_200_OK,
+    summary="Complete a correspondence",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def complete_correspondence(
+    correspondence_id: int,
+    payload: CorrespondenceComplete,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
+):
+    return CorrespondenceService(session).complete_correspondence(
+        correspondence_id, payload, current_user, background_tasks
+    )
+
+
+@router.post(
+    "/{correspondence_id}/archive",
+    response_model=CorrespondenceDetailRead,
+    status_code=status.HTTP_200_OK,
+    summary="Archive a correspondence",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def archive_correspondence(
+    correspondence_id: int,
+    payload: CorrespondenceArchive,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
+):
+    return CorrespondenceService(session).archive_correspondence(
+        correspondence_id, payload, current_user, background_tasks
+    )
+
+
 @router.get(
     "/{correspondence_id}/movements",
     response_model=list[CorrespondenceMovementRead],
@@ -377,4 +417,46 @@ def download_final(
         path=str(pdf_path),
         media_type="application/pdf",
         filename=f"{corr.reference_number}_final.pdf",
+    )
+
+
+@router.post(
+    "/{correspondence_id}/complete",
+    response_model=CorrespondenceDetailRead,
+    status_code=status.HTTP_200_OK,
+    summary="Complete a correspondence",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def complete_correspondence(
+    correspondence_id: int,
+    payload: CorrespondenceComplete,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
+):
+    return CorrespondenceService(session).complete_correspondence(
+        correspondence_id, payload, current_user, background_tasks
+    )
+
+
+@router.post(
+    "/{correspondence_id}/archive",
+    response_model=CorrespondenceDetailRead,
+    status_code=status.HTTP_200_OK,
+    summary="Archive a correspondence",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def archive_correspondence(
+    correspondence_id: int,
+    payload: Optional[dict] = None,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    from fastapi import HTTPException
+    if payload is None:
+        payload = {}
+    return CorrespondenceService(session).archive_correspondence(
+        correspondence_id,
+        current_user,
+        remarks=payload.get("remarks", "Correspondence archived"),
     )

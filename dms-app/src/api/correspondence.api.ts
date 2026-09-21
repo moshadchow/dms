@@ -91,6 +91,21 @@ export const correspondenceApi = {
     return res.data
   },
 
+  complete: async (id: number, remarks?: string): Promise<CorrespondenceDetail> => {
+    const res = await apiClient.post<CorrespondenceDetail>(`/correspondences/${id}/complete`, { remarks })
+    return res.data
+  },
+
+  archive: async (id: number, remarks?: string): Promise<CorrespondenceDetail> => {
+    const res = await apiClient.post<CorrespondenceDetail>(`/correspondences/${id}/archive`, { remarks })
+    return res.data
+  },
+
+  actOnWorkflowInstance: async (instanceId: number, action: 'approve' | 'reject' | 'return' | 'clarify' | 'forward', remarks?: string): Promise<unknown> => {
+    const res = await apiClient.post(`/workflow-instances/${instanceId}/actions`, { action, remarks })
+    return res.data
+  },
+
   addAttachment: async (id: number, file: File, attachmentType: string = 'supporting'): Promise<CorrespondenceAttachment> => {
     const form = new FormData()
     form.append('file', file)

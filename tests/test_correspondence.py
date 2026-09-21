@@ -15,6 +15,8 @@ from correspondence.models import (
 )
 from correspondence.schemas import (
     CorrespondenceAssign,
+    CorrespondenceArchive,
+    CorrespondenceComplete,
     CorrespondenceCreate,
     CorrespondenceDeliver,
     CorrespondenceDispatch,
@@ -892,3 +894,264 @@ class TestInboundSubmitWithAttachment:
             assert result.workflow_instance_id is not None
             assert result.status == CorrespondenceStatus.SUBMITTED
             assert result.document_id == link.document_id
+
+
+# ── Lifecycle Tests (Complete/Archive) ───────────────
+
+
+class TestCorrespondenceLifecycle:
+    def test_complete_correspondence_from_acknowledged(self, seeded_data, client, auth_headers):
+        """Test full lifecycle: create → submit → approve → dispatch → deliver → acknowledge → complete"""
+        test_client, engine, _ = client
+        wf_payload = {
+            "name": "Lifecycle WF",
+            "description": "Test complete lifecycle",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        assert wf_resp.status_code == 201
+        wf_def_id = wf_resp.json()["id"]
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+
+            # Create draft
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            # Submit to workflow
+            result = svc.submit_correspondence(
+                corr.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            assert result.status == CorrespondenceStatus.SUBMITTED
+            wf_instance_id = result.workflow_instance_id
+
+            # Approve workflow (simulate admin approval)
+            from workflow.models import WorkflowInstance, WorkflowStatus
+            orm_instance = session.get(WorkflowInstance, wf_instance_id)
+            orm_instance.status = WorkflowStatus.APPROVED
+            session.add(orm_instance)
+            session.commit()
+
+            # Sync status
+            detail = svc.get_correspondence(corr.id, maker)
+            assert detail.status == CorrespondenceStatus.APPROVED
+
+            # Dispatch
+            dispatch_result = svc.dispatch_correspondence(
+                corr.id,
+                CorrespondenceDispatch(
+                    dispatch_method=DispatchMethod.EMAIL,
+                    dispatch_reference="EMAIL-001",
+                    remarks="Sent via email",
+                ),
+                admin,
+            )
+            assert dispatch_result.status == CorrespondenceStatus.DISPATCHED
+
+            # Deliver
+            deliver_result = svc.mark_delivered(corr.id, admin)
+            assert deliver_result.status == CorrespondenceStatus.DELIVERED
+
+            # Acknowledge
+            ack_result = svc.mark_acknowledged(corr.id, admin)
+            assert ack_result.status == CorrespondenceStatus.ACKNOWLEDGED
+
+            # Complete
+            complete_result = svc.complete_correspondence(
+                corr.id,
+                CorrespondenceComplete(remarks="Successfully completed"),
+                admin,
+            )
+            assert complete_result.status == CorrespondenceStatus.COMPLETED
+            assert complete_result.completed_at is not None
+            assert complete_result.completed_by_id == admin.id
+
+    def test_complete_requires_acknowledged_status(self, seeded_data, client, auth_headers):
+        """Complete should fail if not in ACKNOWLEDGED status"""
+        test_client, engine, _ = client
+
+        with Session(engine) as session:
+            from users.models import User
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+
+            # Create and set to APPROVED (not acknowledged)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), admin)
+            orm_corr = session.get(Correspondence, corr.id)
+            orm_corr.status = CorrespondenceStatus.APPROVED
+            session.add(orm_corr)
+            session.commit()
+
+            try:
+                svc.complete_correspondence(
+                    corr.id,
+                    CorrespondenceComplete(remarks="Should fail"),
+                    admin,
+                )
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "acknowledged" in str(e).lower() or "cannot" in str(e).lower()
+
+    def test_archive_correspondence_from_completed(self, seeded_data, client, auth_headers):
+        """Test full lifecycle ending in archive: complete → archive"""
+        test_client, engine, _ = client
+        wf_payload = {
+            "name": "Archive Lifecycle WF",
+            "description": "Test archive lifecycle",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": seeded_data["admin_id"]}],
+            }],
+        }
+        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
+        assert wf_resp.status_code == 201
+        wf_def_id = wf_resp.json()["id"]
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+
+            # Create draft
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            # Submit to workflow
+            result = svc.submit_correspondence(
+                corr.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            wf_instance_id = result.workflow_instance_id
+
+            # Approve workflow
+            from workflow.models import WorkflowInstance, WorkflowStatus
+            orm_instance = session.get(WorkflowInstance, wf_instance_id)
+            orm_instance.status = WorkflowStatus.APPROVED
+            session.add(orm_instance)
+            session.commit()
+
+            # Dispatch
+            svc.dispatch_correspondence(
+                corr.id,
+                CorrespondenceDispatch(
+                    dispatch_method=DispatchMethod.EMAIL,
+                    dispatch_reference="EMAIL-001",
+                    remarks="Sent via email",
+                ),
+                admin,
+            )
+
+            # Deliver
+            svc.mark_delivered(corr.id, admin)
+
+            # Acknowledge
+            svc.mark_acknowledged(corr.id, admin)
+
+            # Complete
+            complete_result = svc.complete_correspondence(
+                corr.id,
+                CorrespondenceComplete(remarks="Successfully completed"),
+                admin,
+            )
+            assert complete_result.status == CorrespondenceStatus.COMPLETED
+
+            # Archive
+            archive_result = svc.archive_correspondence(
+                corr.id,
+                CorrespondenceArchive(remarks="Archived for records"),
+                admin,
+            )
+            assert archive_result.status == CorrespondenceStatus.ARCHIVED
+            assert archive_result.archived_at is not None
+            assert archive_result.archived_by_id == admin.id
+
+    def test_archive_requires_completed_status(self, seeded_data, client, auth_headers):
+        """Archive should fail if not in COMPLETED status"""
+        test_client, engine, _ = client
+
+        with Session(engine) as session:
+            from users.models import User
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+
+            # Create and set to ACKNOWLEDGED (not completed)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), admin)
+            orm_corr = session.get(Correspondence, corr.id)
+            orm_corr.status = CorrespondenceStatus.ACKNOWLEDGED
+            session.add(orm_corr)
+            session.commit()
+
+            try:
+                svc.archive_correspondence(
+                    corr.id,
+                    CorrespondenceArchive(remarks="Should fail"),
+                    admin,
+                )
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "completed" in str(e).lower() or "cannot" in str(e).lower()
+
+    def test_cannot_complete_terminal_status(self, seeded_data, client, auth_headers):
+        """Cannot complete if already in terminal status (COMPLETED/ARCHIVED)"""
+        test_client, engine, _ = client
+
+        with Session(engine) as session:
+            from users.models import User
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+
+            # Create and set to COMPLETED
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), admin)
+            orm_corr = session.get(Correspondence, corr.id)
+            orm_corr.status = CorrespondenceStatus.COMPLETED
+            session.add(orm_corr)
+            session.commit()
+
+            try:
+                svc.complete_correspondence(
+                    corr.id,
+                    CorrespondenceComplete(remarks="Should fail"),
+                    admin,
+                )
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "completed" in str(e).lower() or "terminal" in str(e).lower() or "cannot" in str(e).lower()
+
+    def test_cannot_archive_terminal_status(self, seeded_data, client, auth_headers):
+        """Cannot archive if already ARCHIVED"""
+        test_client, engine, _ = client
+
+        with Session(engine) as session:
+            from users.models import User
+            admin = session.get(User, seeded_data["admin_id"])
+            svc = CorrespondenceService(session)
+
+            # Create and set to ARCHIVED
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), admin)
+            orm_corr = session.get(Correspondence, corr.id)
+            orm_corr.status = CorrespondenceStatus.ARCHIVED
+            session.add(orm_corr)
+            session.commit()
+
+            try:
+                svc.archive_correspondence(
+                    corr.id,
+                    CorrespondenceArchive(remarks="Should fail"),
+                    admin,
+                )
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "archived" in str(e).lower() or "terminal" in str(e).lower() or "cannot" in str(e).lower()
