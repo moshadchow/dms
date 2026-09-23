@@ -49,6 +49,67 @@ def create_correspondence(
     return CorrespondenceService(session).create_draft(payload, current_user)
 
 
+@router.post(
+    "/{parent_id}/reply",
+    response_model=CorrespondenceDetailRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a reply to an inbound correspondence",
+    dependencies=[Depends(require_permission(PermissionAction.CREATE))],
+)
+def create_reply(
+    parent_id: int,
+    payload: CorrespondenceCreate,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return CorrespondenceService(session).create_reply(parent_id, payload, current_user)
+
+
+@router.post(
+    "/{correspondence_id}/submit-reply",
+    response_model=CorrespondenceDetailRead,
+    summary="Submit a reply correspondence for approval workflow",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def submit_reply(
+    correspondence_id: int,
+    payload: CorrespondenceSubmit,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+    background_tasks: BackgroundTasks = None,
+):
+    return CorrespondenceService(session).submit_reply(
+        correspondence_id, payload, current_user, background_tasks
+    )
+
+
+@router.post(
+    "/{correspondence_id}/mark-responded",
+    response_model=CorrespondenceDetailRead,
+    summary="Mark inbound correspondence as having received a response",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def mark_responded(
+    correspondence_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return CorrespondenceService(session).mark_responded(correspondence_id, current_user)
+
+
+@router.get(
+    "/{parent_id}/replies",
+    response_model=list[CorrespondenceDetailRead],
+    summary="Get all replies for a correspondence",
+)
+def get_replies(
+    parent_id: int,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    return CorrespondenceService(session).get_replies(parent_id, current_user)
+
+
 @router.get(
     "",
     response_model=CorrespondenceListResponse,
@@ -420,43 +481,3 @@ def download_final(
     )
 
 
-@router.post(
-    "/{correspondence_id}/complete",
-    response_model=CorrespondenceDetailRead,
-    status_code=status.HTTP_200_OK,
-    summary="Complete a correspondence",
-    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
-)
-def complete_correspondence(
-    correspondence_id: int,
-    payload: CorrespondenceComplete,
-    current_user: CurrentUser = None,
-    session: Session = Depends(get_session),
-    background_tasks: BackgroundTasks = None,
-):
-    return CorrespondenceService(session).complete_correspondence(
-        correspondence_id, payload, current_user, background_tasks
-    )
-
-
-@router.post(
-    "/{correspondence_id}/archive",
-    response_model=CorrespondenceDetailRead,
-    status_code=status.HTTP_200_OK,
-    summary="Archive a correspondence",
-    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
-)
-def archive_correspondence(
-    correspondence_id: int,
-    payload: Optional[dict] = None,
-    current_user: CurrentUser = None,
-    session: Session = Depends(get_session),
-):
-    from fastapi import HTTPException
-    if payload is None:
-        payload = {}
-    return CorrespondenceService(session).archive_correspondence(
-        correspondence_id,
-        current_user,
-        remarks=payload.get("remarks", "Correspondence archived"),
-    )

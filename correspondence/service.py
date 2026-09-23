@@ -1373,3 +1373,364 @@ class CorrespondenceService:
         ).first()
         next_val = (seq.last_value + 1) if seq else 1
         return f"COR-{company.short_name}-{year}-{next_val:06d}"
+
+    # ──────────────────────────────────────────
+    # Reply Creation
+    # ──────────────────────────────────────────
+
+    def create_reply(
+        self,
+        parent_id: int,
+        data: CorrespondenceCreate,
+        current_user: User,
+    ) -> "CorrespondenceDetailRead":
+        """Create a reply correspondence linked to a parent correspondence.
+
+        Args:
+            parent_id: ID of the parent correspondence to reply to
+            data: CorrespondenceCreate payload
+            current_user: The user creating the reply
+
+        Returns:
+            CorrespondenceDetailRead of the newly created reply
+        """
+        # Get parent correspondence and validate access
+        parent = self.session.get(Correspondence, parent_id)
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent correspondence not found")
+
+        # Validate parent belongs to same company
+        company = self._resolve_company(current_user)
+        if parent.company_id != company.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot reply to correspondence from another company"
+            )
+
+        # Validate we can view the parent
+        self._check_view_access(parent, current_user)
+
+        # Validate parent is in a state that allows replies
+        if parent.status in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot reply to correspondence in terminal status '{parent.status.value}'"
+            )
+
+        # Set parent reference
+        data.parent_correspondence_id = parent_id
+
+        # Validate direction is appropriate for a reply
+        if data.direction not in (CorrespondenceDirection.INBOUND, CorrespondenceDirection.OUTBOUND, CorrespondenceDirection.INTERNAL):
+            raise HTTPException(
+                status_code=422,
+                detail="Invalid direction for reply"
+            )
+
+        # Validate response fields
+        if data.response_required and not data.response_deadline:
+            raise HTTPException(
+                status_code=422,
+                detail="Response deadline is required when response is required"
+            )
+
+        # Validate document requirements based on direction
+        if data.direction == CorrespondenceDirection.INBOUND:
+            if not data.date_received:
+                data.date_received = datetime.utcnow()
+            # For inbound replies, we can accept an existing document_id
+            if data.document_id:
+                doc = self.session.get(Document, data.document_id)
+                if not doc or doc.company_id != company.id:
+                    raise HTTPException(status_code=422, detail="Document not found")
+            # If no document provided, we'll create one later if needed
+        else:
+            # Outbound/internal requires body
+            if not data.body:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Body is required for outbound/internal correspondence"
+                )
+
+        # Generate reference number
+        ref_number = self._next_reference_number(company)
+
+        # Validate category if provided
+        if data.category_id is not None:
+            self._validate_category(data.category_id, company.id)
+
+        # Validate user levels if provided
+        if data.user_level_ids:
+            valid_level_ids = self._validate_user_levels(data.user_level_ids)
+        else:
+            valid_level_ids = []
+
+        # Create the correspondence record
+        corr = Correspondence(
+            reference_number=ref_number,
+            company_id=company.id,
+            created_by=current_user.id,
+            direction=data.direction,
+            status=(
+                CorrespondenceStatus.DRAFT
+                if data.direction in (CorrespondenceDirection.OUTBOUND, CorrespondenceDirection.INTERNAL)
+                else CorrespondenceStatus.RECEIVED
+            ),
+            subject=data.subject or f"Re: {parent.subject}",
+            body=data.body,
+            priority=data.priority,
+            category_id=data.category_id,
+            sender_name=data.sender_name,
+            sender_organization=data.sender_organization,
+            sender_email=data.sender_email,
+            sender_phone=data.sender_phone,
+            recipient_name=data.recipient_name,
+            recipient_organization=data.recipient_organization,
+            recipient_email=data.recipient_email,
+            recipient_phone=data.recipient_phone,
+            date_sent=None,
+            date_received=data.date_received,
+            response_required=data.response_required,
+            response_deadline=data.response_deadline,
+            parent_correspondence_id=parent_id,
+        )
+
+        self.session.add(corr)
+        self.session.commit()
+        self.session.refresh(corr)
+
+        # Create backing HTML document and link to correspondence
+        if corr.direction in (CorrespondenceDirection.OUTBOUND, CorrespondenceDirection.INTERNAL):
+            if data.body:
+                html_path = self._save_correspondence_html(
+                    corr.subject, data.body, current_user, company
+                )
+                # Create document record from HTML file
+                doc = Document(
+                    directory_id=1,
+                    title=corr.subject,
+                    file_name=f"{corr.subject}.html",
+                    file_type=FileType.HTML,
+                    mime_type="text/html",
+                    file_size=len(data.body.encode()) if data.body else 0,
+                    storage_path=html_path,
+                    status=DocumentStatus.ACTIVE,
+                    uploaded_by=current_user.id,
+                )
+                self.session.add(doc)
+                self.session.commit()
+                self.session.refresh(doc)
+                corr.document_id = doc.id
+                # Link via attachment
+                att = CorrespondenceAttachment(
+                    correspondence_id=corr.id,
+                    document_id=doc.id,
+                    attachment_type=AttachmentType.ORIGINAL,
+                    created_by=current_user.id,
+                )
+                self.session.add(att)
+
+        # Preserve original incoming document via parent reference (not copied to reply document_id)
+        # The reply references the parent through parent_correspondence_id;
+        # for reply document access, use parent document reference
+        if parent.document_id:
+            # Link original parent document as supporting attachment for reference
+            att_ref = CorrespondenceAttachment(
+                correspondence_id=corr.id,
+                document_id=parent.document_id,
+                attachment_type=AttachmentType.SUPPORTING,
+                created_by=current_user.id,
+            )
+            self.session.add(att_ref)
+
+        # Set initial response tracking fields
+        corr.response_required = data.response_required or parent.response_required
+        corr.response_deadline = data.response_deadline or parent.response_deadline
+
+        self.session.add(corr)
+        self.session.commit()
+        self.session.refresh(corr)
+
+        # Log audit event
+        self._log_audit(
+            AuditAction.CREATE_CORRESPONDENCE,
+            corr,
+            f"Created reply to correspondence '{parent.reference_number}'",
+            current_user,
+            company_id=company.id,
+        )
+
+        return self._to_detail(corr)
+
+    def submit_reply(
+        self,
+        correspondence_id: int,
+        data: CorrespondenceSubmit,
+        current_user: User,
+        background_tasks: Optional[BackgroundTasks] = None,
+    ) -> "CorrespondenceDetailRead":
+        """Submit a reply correspondence for approval workflow.
+
+        This method also marks the parent correspondence as having received a response.
+
+        Args:
+            correspondence_id: ID of the reply correspondence to submit
+            data: CorrespondenceSubmit payload with workflow_definition_id
+            current_user: The user submitting the reply
+            background_tasks: Optional background tasks for notifications
+
+        Returns:
+            CorrespondenceDetailRead of the submitted reply
+        """
+        # Get the reply correspondence
+        reply = self.session.get(Correspondence, correspondence_id)
+        if not reply:
+            raise HTTPException(status_code=404, detail="Reply correspondence not found")
+
+        # Validate access
+        self._check_view_access(reply, current_user)
+
+        # Validate we can submit (author or admin)
+        if not current_user.is_admin() and reply.created_by != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the author can submit a reply"
+            )
+
+        # Validate status
+        if reply.status not in (CorrespondenceStatus.DRAFT, CorrespondenceStatus.RECEIVED, CorrespondenceStatus.RETURNED):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot submit reply in status '{reply.status.value}'"
+            )
+
+        # Get parent correspondence for validation and response tracking
+        parent = self.session.get(Correspondence, reply.parent_correspondence_id)
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent correspondence not found")
+
+        # Validate parent is still in a state that expects a response
+        if parent.status in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Parent correspondence is in terminal status '{parent.status.value}'"
+            )
+
+        # Submit using existing workflow logic (handles document fallback, signature, audit)
+        result = self.submit_correspondence(
+            correspondence_id=correspondence_id,
+            data=data,
+            current_user=current_user,
+            background_tasks=background_tasks,
+        )
+
+        # Mark parent as having received a response after successful submission
+        self.mark_responded(parent.id, current_user)
+
+        return result
+
+    def mark_responded(
+        self,
+        correspondence_id: int,
+        current_user: User,
+    ) -> "CorrespondenceDetailRead":
+        """Mark an inbound correspondence as having received a response.
+
+        Args:
+            correspondence_id: ID of the inbound correspondence
+            current_user: The user marking the response
+
+        Returns:
+            CorrespondenceDetailRead of the updated correspondence
+        """
+        # Get the correspondence
+        corr = self.session.get(Correspondence, correspondence_id)
+        if not corr:
+            raise HTTPException(status_code=404, detail="Correspondence not found")
+
+        # Validate access
+        self._check_view_access(corr, current_user)
+
+        # Validate it's an inbound correspondence
+        if corr.direction != CorrespondenceDirection.INBOUND:
+            raise HTTPException(
+                status_code=409,
+                detail="Only inbound correspondence can be marked as responded"
+            )
+
+        # Validate status - can only mark as responded if not already completed/archived/etc.
+        if corr.status in TERMINAL_STATUSES:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot mark correspondence as responded in status '{corr.status.value}'"
+            )
+
+        # Update response tracking
+        now = datetime.utcnow()
+        corr.response_received = True
+        corr.responded_at = now
+        corr.updated_at = now
+
+        # Add movement record
+        movement = CorrespondenceMovement(
+            correspondence_id=corr.id,
+            action="respond",
+            remarks="Response received",
+            created_by=current_user.id,
+            created_at=now,
+        )
+        self.session.add(movement)
+        self.session.add(corr)
+        self.session.commit()
+        self.session.refresh(corr)
+
+        # Log audit event
+        self._log_audit(
+            AuditAction.UPDATE_CORRESPONDENCE,
+            corr,
+            f"Marked correspondence as responded",
+            current_user,
+            company_id=corr.company_id,
+            new_value={
+                "response_received": True,
+                "responded_at": now.isoformat()
+            }
+        )
+
+        return self._to_detail(corr)
+
+    def get_replies(
+        self,
+        parent_id: int,
+        current_user: User,
+    ) -> List["CorrespondenceDetailRead"]:
+        """Get all replies for a given parent correspondence.
+
+        Args:
+            parent_id: ID of the parent correspondence
+            current_user: The user requesting the replies
+
+        Returns:
+            List of CorrespondenceDetailRead objects for replies
+        """
+        # Validate parent exists and user can view it
+        parent = self.session.get(Correspondence, parent_id)
+        if not parent:
+            raise HTTPException(status_code=404, detail="Parent correspondence not found")
+
+        self._check_view_access(parent, current_user)
+
+        # Query for replies
+        statement = select(Correspondence).where(
+            Correspondence.parent_correspondence_id == parent_id
+        ).order_by(Correspondence.created_at.desc())
+
+        replies = self.session.exec(statement).all()
+
+        # Convert to detail reads with proper access checking
+        result = []
+        for reply in replies:
+            self._check_view_access(reply, current_user)
+            result.append(self._to_detail(reply))
+
+        return result
