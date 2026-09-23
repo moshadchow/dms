@@ -256,8 +256,16 @@ def seeded_data(client):
             parent_id=None,
             created_by=admin.id,
         )
+        marketing_dir = Directory(
+            name="Marketing Root",
+            description="",
+            category_id=marketing.id,
+            parent_id=None,
+            created_by=other_admin.id,
+        )
         session.add(finance_dir)
         session.add(hr_dir)
+        session.add(marketing_dir)
         session.flush()
 
         finance_doc = Document(
@@ -313,6 +321,7 @@ def seeded_data(client):
             "operations_category_id": operations.id,
             "finance_directory_id": finance_dir.id,
             "hr_directory_id": hr_dir.id,
+            "marketing_directory_id": marketing_dir.id,
             "finance_document_id": finance_doc.id,
             "hr_document_id": hr_doc.id,
             "high_level_id": high_level.id,

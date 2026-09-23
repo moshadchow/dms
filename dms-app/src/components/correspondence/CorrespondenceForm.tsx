@@ -2,17 +2,18 @@ import { useState, useEffect, useRef } from 'react'
 import Button from '@/components/ui/Button'
 import { categoriesApi } from '@/api/categories.api'
 import { correspondenceApi } from '@/api/correspondence.api'
-import { getErrorMessage } from '@/api/client'
 import type { Category } from '@/types/document.types'
 import type {
   CorrespondenceCreate,
   CorrespondenceDirection,
+  CorrespondenceDetail,
   CorrespondencePriority,
 } from '@/types/correspondence.types'
 import toast from 'react-hot-toast'
 
 interface Props {
   initialDirection?: CorrespondenceDirection
+  parent?: CorrespondenceDetail | null
   onSubmit: (data: CorrespondenceCreate, file?: File | null) => Promise<void>
   onCancel: () => void
   loading?: boolean
@@ -38,12 +39,13 @@ const ALLOWED_MIME = [
   'image/png',
 ]
 
-export default function CorrespondenceForm({ initialDirection, onSubmit, onCancel, loading }: Props) {
-  const [direction, setDirection] = useState<CorrespondenceDirection>(initialDirection ?? 'outbound')
-  const [subject, setSubject] = useState('')
+export default function CorrespondenceForm({ initialDirection, parent, onSubmit, onCancel, loading }: Props) {
+  const isReply = !!parent
+  const [direction, setDirection] = useState<CorrespondenceDirection>(isReply ? 'outbound' : (initialDirection ?? 'outbound'))
+  const [subject, setSubject] = useState<string>(isReply ? `Re: ${parent!.subject}` : '')
   const [body, setBody] = useState('')
   const [priority, setPriority] = useState<CorrespondencePriority>('normal')
-  const [categoryId, setCategoryId] = useState<number | null>(null)
+  const [categoryId, setCategoryId] = useState<number | null>(parent?.category_id ?? null)
   const [senderName, setSenderName] = useState('')
   const [senderOrg, setSenderOrg] = useState('')
   const [senderEmail, setSenderEmail] = useState('')
@@ -58,7 +60,6 @@ export default function CorrespondenceForm({ initialDirection, onSubmit, onCance
   const [nextRef, setNextRef] = useState('')
   const [categories, setCategories] = useState<Category[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [uploadingFile, setUploadingFile] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -97,6 +98,9 @@ export default function CorrespondenceForm({ initialDirection, onSubmit, onCance
     if ((direction === 'outbound' || direction === 'internal') && !body.trim()) {
       toast.error('Body is required for outbound/internal correspondence'); return
     }
+    if ((direction === 'outbound' || direction === 'internal') && !categoryId) {
+      toast.error('Category is required for outbound/internal correspondence'); return
+    }
     if (direction === 'inbound' && !dateReceived) {
       toast.error('Date received is required for inbound correspondence'); return
     }
@@ -132,8 +136,15 @@ export default function CorrespondenceForm({ initialDirection, onSubmit, onCance
           </div>
         )}
 
+        {/* Reply context banner */}
+        {parent && (
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--primary-soft, #eef2ff)', borderRadius: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+            Replying to <strong style={{ color: 'var(--primary)' }}>{parent.reference_number}</strong> — {parent.subject}
+          </div>
+        )}
+
         {/* Direction (only if not pre-set) */}
-        {!initialDirection && (
+        {!initialDirection && !parent && (
           <div>
             <label style={labelStyle}>Direction *</label>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -197,7 +208,7 @@ export default function CorrespondenceForm({ initialDirection, onSubmit, onCance
             </select>
           </div>
           <div>
-            <label style={labelStyle}>Category</label>
+            <label style={labelStyle}>Category{direction !== 'inbound' ? ' *' : ''}</label>
             <select value={categoryId ?? ''} onChange={(e) => setCategoryId(Number(e.target.value) || null)} style={inputStyle}>
               <option value="">— None —</option>
               {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}

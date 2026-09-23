@@ -125,6 +125,26 @@ export const correspondenceApi = {
     return res.data
   },
 
+  createReply: async (parentId: number, data: CorrespondenceCreate): Promise<CorrespondenceDetail> => {
+    const res = await apiClient.post<CorrespondenceDetail>(`/correspondences/${parentId}/reply`, data)
+    return res.data
+  },
+
+  getReplies: async (parentId: number): Promise<CorrespondenceDetail[]> => {
+    const res = await apiClient.get<CorrespondenceDetail[]>(`/correspondences/${parentId}/replies`)
+    return res.data
+  },
+
+  submitReply: async (id: number, data: CorrespondenceSubmit): Promise<CorrespondenceDetail> => {
+    const res = await apiClient.post<CorrespondenceDetail>(`/correspondences/${id}/submit-reply`, data)
+    return res.data
+  },
+
+  markResponded: async (id: number): Promise<CorrespondenceDetail> => {
+    const res = await apiClient.post<CorrespondenceDetail>(`/correspondences/${id}/mark-responded`)
+    return res.data
+  },
+
   downloadAttachment: async (correspondenceId: number, attachmentId: number): Promise<Blob> => {
     const res = await apiClient.get(`/correspondences/${correspondenceId}/attachments/${attachmentId}/download`, { responseType: 'blob' })
     return res.data

@@ -1155,3 +1155,257 @@ class TestCorrespondenceLifecycle:
                 assert False, "Should have raised"
             except Exception as e:
                 assert "archived" in str(e).lower() or "terminal" in str(e).lower() or "cannot" in str(e).lower()
+
+
+# ── Reply-Response Lifecycle Tests ───────────────
+
+
+class TestCorrespondenceReply:
+    """Tests for the complete reply-response lifecycle."""
+
+    def _create_inbound_parent(self, engine, seeded_data, user_id=None):
+        from users.models import User
+        with Session(engine) as session:
+            svc = CorrespondenceService(session)
+            user = session.get(User, user_id or seeded_data["maker_id"])
+            parent = svc.create_draft(
+                CorrespondenceCreate(
+                    **_corr_payload(
+                        seeded_data,
+                        direction="inbound",
+                        body=None,
+                        response_required=True,
+                        response_deadline="2099-12-31T00:00:00Z",
+                    )
+                ),
+                user,
+            )
+            return parent, user
+
+    def test_create_reply_links_to_parent(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            svc = CorrespondenceService(session)
+            maker = session.get(type(maker), maker.id)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(
+                    **_corr_payload(seeded_data, subject="Re: Test Correspondence", direction="outbound")
+                ),
+                maker,
+            )
+
+            assert reply.parent_correspondence_id == parent.id
+            assert reply.direction == CorrespondenceDirection.OUTBOUND
+            assert reply.status == CorrespondenceStatus.DRAFT
+            assert reply.parent_reference == parent.reference_number
+            orm_reply = session.get(Correspondence, reply.id)
+            assert orm_reply.parent_correspondence_id == parent.id
+            assert orm_reply.category_id == parent.category_id
+
+    def test_reply_backing_document_uses_category_directory(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from documents.models import Document
+            svc = CorrespondenceService(session)
+            maker = session.get(type(maker), maker.id)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(
+                    **_corr_payload(
+                        seeded_data,
+                        subject="Re: Test Correspondence",
+                        direction="outbound",
+                        category_id=None,
+                    )
+                ),
+                maker,
+            )
+            orm_reply = session.get(Correspondence, reply.id)
+            # Reply inherits the parent's category when none is supplied
+            assert orm_reply.category_id == parent.category_id
+            assert orm_reply.category_id == seeded_data["finance_category_id"]
+            # Backing document is filed under the category's directory (not the placeholder dir 1)
+            doc = session.get(Document, orm_reply.document_id)
+            assert doc is not None
+            assert doc.directory_id == seeded_data["finance_directory_id"]
+
+    def test_create_reply_defaults_subject_to_re(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            svc = CorrespondenceService(session)
+            maker = session.get(type(maker), maker.id)
+            data = CorrespondenceCreate(
+                **_corr_payload(seeded_data, direction="outbound")
+            )
+            # Service falls back to "Re: <parent subject>" when no subject is provided
+            data.subject = ""
+            reply = svc.create_reply(parent.id, data, maker)
+            assert reply.subject == f"Re: {parent.subject}"
+
+    def test_get_replies_lists_all_replies(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            svc = CorrespondenceService(session)
+            maker = session.get(type(maker), maker.id)
+            for i, subject in enumerate(["Re: First", "Re: Second"], start=1):
+                svc.create_reply(
+                    parent.id,
+                    CorrespondenceCreate(
+                        **_corr_payload(seeded_data, direction="outbound", subject=subject)
+                    ),
+                    maker,
+                )
+
+            replies = svc.get_replies(parent.id, maker)
+            assert len(replies) == 2
+            assert {r.subject for r in replies} == {"Re: First", "Re: Second"}
+            for reply in replies:
+                assert reply.parent_correspondence_id == parent.id
+
+    def test_cannot_reply_to_other_company(self, seeded_data, client):
+        _, engine, _ = client
+        parent, _maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from users.models import User
+            other_admin = session.get(User, seeded_data["other_admin_id"])
+            svc = CorrespondenceService(session)
+            try:
+                svc.create_reply(
+                    parent.id,
+                    CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound")),
+                    other_admin,
+                )
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "another company" in str(e).lower()
+
+    def test_cannot_reply_to_terminal_parent(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(type(maker), maker.id)
+            orm_parent = session.get(Correspondence, parent.id)
+            orm_parent.status = CorrespondenceStatus.ARCHIVED
+            session.add(orm_parent)
+            session.commit()
+
+            svc = CorrespondenceService(session)
+            try:
+                svc.create_reply(
+                    parent.id,
+                    CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound")),
+                    maker,
+                )
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "terminal" in str(e).lower() or "cannot" in str(e).lower()
+
+    def test_submit_reply_marks_parent_responded(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Reply WF")
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(type(maker), maker.id)
+            svc = CorrespondenceService(session)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound")),
+                maker,
+            )
+
+            result = svc.submit_reply(
+                reply.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+            assert result.workflow_instance_id is not None
+            assert result.status == CorrespondenceStatus.SUBMITTED
+
+            orm_parent = session.get(Correspondence, parent.id)
+            assert orm_parent.response_received is True
+            assert orm_parent.responded_at is not None
+
+    def test_mark_responded_sets_fields_and_movement(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(type(maker), maker.id)
+            svc = CorrespondenceService(session)
+            result = svc.mark_responded(parent.id, maker)
+
+            assert result.response_received is True
+            assert result.responded_at is not None
+
+            movements = session.exec(
+                select(CorrespondenceMovement).where(
+                    CorrespondenceMovement.correspondence_id == parent.id
+                )
+            ).all()
+            assert any(m.action == "respond" for m in movements)
+
+    def test_mark_responded_only_inbound(self, seeded_data, client):
+        _, engine, _ = client
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            outbound = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+            try:
+                svc.mark_responded(outbound.id, maker)
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "inbound" in str(e).lower()
+
+    def test_mark_responded_forbidden_in_terminal_status(self, seeded_data, client):
+        _, engine, _ = client
+        parent, maker = self._create_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(type(maker), maker.id)
+            orm_parent = session.get(Correspondence, parent.id)
+            orm_parent.status = CorrespondenceStatus.COMPLETED
+            session.add(orm_parent)
+            session.commit()
+
+            svc = CorrespondenceService(session)
+            try:
+                svc.mark_responded(parent.id, maker)
+                assert False, "Should have raised"
+            except Exception as e:
+                assert "terminal" in str(e).lower() or "cannot" in str(e).lower()
+
+    def test_reply_detail_exposes_parent_reference(self, seeded_data, client, auth_headers):
+        test_client, _, _ = client
+        parent, _maker = self._create_inbound_parent(client[1], seeded_data)
+
+        with Session(client[1]) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(
+                    **_corr_payload(seeded_data, direction="outbound", subject="Re: Test")
+                ),
+                maker,
+            )
+            detail = svc.get_correspondence(reply.id, maker)
+            assert detail.parent_reference == parent.reference_number
+            assert detail.parent_correspondence_id == parent.id

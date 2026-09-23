@@ -8,6 +8,8 @@ import CorrespondenceResponsePanel from '@/components/correspondence/Corresponde
 import CorrespondenceDispatchDialog from '@/components/correspondence/CorrespondenceDispatchDialog'
 import CorrespondenceAssignDialog from '@/components/correspondence/CorrespondenceAssignDialog'
 import CorrespondenceSubmitDialog from '@/components/correspondence/CorrespondenceSubmitDialog'
+import CorrespondenceReplyDialog from '@/components/correspondence/CorrespondenceReplyDialog'
+import CorrespondenceRepliesList from '@/components/correspondence/CorrespondenceRepliesList'
 import Button from '@/components/ui/Button'
 import { formatDateTime } from '@/utils/formatters'
 import { getErrorMessage } from '@/api/client'
@@ -45,6 +47,8 @@ export default function CorrespondenceDetailPage() {
   const [assignOpen, setAssignOpen] = useState(false)
   const [forwardOpen, setForwardOpen] = useState(false)
   const [submitOpen, setSubmitOpen] = useState(false)
+  const [replyOpen, setReplyOpen] = useState(false)
+  const [repliesRefreshKey, setRepliesRefreshKey] = useState(0)
   const user = useAuthStore(s => s.user)
 
   const fetchCorr = async () => {
@@ -98,6 +102,37 @@ export default function CorrespondenceDetailPage() {
     fetchCorr()
   }
 
+  const actOnWorkflow = async (action: 'approve' | 'reject' | 'return') => {
+    if (!corr || !corr.workflow_instance_id) return
+    try {
+      await correspondenceApi.actOnWorkflowInstance(corr.workflow_instance_id, action)
+      toast.success(`Correspondence ${action}${action === 'approve' ? 'd' : 'ed'}`)
+      fetchCorr()
+    } catch (err) {
+      toast.error(getErrorMessage(err))
+    }
+  }
+
+  const handleApprove = () => actOnWorkflow('approve')
+  const handleReject = () => actOnWorkflow('reject')
+  const handleReturn = () => actOnWorkflow('return')
+
+  const handleMarkResponded = async () => {
+    if (!corr) return
+    try {
+      await correspondenceApi.markResponded(corr.id)
+      toast.success('Marked as responded')
+      fetchCorr()
+    } catch (err) {
+      toast.error(getErrorMessage(err))
+    }
+  }
+
+  const handleReplySuccess = () => {
+    setRepliesRefreshKey((k) => k + 1)
+    if (corr && !corr.response_received) fetchCorr()
+  }
+
   const handleDownloadFinal = async () => {
     if (!corr) return
     try {
@@ -127,6 +162,9 @@ export default function CorrespondenceDetailPage() {
   const canAcknowledge = corr.status === 'delivered' && isAdmin
   const canComplete = corr.status === 'acknowledged' && isAdmin
   const canArchive = corr.status === 'completed' && isAdmin
+  const terminal = ['approved', 'dispatched', 'delivered', 'acknowledged', 'completed', 'cancelled', 'archived', 'rejected'].includes(corr.status)
+  const canReply = !terminal
+  const canMarkResponded = corr.direction === 'inbound' && !corr.response_received && !terminal
 
   const handleComplete = async () => {
     try {
@@ -162,6 +200,8 @@ export default function CorrespondenceDetailPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
+          {canReply && <Button size="sm" onClick={() => setReplyOpen(true)}>Reply</Button>}
+          {canMarkResponded && <Button variant="outline" size="sm" onClick={handleMarkResponded}>Mark Responded</Button>}
           {canEdit && <Button variant="outline" size="sm" onClick={() => navigate(`/correspondence/${corr.id}/edit`)}>Edit</Button>}
           {canSubmit && <Button size="sm" onClick={() => setSubmitOpen(true)}>Submit for Approval</Button>}
           {canDispatch && <Button size="sm" onClick={() => setDispatchOpen(true)}>Dispatch</Button>}
@@ -249,6 +289,12 @@ export default function CorrespondenceDetailPage() {
           {/* Response panel */}
           <CorrespondenceResponsePanel correspondence={corr} />
 
+          {/* Replies thread */}
+          <div style={sectionCard}>
+            <h4 style={{ margin: '0 0 8px', fontSize: '0.85rem', color: 'var(--text)' }}>Replies</h4>
+            <CorrespondenceRepliesList parentId={corr.id} refreshKey={repliesRefreshKey} />
+          </div>
+
           {/* Dispatch info */}
           {corr.dispatch_method && (
             <div style={sectionCard}>
@@ -321,6 +367,12 @@ export default function CorrespondenceDetailPage() {
         direction={corr.direction}
         onClose={() => setSubmitOpen(false)}
         onSuccess={fetchCorr}
+      />
+      <CorrespondenceReplyDialog
+        isOpen={replyOpen}
+        parent={corr}
+        onClose={() => setReplyOpen(false)}
+        onSuccess={handleReplySuccess}
       />
     </div>
   )

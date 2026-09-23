@@ -169,6 +169,28 @@ class CorrespondenceService:
         if not cat or cat.company_id != company_id:
             raise HTTPException(status_code=422, detail="Invalid category for this company")
 
+    def _resolve_backing_directory(self, category_id: Optional[int]) -> Directory:
+        """Resolve the directory used to file a correspondence backing document.
+
+        Correspondence documents live under the correspondence's own category
+        (mirrors the directory resolution in ``add_attachment``) instead of a
+        hardcoded global directory.
+        """
+        if not category_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Correspondence must have a category to create a document",
+            )
+        directory = self.session.exec(
+            select(Directory).where(Directory.category_id == category_id)
+        ).first()
+        if not directory:
+            raise HTTPException(
+                status_code=422,
+                detail="No directory found for the correspondence category",
+            )
+        return directory
+
     def _validate_user_levels(self, level_ids: List[int]) -> Set[int]:
         from user_levels.models import UserLevel
         valid = set()
@@ -352,7 +374,12 @@ class CorrespondenceService:
         ] if corr.document_id is not None else []
 
         workflow_status = self._get_workflow_status(corr.document_id) if corr.document_id is not None else None
-        parent_ref = corr.parent.reference_number if corr.parent else None
+        parent = (
+            self.session.get(Correspondence, corr.parent_correspondence_id)
+            if corr.parent_correspondence_id is not None
+            else None
+        )
+        parent_ref = parent.reference_number if parent else None
 
         return CorrespondenceDetailRead(
             id=corr.id,
@@ -504,7 +531,7 @@ class CorrespondenceService:
             doc = Document(
                 title=data.subject,
                 description=f"Correspondence: {data.subject}",
-                directory_id=1,  # placeholder — correspondence doesn't use directory tree
+                directory_id=self._resolve_backing_directory(data.category_id).id,
                 uploaded_by=current_user.id,
                 file_name=f"{data.subject}.html",
                 file_type=FileType.HTML,
@@ -1420,6 +1447,10 @@ class CorrespondenceService:
         # Set parent reference
         data.parent_correspondence_id = parent_id
 
+        # Replies inherit the parent's category unless one is provided
+        if data.category_id is None:
+            data.category_id = parent.category_id
+
         # Validate direction is appropriate for a reply
         if data.direction not in (CorrespondenceDirection.INBOUND, CorrespondenceDirection.OUTBOUND, CorrespondenceDirection.INTERNAL):
             raise HTTPException(
@@ -1463,7 +1494,7 @@ class CorrespondenceService:
         if data.user_level_ids:
             valid_level_ids = self._validate_user_levels(data.user_level_ids)
         else:
-            valid_level_ids = []
+            valid_level_ids = {current_user.user_level_id} if current_user.user_level_id else set()
 
         # Create the correspondence record
         corr = Correspondence(
@@ -1507,7 +1538,7 @@ class CorrespondenceService:
                 )
                 # Create document record from HTML file
                 doc = Document(
-                    directory_id=1,
+                    directory_id=self._resolve_backing_directory(data.category_id).id,
                     title=corr.subject,
                     file_name=f"{corr.subject}.html",
                     file_type=FileType.HTML,
@@ -1521,6 +1552,9 @@ class CorrespondenceService:
                 self.session.commit()
                 self.session.refresh(doc)
                 corr.document_id = doc.id
+                # Link user levels so the creator (and approvers with access) can view the reply document
+                for level_id in valid_level_ids:
+                    self.session.add(DocumentUserLevelLink(document_id=doc.id, user_level_id=level_id))
                 # Link via attachment
                 att = CorrespondenceAttachment(
                     correspondence_id=corr.id,
