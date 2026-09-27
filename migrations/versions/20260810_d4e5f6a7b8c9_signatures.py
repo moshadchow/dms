@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column("mime_type", sa.String(length=127), nullable=False),
         sa.Column("file_size", sa.Integer(), nullable=False),
         sa.Column("sig_type", sa.String(length=20), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
     )

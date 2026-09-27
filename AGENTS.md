@@ -1,251 +1,141 @@
 # Repository Guidelines
 
-## Project Structure
-FastAPI backend (repo root) + React/Vite frontend (`dms-app/`). Backend modules: `auth/`, `users/`, `categories/`, `directories/`, `documents/`, `user_levels/`, `audit/`, `workflow/`, `memos/`, `signatures/`, `storage_usage/`, `notifications/`, `company_profile/`, `correspondence/`. Shared infra in `core/`. Middleware in `middleware/`. RBAC models re-exported from `rbac/models.py` (canonical: `users/models.py`). Migrations in `migrations/`. Bootstrap data in `seed.py`. Frontend source in `dms-app/src/` organized by concern (`api/`, `components/`, `hooks/`, `pages/`, `store/`, `types/`, `utils/`).
+FastAPI backend at repo root + React/Vite SPA in `dms-app/`. Python 4-space/`snake_case`; TypeScript 2-space, `PascalCase` components, `camelCase` hooks/stores.
 
-## Backend: Key Commands
+`CLAUDE.md` is a legacy near-duplicate of this file and has drifted (it lists `ruff`/`black`, which are **not** installed). Treat this file as authoritative.
+
+## Commands
+
+Backend (run from repo root, `venv/` is the working interpreter):
 ```
-alembic upgrade head          # apply DB migrations (required before first run)
-python seed.py                # seed roles, permissions, and admin user (run once after migrate)
+alembic upgrade head          # apply migrations — REQUIRED; run before first boot
+python seed.py                # roles, permissions, admin user — once, after migrate
 uvicorn main:app --reload     # dev server on :8000
-pytest                        # run all tests (383 tests, SQLite-in-memory)
+pytest                        # full suite
+pytest tests/test_correspondence.py             # one file
+pytest tests/test_correspondence.py::TestCorrespondenceReply   # one class
+pytest -q -k mark_responded                    # one test by name
 ```
+There is **no** Python linter/formatter installed. Do not claim lint passed.
 
-**`DEBUG=True` bypasses Alembic** — `main.py` lifespan calls `create_db_and_tables()` when DEBUG is true, auto-creating tables from SQLModel metadata. In production, rely solely on `alembic upgrade head`.
-
-## Frontend: Key Commands
+Frontend:
 ```
-cd dms-app && npm install
-npm run dev      # Vite dev server on :5173 (proxies /api to backend :8000)
-npm run build    # tsc + vite build (includes typecheck)
+cd dms-app
+npm install
+npm run dev      # Vite on :5173, proxies /api to :8000
+npm run build    # tsc && vite build — this IS the typecheck step
 npm run lint     # ESLint
 ```
 
-Frontend env: `dms-app/.env` sets `VITE_API_BASE_URL=/api`. The `@` alias resolves to `dms-app/src/`. Frontend uses Tailwind CSS (via `@tailwind` directives in `index.css`); no `tailwind.config.js` exists — utilities are used directly.
+Copy `.env.example` → `.env`. Never commit `.env` (Azure secrets).
+
+## Spec-Driven Workflow
+Features are numbered steps. Specs live in `specs/NN-kebab-slug.md`; `/create-spec` (`.opencode/commands/create-spec.md`, mirrored in `.claude/commands/`) scaffolds the next one with a required structure (Overview / Depends on / Routes / Database changes / Files to change / Files to create / New dependencies / Rules for implementation / Definition of done). Check `specs/` for the highest number before starting new work. `plans/` holds derived implementation plans and is currently empty.
+
+## Migrations
+`alembic.ini` `file_template` is `%%(year)d%%(month).2d%%(day).2d_%%(rev)s_%%(slug)s` — new revisions are **date-prefixed** (`20260921_1559_add_x.py`). `migrations/env.py` overwrites `sqlalchemy.url` from `.env`; the URL in `alembic.ini` is dead config.
+
+Any model change needs a migration. **Never** rely on `DEBUG=True` in a shared/dev DB to build the schema (see below).
+
+## DB / Startup Invariant
+`main.py`'s lifespan calls `create_db_and_tables()` when `DEBUG=True`, silently bypassing Alembic. It builds tables from SQLModel metadata only, so it will not apply column adds to existing tables. Production runs `DEBUG=false` + `alembic upgrade head` only.
+
+Postgres in production (`requirements.txt`: `psycopg2-binary`). Storage: `STORAGE_ROOT` from `.env`, default `storage/uploads`.
 
 ## Testing: SQLite In-Memory
-Tests use `SQLite` + `StaticPool` (in-memory), **not** PostgreSQL. The `conftest.py` fixture monkeypatches the engine in three places:
-- `core.database.engine`
-- `middleware.rbac.engine`
-- `middleware.audit.engine`
+`tests/conftest.py` builds a `StaticPool` in-memory engine — **not** Postgres — and monkeypatches `engine` in three modules: `core.database`, `middleware.rbac`, `middleware.audit`. A new module that does `from core.database import engine` at import time bypasses the patch and hits the real DB; add it to the fixture.
 
-Any new module that imports `engine` directly (e.g., for a new middleware) must be patched in the test fixture or tests will hit the wrong database.
+Fixture shapes (easy to guess wrong):
+- `client` yields a **tuple** `(test_client, engine, storage_path)` — not just a client.
+- `seeded_data` returns id dict; two companies are seeded (`company_id` = "Test Company", `other_company_id` = "Other Company") plus a cross-company `other_admin`.
+- `auth_headers` returns keys `admin`, `maker`, `superadmin`, `other_admin`. **There is no checker/auditor user** — create one in-test if a test needs one.
 
-## RBAC Middleware: Hardcoded Route Map
-`middleware/rbac.py` has a `ROUTE_PERMISSION_MAP` dict mapping `(HTTP_METHOD, path_prefix)` to a `PermissionAction`. **New endpoints that require permission checks must be added here**, otherwise they are silently unprotected by the middleware (individual endpoint guards via `require_permission()` still apply, but the middleware safety net is bypassed).
+Company-isolation regressions are the norm here; they get their own file (`test_audit_company.py`, `test_category_company.py`, `test_workflow_company.py`, `test_user_visibility.py`, `test_company_assignment.py`). Add new company-scoped features there rather than growing `test_<feature>.py`.
 
-Paths under `/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, and `/health` bypass RBAC entirely (`PUBLIC_PATH_PREFIXES`).
+**The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~2.5 min (54 tests) with PDF generation on top. Target a file/class while iterating, but budget a long run before declaring done.
 
-## Backend Module Convention
-Each feature module follows this pattern:
-- `models.py` — SQLModel ORM models + Pydantic read schemas
-- `schemas.py` — additional request/response schemas (optional, some modules keep all schemas in models.py)
-- `service.py` — business logic (class-based, takes `Session`)
-- `router.py` — FastAPI router
+## Module Convention
+`models.py` (SQLModel + read schemas) · `schemas.py` (write schemas, optional) · `service.py` (class-based, takes `Session`) · `router.py` (thin — business logic belongs in the service). Keep routers thin.
 
-The `documents/` module has two service classes: `DocumentService` and `DocumentVariantService`.
+Exceptions live in `core/exceptions.py`; access guards in `core/access.py` (`ensure_category_access`, `ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`).
 
-The `workflow/` module has three router objects in `router.py`: `router` (workflow definitions, mounted at `/api/v1/workflows`), `instance_router` (workflow instances, mounted at `/api/v1/workflow-instances`), and `signature_router` (signatures, mounted at `/api/v1/signatures`). Service classes are split into separate files: `definition_service.py`, `instance_service.py`, `approval_service.py`. The old `service.py` is a backward-compatible re-export shim. Shared approver logic lives in `approval_policy.py`.
+`documents/` has `DocumentService` + `DocumentVariantService`; `workflow/` has three routers in `router.py` — `router` (`/api/v1/workflows`), `instance_router` (`/api/v1/workflow-instances`), `signature_router` (`/api/v1/signatures`) — with services split into `definition_service.py` / `instance_service.py` / `approval_service.py` (`service.py` is a back-compat re-export shim) and shared approver logic in `approval_policy.py`.
 
-**Workflow company scoping:** `WorkflowDefinition` has a `company_id` FK (nullable). ADMIN workflows are auto-scoped to their `company_id` on create. ADMIN sees only own-company workflows. SUPERADMIN can view any company's workflows (with `company_id` query param filter) but cannot create/update/activate/deactivate. SUPERADMIN gets a company context dropdown in the frontend to select which company's workflows to view.
+## Company Scoping (cross-cutting, easiest thing to break)
+`Company` is the tenancy boundary. `users`, `categories`, `correspondences` (and `workflow_definitions`, `audit_logs`, `memos`) carry a `company_id` FK. Enforced invariants, all covered by tests:
+- **ADMIN** is auto-scoped to `current_user.company_id`. A client-supplied `company_id` in a payload is ignored, not rejected.
+- An **ADMIN with no company** sees empty lists and is rejected on writes (e.g. `test_company_less_admin_rejected`).
+- Rows with `company_id = NULL` are **invisible** to ADMIN and to regular users; they show only to SUPERADMIN.
+- **SUPERADMIN** passes authorization guards but is denied at the *service* layer for mutations (403). It can only read, and needs an explicit `company_id` query param to scope — with no param it sees all companies (audit logs: empty until a company is chosen).
+- `Company.short_name` is the storage namespace and must match `[A-Za-z0-9_-]+`; it is validated on every path build.
 
-The `memos/` module creates document drafts with markdown rendering and workflow integration. Its service uses `core/access.py` helpers (`ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`) for permission checks.
+`AdminUser` is an **authorization** guard, not a visibility guard — it admits both ADMIN and SUPERADMIN. Visibility hiding is done in the service (`users/service.py` `list_users()`).
 
-**Memo edit access rules** (`memos/service.py` `_check_edit_access`):
-- Admin always bypasses
-- Terminal statuses (`approved`, `published`, `cancelled`, `archived`) → no edits allowed
-- Author can edit in any non-terminal status (`draft`, `submitted`, `pending_approval`, `returned`, `rejected`)
-- Eligible approvers can edit in `draft`, `returned`, `rejected` status only (not `submitted`/`pending_approval`)
-- `MemoUpdate` schema includes optional `signature_id` field for updating the author's signature before approval
+## Company-Scoped Storage
+`core/storage.py` `StorageService` (module singleton `storage_service`) owns all path building. Layout: `STORAGE_ROOT/<short_name>/{uploads,memos,signatures,correspondence}/`.
 
-The `memos/` module has a PDF generator (`memos/pdf_generator.py`) for final draft downloads. It converts markdown to reportlab XML. **Gotcha:** Reportlab's `Paragraph` parser is strict about balanced XML tags — the markdown-to-XML conversion (`_apply_inline_formatting`) strips italic markers to plain text (instead of generating `<i>` tags) to avoid malformed nesting. A `_sanitize_for_reportlab()` safety net removes empty/malformed tags before rendering.
+**Always resolve through `documents/utils.py::resolve_storage_path(relative_path, company)`** — never `STORAGE_ROOT / relative_path` by hand. It validates the resolved path stays under the company root (path-traversal guard) and 404s if absent. `resolve_path_with_fallback` tries the company-prefixed path first, then the legacy non-prefixed path, for pre-migration files. `delete_from_disk` is idempotent. `scripts/migrate_storage.py` and `scripts/fix_storage_paths.py` backfill the layout.
 
-## Audit Trail Module
-`audit/` records all significant user and system activities. Key details:
-- **`audit/service.py`** — `AuditService.log_event()` is the single centralized method. It uses its own `Session(engine)` to write audit logs independently of the caller's transaction, ensuring logs are committed even if the outer transaction rolls back. Never raises on failure. Accepts optional `company_id` parameter for company-scoped audit trails.
-- **`middleware/audit.py`** — auto-logs auth events, security events (401/403), and document operations from HTTP requests. Registered after RBAC middleware in `main.py`. Middleware events have `company_id=None` (no user context).
-- **`audit/router.py`** — admin-only endpoints: `GET /api/v1/audit-logs` (list), `GET /api/v1/audit-logs/{id}` (detail), `GET /api/v1/audit-logs/export` (CSV). All endpoints enforce company scoping: ADMIN is auto-scoped to their company; SUPERADMIN must select a company via `company_id` query param (empty results if none selected).
-- **Company scoping**: `audit_logs.company_id` FK added via migration `c2d3e4f5a6b7`. All `log_event()` callers pass `company_id` from the acting user's company or the entity's company. Historical records are backfilled from `users.company_id`. Events from global entities (categories, user levels, roles) have `company_id=NULL`.
-- **Immutability**: no PUT/PATCH/DELETE endpoints exist for audit records. Users cannot edit or delete audit logs.
-- **Instrumentation**: `auth/service.py`, `users/service.py`, `documents/service.py`, `directories/service.py`, `categories/service.py`, `user_levels/service.py`, `memos/service.py`, `company_profile/service.py`, `signatures/service.py`, `notifications/service.py`, `workflow/definition_service.py`, `workflow/instance_service.py`, `workflow/approval_service.py` all call `AuditService.log_event()` after significant operations.
-- **Legacy**: `core/audit.py` contains an old logger-based `log_audit_event` helper. It is dead code — all callers now use `AuditService`. Do not add new callers; use `AuditService` directly.
+## RBAC: two layers
+1. `middleware/rbac.py` `ROUTE_PERMISSION_MAP` maps `(HTTP_METHOD, path_prefix)` → `PermissionAction`. **New endpoints must be added here** or the middleware silently skips them. Paths under `PUBLIC_PATH_PREFIXES` (`/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, `/health`) bypass it entirely. Known quirks: `PATCH /api/v1/workflows/{id}/activate` has no entry, and in `correspondence/` both `POST .../{id}/...` and `DELETE .../{id}/...` map to `UPDATE`.
+2. Per-endpoint `dependencies=[Depends(require_permission(PermissionAction.X))]` in the router.
+
+Do not invent permission verbs — the matrix is fixed at `view`, `download`, `create`, `update`, `delete` (see Seed Data).
 
 ## Auth & User Injection
-Use the `CurrentUser` annotated type from `core/dependencies.py` to inject the authenticated user into endpoints:
-```python
-from core.dependencies import CurrentUser
-def my_endpoint(current_user: CurrentUser = None): ...
-```
+`core/dependencies.py` provides `CurrentUser` (inject the caller), `AdminUser` (ADMIN + SUPERADMIN), `AdminOnlyUser` (ADMIN, **rejects** SUPERADMIN — used by `categories/`), `SuperAdminUser` (SUPERADMIN only), `require_permission`. JWT access + refresh via `core/security.py`; `main.py` rewrites the OpenAPI security scheme to plain `HTTPBearer`.
 
-`AdminUser` (also from `core/dependencies.py`) raises 403 for non-admins. **Note:** `AdminUser` allows both ADMIN and SUPERADMIN through — it is an authorization guard, not a visibility guard. SUPERADMIN visibility hiding from ADMIN is enforced in `users/service.py` `list_users()`. ADMIN user lists are also scoped to the ADMIN's own company (`user.company_id == current_user.company_id`); ADMIN with no company sees an empty list.
+## Audit Trail
+`AuditService.log_event()` in `audit/service.py` is the **single** audit sink. It opens its own `Session(engine)` so logs commit even when the caller rolls back, and it never raises. Call it after every significant mutation in a service. Audit records are immutable — no PUT/PATCH/DELETE endpoints exist.
 
-`SuperAdminUser` (also from `core/dependencies.py`) raises 403 for non-superadmins. Use `require_superadmin` dependency for SUPERADMIN-only endpoints.
+`middleware/audit.py` (registered after RBAC in `main.py`) auto-logs auth, 401/403, and document operations; those events have `company_id=None`.
 
-## Azure AD Authentication
-Backend module: `auth/azure_service.py` handles PKCE, token exchange, ID token validation, and JIT user provisioning.
+`core/audit.py::log_audit_event` is dead code — do not add callers.
 
-**Key files:**
-- `auth/router.py` — `/azure/login`, `/azure/callback`, `/azure/config` endpoints
-- `auth/azure_service.py` — Azure token exchange, ID token validation, user resolution
-- `core/config.py` — `AZURE_*` and `FRONTEND_URL` settings
-- `dms-app/src/pages/AzureCallbackPage.tsx` — frontend callback handler
+## Workflow / Approval
+Status flow: `draft → submitted → pending_approval → (returned | rejected | approved | cancelled) → published? → archived`.
 
-**Company-scoped Azure AD:** Each company can have its own Azure AD config (`azure_client_id`, `azure_tenant_id`, `azure_client_secret`, `azure_enabled`, `azure_scopes`) stored on the `Company` model. The login flow accepts an optional `company_id` query param; the callback extracts the company from the state parameter. Falls back to global `.env` config when no company config is found.
+- `WorkflowInstanceService.submit_instance()` **snapshots** the definition's steps. Editing a definition never affects in-flight instances.
+- Deactivating a definition blocks new submissions only.
+- Definitions are category-agnostic (`document_category_id` was removed); category filtering happens at the document level. Multiple active definitions per category are allowed, so submission UIs need a picker.
+- `workflow_history` is the approval ledger; `audit/` stays the system-wide log. Both are written, never a third mechanism.
+- Approver eligibility (`workflow/approval_policy.py`) is layered **on top of** RBAC and User Level visibility — an approver who cannot view the document is not a valid approver.
+- Activation does not validate that steps/approvers exist; step-order uniqueness is enforced only by a DB constraint.
 
-**Azure callback flow:** Login → Azure → callback exchanges code for tokens → validates ID token → resolves/creates user → redirects to `{FRONTEND_URL}/auth/callback?access_token=...&refresh_token=...`
+## Module Notes
+- **`user_levels/`** — `DocumentUserLevelLink` gates document visibility in `documents/service.py`; Admin bypasses. A document with no links is visible to all linked levels; if no links exist at all, it is unconstrained.
+- **`memos/`** — markdown → HTML → reportlab PDF (`memos/pdf_generator.py`). Reportlab's `Paragraph` parser is strict about balanced tags, so `_apply_inline_formatting` strips italics to plain text and `_sanitize_for_reportlab()` removes malformed tags. `_check_edit_access`: terminal statuses are frozen; the author may edit any non-terminal status; eligible approvers only in `draft`/`returned`/`rejected`.
+- **`correspondence/`** — inbound/outbound/internal register. Key facts: `document_id` is nullable; outbound/internal auto-generate an HTML backing document from `body`; **a category is required to attach files** (`_resolve_backing_directory`); `/{id}/download` falls back to the first attachment; `/{id}/download-final` renders a signed PDF (`correspondence/pdf_generator.py`). Status model is richer than workflow: `received/registered/assigned/processing → draft/submitted/pending_approval/… → ready_for_dispatch → dispatched → delivered → acknowledged → completed → archived` (`TERMINAL_STATUSES` in `service.py`; also frozen once `dispatch_method` is set). Replies: `POST /{parent_id}/reply`, `POST /{id}/submit-reply`, `POST /{id}/mark-responded`, `GET /{parent_id}/replies`, keyed on `parent_correspondence_id` + `response_received`/`responded_at`. All mutations append to `CorrespondenceMovement` (the timeline).
+- **`notifications/`** — `EmailService` is fire-and-forget and never raises; `EmailNotification` rows give idempotency. SMTP via `core/config.py` `SMTP_*`.
+- **`signatures/`** — JPEG/PNG, 5 MB, soft-delete, stored under the company `signatures/` root. Referenced by `signature_id` on workflow approvals.
+- **`company_profile/`** — SUPERADMIN-only CRUD at `/api/v1/companies`; per-company Azure AD config at `/{id}/azure-config` (GET: own company or any for SUPERADMIN; PUT/DELETE: SUPERADMIN only; secret is never returned).
+- **`storage_usage/`** — quota accounting, admin endpoints at `/api/v1/storage`.
 
-**Error surfacing:** `azure_callback` in `auth/router.py` has separate `except HTTPException` and `except Exception` handlers. In DEBUG mode, the actual error message is URL-encoded in the `?error=` query param. Audit events go to `dms.auth` logger.
+## Azure AD
+Per-company credentials on the `Company` model, falling back to global `AZURE_*` env. Login takes optional `company_id`; the callback recovers it from the state parameter. Flow: `/azure/login` → Azure → callback (code exchange + ID token validation + JIT user provisioning) → redirect to `{FRONTEND_URL}/auth/callback?access_token=...&refresh_token=...`, handled by `dms-app/src/pages/AzureCallbackPage.tsx`.
 
-**JWK parsing:** `python-jose`'s `jwk.construct()` fails with Azure AD signing keys that include `x5c` fields. `azure_service.py` uses the `cryptography` library to build RSA public keys from the X.509 certificate chain instead. Do not revert to `jwk.construct()`.
+**JWK parsing:** `python-jose`'s `jwk.construct()` fails on Azure keys carrying `x5c`. `auth/azure_service.py` builds RSA keys from the X.509 chain with `cryptography`. Do not revert.
 
-Azure is enabled when either a company has `azure_enabled=True` with valid credentials, or when all three of `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are set globally. Copy `.env.example` to `.env` for local setup.
+## Frontend Conventions
+- API modules import `apiClient` from `./client` (baseURL `/api/v1`, 401-refresh interceptor) — **not** `apiRoot` from `./base`. Paths are relative: `apiClient.get('/users')`.
+- Error display uses `getErrorMessage(err)` from `@/api/client`; toasts via `react-hot-toast`.
+- `store/authStore.ts` persists **only** tokens; the user object is refetched on every load by `ProtectedRoute` → `authApi.me()`.
+- `@` → `dms-app/src/`. Tailwind is used via `@tailwind` directives in `index.css` — **there is no `tailwind.config.js`**; use utilities directly.
+- Rich text is TipTap (see `dms-app/src/components/memo/`); sanitized HTML goes through `utils/sanitizeHtml.ts`.
+- Typecheck is part of `npm run build`; there is no standalone `typecheck` script.
 
-## Frontend Auth Flow
-- Zustand store (`store/authStore.ts`) persists only tokens to localStorage; the `user` object is re-fetched on every page load via `ProtectedRoute` calling `authApi.me()`.
-- Axios client (`api/client.ts`) automatically intercepts 401 responses, attempts a single token refresh, and redirects to `/login` on failure.
-- Azure AD: `LoginPage.tsx` link → backend `/azure/login` → Azure → callback → `AzureCallbackPage.tsx` stores tokens → fetches user → navigates to dashboard.
-
-## Frontend API Pattern
-All API files import `apiClient` from `./client` (the Axios instance with interceptors), **not** `apiRoot` from `./base` (a plain string). The `apiClient` has `baseURL` set to `/api/v1`, so paths are relative: `apiClient.get('/users')`.
-
-## User Levels
-`user_levels/` module manages document visibility tiers. Documents are linked to user levels via `DocumentUserLevelLink`. Users can only see documents linked to their level (enforced in `documents/service.py`). Admin bypasses all level restrictions.
-
-## Dependency Pins
-- `bcrypt==4.0.1` — passlib 1.7.4 is incompatible with bcrypt 4.1+. Do not upgrade.
-- `python-jose[cryptography]==3.3.0` — used for JWT and OIDC (JWK parsing replaced with `cryptography` for Azure AD keys).
-- `httpx==0.27.0` — used for Azure AD token exchange (async HTTP client).
-- Frontend: React 18, Vite 5, Zustand 4, React Router 6.
-
-## Additional Backend Modules
-
-### Notifications
-`notifications/` handles email notifications for workflow events. Key files:
-- `service.py` — `EmailService` sends SMTP emails (never raises on failure), with idempotency via `EmailNotification` records.
-- `tasks.py` — Celery-style background tasks (`send_notification_task`) for async email delivery.
-- `templates.py` — HTML/text email templates for workflow notifications (submitted, approved, rejected, returned, clarified, forward).
-- `models.py` — `EmailNotification` table for idempotency tracking and audit trail.
-
-**Gotcha:** Emails are fire-and-forget; failures are logged but don't block the workflow. SMTP config via `core/config.py` (`SMTP_*` settings).
-
-### Signatures
-`signatures/` manages signature files (e-signature uploads, wet-signature canvas captures) independently of workflow.
-- `SignatureService` — upload (5 MB limit, JPEG/PNG only), list, get, soft-delete, admin operations (upload/delete for other users).
-- Stored under `STORAGE_ROOT/signatures/{user_id}/` with UUID filenames.
-- Integrates with workflow via `signature_id` on memo/document approval actions.
-
-### Company Profile
-`company_profile/` — CRUD for company entities (multi-tenancy foundation).
-- `CompanyService` — list (paginated, searchable), get, create, update, activate/deactivate.
-- Unique constraints: `company_id` and `short_name`.
-- SUPERADMIN-only endpoints mounted at `/api/v1/companies`.
-- `users.company_id` FK (nullable) links users to companies. SUPERADMIN assigns company when creating ADMIN users; company is required for ADMIN creation, ignored for other roles. ADMIN users can update their own company via `PATCH /users/{id}`; SUPERADMIN cannot change company for non-ADMIN users.
-- Azure AD config endpoints: `GET/PUT/DELETE /api/v1/companies/{id}/azure-config` — PUT/DELETE are superadmin-only, GET allows admin for own company or superadmin for any.
-
-**Admin self-edit company rules** (`users/service.py` `update_user()`):
-- Admin cannot change their own `company_id` through the API (returns 403).
-- Frontend renders company as read-only text when admin edits their own account.
-- Frontend skips `company_id` in the update payload for admin self-edit.
-
-**Users table Company column** (`UserTable.tsx`):
-- Displays `company.short_name` for all non-SUPERADMIN users.
-- SUPERADMIN displays `—`.
-- Users without a company display `—`.
-- Backend already returns `company` in `UserRead` via `selectinload(User.company)` — no N+1 risk.
-
-### Storage Usage
-`storage_usage/` — tracks storage consumption per user/company.
-- `StorageUsageService` — calculates used space, enforces quotas.
-- Admin endpoints at `/api/v1/storage`.
-
-### Correspondence
-`correspondence/` — manages incoming, outgoing, and internal correspondence with file attachments.
-- `CorrespondenceService` — CRUD, workflow submission, dispatch/deliver/acknowledge lifecycle, attachments.
-- `CorrespondenceAttachment` table — junction linking correspondence to documents (supports multiple files per correspondence).
-- `AttachmentType` enum: `original` (inbound received doc), `supporting` (reference files), `working` (drafts).
-
-**Key gotchas:**
-- `document_id` on `Correspondence` is nullable (migration `f8a9b0c1d2e3`). Inbound correspondence can be created without a primary document.
-- Outbound/internal auto-generate an HTML backing document from `body` text via `_save_correspondence_html()`.
-- Attachments require a valid `directory_id` on the `Document` record. `add_attachment()` resolves a directory from `corr.category_id` — correspondence **must** have a category to upload attachments.
-- Download endpoint (`/{id}/download`) falls back to the first attachment when no primary document exists.
-- RBAC: `DELETE /api/v1/correspondences/` maps to `UPDATE` permission in `middleware/rbac.py`.
-- Frontend create flow: correspondence is created first (JSON), then file is uploaded as attachment via `POST /{id}/attachments`.
-
-## Frontend: TypeScript Typecheck
-`npm run build` runs `tsc && vite build` — typecheck is part of the build step, no separate `typecheck` script.
+## Dependency Pins (do not bump)
+- `bcrypt==4.0.1` — passlib 1.7.4 is incompatible with bcrypt 4.1+.
+- `python-jose[cryptography]==3.3.0`, `httpx==0.27.0`.
+- No new dependencies without explicit approval.
 
 ## Seed Data
-`seed.py` creates five roles with fixed permission matrices:
-| Role       | Permissions |
-|------------|------------|
-| SuperAdmin | view, download, create, update, delete (full system access; manages admins & companies) |
-| Admin      | view, download, create, update, delete |
-| Maker      | view, download, create, update |
-| Checker    | view, download, update |
-| Auditor    | view, download |
+`seed.py` creates five roles: SuperAdmin and Admin get all five permissions; Maker gets view/download/create/update; Checker gets view/download/update; Auditor gets view/download. Default admin `admin@dms.local` / `Admin@1234`.
 
-Default admin: `admin@dms.local` / `Admin@1234`.
+## Deploy
+Production is **not** Docker: `dms-backend.service` (systemd unit, uvicorn on 127.0.0.1:8000) + `dms.conf` (nginx TLS terminating, serves `dms-app/dist`, proxies `/api` and `/health`, SPA fallback to `index.html`). `docker-compose.yml` is stale — it builds `./backend` and `./frontend`, which do not exist; the root `Dockerfile` is current.
 
-## Docker (Stale)
-`docker-compose.yml` references `./backend` and `./frontend` directories that don't match the current repo layout. There is a root `Dockerfile` but docker-compose needs fixing before use.
+Treat `storage/uploads/` as runtime data. `__pycache__`/`*.pyc`/`venv/`/`node_modules/` are already gitignored.
 
-## Coding Style
-4-space indent in Python, 2-space in TypeScript/TSX. `snake_case` for Python, `PascalCase` for React components, `camelCase` for hooks/stores/utils.
-
-## Commits & PRs
-Short imperative subjects (`Fix archieve & Restore feature`). PRs: clear summary, migration notes for schema changes, screenshots for UI.
-
-## Security
-Copy `.env.example` to `.env` for local setup. Never commit `.env` (it contains Azure AD client secrets). GitHub secret scanning will reject pushes containing Azure secrets. Treat `storage/uploads/` as runtime data. Ensure `__pycache__` and `*.pyc` are in `.gitignore` before committing.
-
----
-
-## Approval Workflow System
-
-Generic, document-type-agnostic approval engine. Reuses `auth/`, RBAC, `users/`, `user_levels/`, `audit/`, `documents/`, `directories/`. No new auth, permission, or audit mechanisms — extend the existing ones.
-
-### Workflow Module Structure
-`workflow/` follows the standard module convention. Service classes:
-- `WorkflowDefinitionService` — CRUD for workflow templates (admin-configured, not hardcoded)
-- `WorkflowInstanceService` — starts/tracks a workflow run against a document
-- `ApprovalActionService` — approve / reject / return / clarify / forward
-- `SignatureService` — stores e-signature (uploaded image) or wet-signature (canvas capture) as a file reference, never mutates the source document
-
-**Note:** Workflow definitions are category-agnostic. The `document_category_id` field was removed from `WorkflowDefinition`. Category filtering is handled at the document level, not the workflow level.
-
-### Workflow Status Enum
-`draft` → `submitted` → `pending_approval` → (`returned` | `rejected` | `approved` | `cancelled`) → `published` (optional) → `archived`
-
-### RBAC Integration
-Add new prefixes to `ROUTE_PERMISSION_MAP` in `middleware/rbac.py`:
-- `(POST, /api/v1/workflows)` → admin-only config actions
-- `(POST, /api/v1/workflow-instances)` → create (Maker)
-- `(POST, /api/v1/workflow-instances/{id}/actions)` → update (Checker/approver tiers)
-- `(GET, /api/v1/workflow-instances/pending)` and `/mine` → view
-
-Reuse existing role permission matrix (`view`, `download`, `create`, `update`, `delete`) — do not invent new permission verbs. Approver eligibility is enforced via `workflow_step_approvers`, on top of RBAC, not instead of it.
-
-**RBAC gap on PATCH /activate:** `PATCH /api/v1/workflows/{id}/activate` has no `ROUTE_PERMISSION_MAP` entry — it is protected solely by the `AdminUser` dependency. This has no practical impact since admin bypasses RBAC anyway, but for defense-in-depth an entry could be added.
-
-**SUPERADMIN workflow restrictions:** SUPERADMIN passes the `AdminUser` dependency but is blocked at the service level for all mutation endpoints (create/update/activate/deactivate) with 403. Only list and get are permitted (with company context filtering).
-
-### User Level Integration
-`workflow_instances` inherits the visibility rules already enforced in `documents/service.py` via `DocumentUserLevelLink`. Admin bypass still applies. Approval never overrides a User Level restriction — an approver who cannot view the underlying document per their level must not appear as a valid approver for that instance.
-
-### Instance Snapshot & Lifecycle
-- **Instance snapshot:** `WorkflowInstanceService.submit_instance()` snapshots the workflow definition's steps at creation time. Definition changes (step order, approvers, approval mode) do **not** affect running instances — only future submissions use the updated definition.
-- **Deactivation:** Deactivating a definition (`DELETE /api/v1/workflows/{id}`) blocks new submissions only. Existing instances continue through their approval chain to completion.
-- **Multiple active workflows per category:** The system allows multiple active workflow definitions for the same document category. The Phase 2 submission UI should present a dropdown when multiple definitions exist for a document's category.
-
-### Workflow Audit
-`workflow_history` is the approval-specific ledger (level, designation, signature ref); `audit/` remains the system-wide event log. Every `workflow_actions` write must also call `AuditService.log_event()` — do not build a second audit mechanism.
-
-### Workflow Test Fixture Impact
-Any new module importing `engine` directly (e.g. a workflow-specific middleware, if added) must be patched in `conftest.py` alongside `core.database.engine`, `middleware.rbac.engine`, `middleware.audit.engine`.
-
-### Design Decisions (Implementation Notes)
-- **Activation validation:** Activating a workflow (`PATCH /{id}/activate`) does **not** validate that steps/approvers exist. A workflow with no steps can be activated.
-- **Step order uniqueness:** Enforced by a DB unique constraint on `(workflow_definition_id, step_order)`. The service does not pre-check for duplicates — a raw DB integrity error would surface if violated.
-- **Step ordering in detail response:** `GET /api/v1/workflows/{id}` returns steps in DB fetch order, not explicitly sorted by `step_order`. For deterministic ordering, add `.order_by(WorkflowStep.step_order)` to the query.
-- **Company scoping:** `company_id` is nullable on `WorkflowDefinition`. ADMIN creates workflows auto-scoped to their company. SUPERADMIN can see any company's workflows but cannot mutate. Existing definitions with `company_id=NULL` are visible to SUPERADMIN only.
+## Commits
+Short imperative subjects in the repo's existing style (e.g. `Implemented Reply correspondence lifecycle-v1`).
