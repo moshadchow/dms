@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from fastapi import BackgroundTasks, HTTPException
 from sqlmodel import Session, select
 
 from correspondence.models import (
@@ -1409,3 +1410,919 @@ class TestCorrespondenceReply:
             detail = svc.get_correspondence(reply.id, maker)
             assert detail.parent_reference == parent.reference_number
             assert detail.parent_correspondence_id == parent.id
+
+
+# ── Lifecycle correction regressions (WP1–WP7) ──────────────
+
+
+def _make_inbound_parent(engine, seeded_data, user_id=None):
+    from users.models import User
+
+    with Session(engine) as session:
+        svc = CorrespondenceService(session)
+        user = session.get(User, user_id or seeded_data["maker_id"])
+        parent = svc.create_draft(
+            CorrespondenceCreate(
+                **_corr_payload(
+                    seeded_data,
+                    direction="inbound",
+                    body=None,
+                    response_required=True,
+                    response_deadline="2099-12-31T00:00:00Z",
+                )
+            ),
+            user,
+        )
+        return parent, user
+
+
+class TestCompleteArchiveHTTP:
+    """WP1: HTTP complete/archive previously crashed with NameError
+    (``send_notification_task`` was referenced without import)."""
+
+    def test_complete_and_archive_via_api(self, client, auth_headers, seeded_data):
+        test_client, engine, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["admin"],
+        )
+        assert create.status_code == 201
+        corr_id = create.json()["id"]
+
+        with Session(engine) as session:
+            corr = session.get(Correspondence, corr_id)
+            corr.status = CorrespondenceStatus.ACKNOWLEDGED
+            session.add(corr)
+            session.commit()
+
+        complete = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/complete",
+            json={"remarks": "All done"},
+            headers=auth_headers["admin"],
+        )
+        assert complete.status_code == 200
+        assert complete.json()["status"] == "completed"
+
+        archive = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/archive",
+            json={"remarks": "Filed away"},
+            headers=auth_headers["admin"],
+        )
+        assert archive.status_code == 200
+        assert archive.json()["status"] == "archived"
+
+    def test_complete_resolves_notification_reference(self, seeded_data, client):
+        from users.models import User
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            admin = session.get(User, seeded_data["admin_id"])
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            orm = session.get(Correspondence, corr.id)
+            orm.status = CorrespondenceStatus.ACKNOWLEDGED
+            session.add(orm)
+            session.commit()
+
+            # Queues send_notification_task — raised NameError before WP1
+            result = svc.complete_correspondence(
+                corr.id,
+                CorrespondenceComplete(remarks="done"),
+                admin,
+                BackgroundTasks(),
+            )
+            assert result.status == CorrespondenceStatus.COMPLETED
+
+
+class TestAssignGuards:
+    """WP2: assignment is a registration-stage action."""
+
+    def test_assign_rejected_when_submitted(self, client, auth_headers, seeded_data):
+        test_client, engine, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["admin"],
+        )
+        corr_id = create.json()["id"]
+
+        with Session(engine) as session:
+            corr = session.get(Correspondence, corr_id)
+            corr.status = CorrespondenceStatus.SUBMITTED
+            session.add(corr)
+            session.commit()
+
+        resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/assign",
+            json={"to_user_id": seeded_data["maker_id"]},
+            headers=auth_headers["admin"],
+        )
+        assert resp.status_code == 409
+        assert "submitted" in resp.json()["detail"]
+
+    def test_assign_rejected_after_dispatch(self, client, auth_headers, seeded_data):
+        test_client, engine, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["admin"],
+        )
+        corr_id = create.json()["id"]
+
+        with Session(engine) as session:
+            corr = session.get(Correspondence, corr_id)
+            corr.dispatch_method = DispatchMethod.EMAIL
+            session.add(corr)
+            session.commit()
+
+        resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/assign",
+            json={"to_user_id": seeded_data["maker_id"]},
+            headers=auth_headers["admin"],
+        )
+        assert resp.status_code == 409
+        assert "after dispatch" in resp.json()["detail"]
+
+    def test_submit_from_assigned_status(self, client, auth_headers, seeded_data):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Assigned Submit WF"
+        )
+
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201
+        corr_id = create.json()["id"]
+
+        assign = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/assign",
+            json={"to_user_id": seeded_data["maker_id"], "remarks": "please handle"},
+            headers=auth_headers["admin"],
+        )
+        assert assign.status_code == 200
+        assert assign.json()["status"] == "assigned"
+
+        submit = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/submit",
+            json={"workflow_definition_id": wf_def_id},
+            headers=auth_headers["maker"],
+        )
+        assert submit.status_code == 200
+        assert submit.json()["status"] == "submitted"
+
+
+class TestCreateValidation:
+    """WP3: category / deadline validation on create and update."""
+
+    def test_create_requires_category(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        payload = _corr_payload(seeded_data)
+        del payload["category_id"]
+
+        resp = test_client.post(
+            "/api/v1/correspondences",
+            json=payload,
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 422
+        assert "Category is required" in resp.json()["detail"]
+
+    def test_create_response_required_needs_deadline(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, response_required=True),
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 422
+        assert "deadline" in resp.json()["detail"]
+
+    def test_update_cannot_clear_category(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201
+        corr_id = create.json()["id"]
+
+        resp = test_client.patch(
+            f"/api/v1/correspondences/{corr_id}",
+            json={"category_id": None},
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 422
+        assert "Category is required" in resp.json()["detail"]
+
+        detail = test_client.get(
+            f"/api/v1/correspondences/{corr_id}",
+            headers=auth_headers["maker"],
+        )
+        assert detail.json()["category_id"] == seeded_data["finance_category_id"]
+
+
+class TestReplyLifecycleCorrections:
+    """WP4: submit-reply flags the parent; rejection/return releases it."""
+
+    def test_submit_reply_records_response_correspondence(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Reply Flag WF")
+        parent, maker = _make_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            maker = session.get(type(maker), maker.id)
+            svc = CorrespondenceService(session)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound")),
+                maker,
+            )
+            svc.submit_reply(
+                reply.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+
+            orm_parent = session.get(Correspondence, parent.id)
+            assert orm_parent.response_received is True
+            assert orm_parent.response_correspondence_id == reply.id
+
+    def test_rejected_reply_releases_parent_flag(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Reply Reject WF")
+        parent, maker = _make_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from workflow.models import WorkflowInstance, WorkflowStatus
+
+            maker = session.get(type(maker), maker.id)
+            svc = CorrespondenceService(session)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound")),
+                maker,
+            )
+            result = svc.submit_reply(
+                reply.id,
+                CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                maker,
+            )
+
+            orm_parent = session.get(Correspondence, parent.id)
+            assert orm_parent.response_received is True
+
+            instance = session.get(WorkflowInstance, result.workflow_instance_id)
+            instance.status = WorkflowStatus.REJECTED
+            session.add(instance)
+            session.commit()
+
+            detail = svc.get_correspondence(reply.id, maker)
+            assert detail.status == CorrespondenceStatus.REJECTED
+
+            session.refresh(orm_parent)
+            assert orm_parent.response_received is False
+            assert orm_parent.responded_at is None
+            assert orm_parent.response_correspondence_id is None
+
+    def test_submit_reply_rejects_non_reply(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Not Reply WF")
+
+        with Session(engine) as session:
+            from users.models import User
+
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+
+            try:
+                svc.submit_reply(
+                    corr.id,
+                    CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                    maker,
+                )
+                assert False, "Should have raised"
+            except HTTPException as e:
+                assert e.status_code == 409
+                assert "not a reply" in e.detail
+
+    def test_submit_reply_rejects_non_inbound_parent(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Outbound Parent WF")
+
+        with Session(engine) as session:
+            from users.models import User
+
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            parent = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound")),
+                maker,
+            )
+
+            try:
+                svc.submit_reply(
+                    reply.id,
+                    CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                    maker,
+                )
+                assert False, "Should have raised"
+            except HTTPException as e:
+                assert e.status_code == 409
+                assert "not inbound" in e.detail
+
+    def test_rejected_reply_does_not_clear_newer_flag(self, seeded_data, client, auth_headers):
+        """Guard: only the reply recorded in response_correspondence_id may
+        release the parent flag; a stale rejection must leave it alone."""
+        test_client, engine, _ = client
+        wf_a = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Reply A WF")
+        wf_b = _create_workflow_for_finance(test_client, auth_headers, seeded_data, name="Reply B WF")
+        parent, maker = _make_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            from workflow.models import WorkflowInstance, WorkflowStatus
+
+            maker = session.get(type(maker), maker.id)
+            svc = CorrespondenceService(session)
+            reply_a = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound", subject="Re: A")),
+                maker,
+            )
+            reply_b = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="outbound", subject="Re: B")),
+                maker,
+            )
+            result_a = svc.submit_reply(reply_a.id, CorrespondenceSubmit(workflow_definition_id=wf_a), maker)
+            svc.submit_reply(reply_b.id, CorrespondenceSubmit(workflow_definition_id=wf_b), maker)
+
+            orm_parent = session.get(Correspondence, parent.id)
+            assert orm_parent.response_correspondence_id == reply_b.id
+
+            instance = session.get(WorkflowInstance, result_a.workflow_instance_id)
+            instance.status = WorkflowStatus.REJECTED
+            session.add(instance)
+            session.commit()
+
+            svc.get_correspondence(reply_a.id, maker)
+
+            session.refresh(orm_parent)
+            assert orm_parent.response_received is True
+            assert orm_parent.response_correspondence_id == reply_b.id
+
+
+class TestRoleGates:
+    """WP6: SUPERADMIN is read-only; lifecycle mutations are admin-only."""
+
+    def test_superadmin_create_denied(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["superadmin"],
+        )
+        assert resp.status_code == 403
+        assert "read-only" in resp.json()["detail"]
+
+    def test_superadmin_update_denied(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["admin"],
+        )
+        corr_id = create.json()["id"]
+
+        resp = test_client.patch(
+            f"/api/v1/correspondences/{corr_id}",
+            json={"subject": "Renamed by superadmin"},
+            headers=auth_headers["superadmin"],
+        )
+        assert resp.status_code == 403
+        assert "read-only" in resp.json()["detail"]
+
+    def test_superadmin_complete_denied(self, client, auth_headers, seeded_data):
+        test_client, engine, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["admin"],
+        )
+        corr_id = create.json()["id"]
+
+        with Session(engine) as session:
+            corr = session.get(Correspondence, corr_id)
+            corr.status = CorrespondenceStatus.ACKNOWLEDGED
+            session.add(corr)
+            session.commit()
+
+        resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/complete",
+            json={"remarks": "nope"},
+            headers=auth_headers["superadmin"],
+        )
+        assert resp.status_code == 403
+        assert "read-only" in resp.json()["detail"]
+
+    def test_non_admin_cannot_complete(self, client, auth_headers, seeded_data):
+        test_client, engine, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["maker"],
+        )
+        corr_id = create.json()["id"]
+
+        with Session(engine) as session:
+            corr = session.get(Correspondence, corr_id)
+            corr.status = CorrespondenceStatus.ACKNOWLEDGED
+            session.add(corr)
+            session.commit()
+
+        resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/complete",
+            json={"remarks": "nope"},
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 403
+        assert "Admin access required" in resp.json()["detail"]
+
+    def test_non_admin_cannot_forward(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data),
+            headers=auth_headers["maker"],
+        )
+        corr_id = create.json()["id"]
+
+        resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/forward",
+            json={"to_user_id": seeded_data["maker_id"]},
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 403
+        assert "Admin access required" in resp.json()["detail"]
+
+
+class TestDocumentSignatureGuards:
+    """WP7: document ownership resolves document → directory → category →
+    company; signatures must belong to the caller."""
+
+    def test_inbound_create_cross_company_document_rejected(self, client, auth_headers, seeded_data):
+        from documents.models import DocumentStatus
+
+        test_client, engine, _ = client
+        with Session(engine) as session:
+            other_doc = Document(
+                title="Other company doc",
+                directory_id=seeded_data["marketing_directory_id"],
+                uploaded_by=seeded_data["other_admin_id"],
+                file_name="other.pdf",
+                file_type=FileType.PDF,
+                mime_type="application/pdf",
+                file_size=4,
+                storage_path="marketing/other.pdf",
+                status=DocumentStatus.ACTIVE,
+            )
+            session.add(other_doc)
+            session.commit()
+            other_doc_id = other_doc.id
+
+        resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(
+                seeded_data,
+                direction="inbound",
+                body=None,
+                document_id=other_doc_id,
+            ),
+            headers=auth_headers["admin"],
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == "Document not found"
+
+    def test_inbound_create_rejects_already_linked_document(self, client, auth_headers, seeded_data):
+        test_client, _, _ = client
+        payload = _corr_payload(
+            seeded_data,
+            direction="inbound",
+            body=None,
+            document_id=seeded_data["finance_document_id"],
+        )
+        first = test_client.post(
+            "/api/v1/correspondences",
+            json=payload,
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 201
+
+        second = test_client.post(
+            "/api/v1/correspondences",
+            json=payload,
+            headers=auth_headers["admin"],
+        )
+        assert second.status_code == 409
+        assert "already linked" in second.json()["detail"]
+
+    def test_create_rejects_foreign_signature(self, client, auth_headers, seeded_data):
+        from workflow.models import Signature, SignatureType
+
+        test_client, engine, _ = client
+        with Session(engine) as session:
+            sig = Signature(
+                user_id=seeded_data["admin_id"],
+                file_name="admin.png",
+                file_path="signatures/admin.png",
+                mime_type="image/png",
+                file_size=10,
+                sig_type=SignatureType.E_SIGNATURE,
+            )
+            session.add(sig)
+            session.commit()
+            sig_id = sig.id
+
+        resp = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, author_signature_id=sig_id),
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 403
+        assert "own signatures" in resp.json()["detail"]
+
+
+# ── Pending Approval list sync ───────────────────────
+
+
+class TestPendingApprovalListSync:
+    """Approval actions update only the workflow instance; the list API must
+    reconcile the stored correspondence status before filtering and counting
+    so approved/rejected/returned rows leave the 'Pending Approval' list
+    immediately (and stale rows are healed)."""
+
+    def _make_checker(self, engine, seeded_data, email="checker.pending@example.com"):
+        from core.security import create_access_token, hash_password
+        from users.models import Role, RoleName, User, UserCategoryLink, UserRoleLink
+
+        with Session(engine) as session:
+            role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+            assert role, "seeded CHECKER role missing"
+            user = User(
+                full_name="Checker Approver",
+                email=email,
+                hashed_password=hash_password("Test@1234"),
+                is_active=True,
+                user_level_id=seeded_data["medium_level_id"],
+                company_id=seeded_data["company_id"],
+            )
+            session.add(user)
+            session.flush()
+            session.add(UserRoleLink(user_id=user.id, role_id=role.id))
+            session.add(
+                UserCategoryLink(
+                    user_id=user.id, category_id=seeded_data["finance_category_id"]
+                )
+            )
+            session.commit()
+            checker_id = user.id
+        headers = {"Authorization": f"Bearer {create_access_token(checker_id)}"}
+        return checker_id, headers
+
+    def _create_workflow(self, test_client, auth_headers, approver_id, name, steps=1):
+        payload = {
+            "name": name,
+            "description": "Pending list sync test",
+            "steps": [
+                {
+                    "step_order": i,
+                    "step_name": f"Review {i}",
+                    "approval_mode": "sequential",
+                    "approvers": [{"user_id": approver_id}],
+                }
+                for i in range(1, steps + 1)
+            ],
+        }
+        resp = test_client.post(
+            "/api/v1/workflows", json=payload, headers=auth_headers["admin"]
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    def _submit(self, test_client, auth_headers, seeded_data, wf_id, subject):
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, subject=subject),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201, create.text
+        corr = create.json()
+        sub = test_client.post(
+            f"/api/v1/correspondences/{corr['id']}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+        assert sub.status_code == 200, sub.text
+        assert sub.json()["status"] in ("submitted", "pending_approval")
+        assert corr["document_id"] is not None
+        return corr
+
+    def _instance_id(self, engine, document_id):
+        from workflow.models import WorkflowInstance
+
+        with Session(engine) as session:
+            instance = session.exec(
+                select(WorkflowInstance).where(
+                    WorkflowInstance.document_id == document_id
+                )
+            ).first()
+            assert instance
+            return instance.id
+
+    def _act(self, test_client, instance_id, action, checker_headers):
+        resp = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": action, "remarks": "pending-list test"},
+            headers=checker_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def _status_ids(self, test_client, auth_headers, status_value, **params):
+        resp = test_client.get(
+            "/api/v1/correspondences",
+            params={"status": status_value, **params},
+            headers=auth_headers["admin"],
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        return {item["id"] for item in data["items"]}, data["total"]
+
+    def _db_status(self, engine, corr_id):
+        with Session(engine) as session:
+            corr = session.get(Correspondence, corr_id)
+            assert corr
+            return corr.status
+
+    def test_approved_correspondence_leaves_pending_list_immediately(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        # 2-step workflow: approving step 1 advances the instance to
+        # pending_approval, which is the state where the bug is observable.
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Approve Leaves Pending", steps=2
+        )
+        corr = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Approve Leaves Pending"
+        )
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+        self._act(test_client, instance_id, "approve", checker_headers)
+
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] in pending_ids  # sanity: present before the action
+        assert pending_total == 1
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.PENDING_APPROVAL
+
+        result = self._act(test_client, instance_id, "approve", checker_headers)
+        assert result["status"] == "approved"
+
+        # First list request after the action must already be correct.
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] not in pending_ids
+        assert pending_total == 0
+
+        approved_ids, approved_total = self._status_ids(
+            test_client, auth_headers, "approved"
+        )
+        assert corr["id"] in approved_ids
+        assert approved_total == 1
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.APPROVED
+
+    def test_rejected_correspondence_leaves_pending_list_immediately(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Reject Leaves Pending", steps=2
+        )
+        corr = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Reject Leaves Pending"
+        )
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+        self._act(test_client, instance_id, "approve", checker_headers)  # -> step 2
+
+        pending_ids, _ = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] in pending_ids  # sanity: present before the action
+
+        result = self._act(test_client, instance_id, "reject", checker_headers)
+        assert result["status"] == "rejected"
+
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] not in pending_ids
+        assert pending_total == 0
+
+        rejected_ids, _ = self._status_ids(test_client, auth_headers, "rejected")
+        assert corr["id"] in rejected_ids
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.REJECTED
+
+    def test_returned_correspondence_leaves_pending_list_immediately(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Return Leaves Pending", steps=2
+        )
+        corr = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Return Leaves Pending"
+        )
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+        self._act(test_client, instance_id, "approve", checker_headers)  # -> step 2
+
+        pending_ids, _ = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] in pending_ids  # sanity: present before the action
+
+        result = self._act(test_client, instance_id, "return", checker_headers)
+        assert result["status"] == "returned"
+
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] not in pending_ids
+        assert pending_total == 0
+
+        returned_ids, _ = self._status_ids(test_client, auth_headers, "returned")
+        assert corr["id"] in returned_ids
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.RETURNED
+
+    def test_single_step_approval_clears_submitted_status(
+        self, client, auth_headers, seeded_data
+    ):
+        """A single-step workflow goes submitted -> approved without ever
+        passing pending_approval; the stale 'submitted' row must also stop
+        matching its status filter on the first list request."""
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Single Step Submitted"
+        )
+        corr = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Single Step Submitted"
+        )
+
+        submitted_ids, _ = self._status_ids(test_client, auth_headers, "submitted")
+        assert corr["id"] in submitted_ids  # sanity
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+        result = self._act(test_client, instance_id, "approve", checker_headers)
+        assert result["status"] == "approved"
+
+        submitted_ids, submitted_total = self._status_ids(
+            test_client, auth_headers, "submitted"
+        )
+        assert corr["id"] not in submitted_ids
+        assert submitted_total == 0
+        approved_ids, _ = self._status_ids(test_client, auth_headers, "approved")
+        assert corr["id"] in approved_ids
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.APPROVED
+
+    def test_inflight_correspondence_stays_in_pending_list_after_step_advance(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Two Step Stays Pending", steps=2
+        )
+        corr = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Two Step Stays Pending"
+        )
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+        result = self._act(test_client, instance_id, "approve", checker_headers)
+        assert result["status"] == "pending_approval"  # advanced to step 2
+        assert result["current_step_order"] == 2
+
+        # The instance is still in flight, so the correspondence must remain.
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] in pending_ids
+        assert pending_total == 1
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.PENDING_APPROVAL
+
+    def test_pending_total_and_pagination_after_action(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Pagination Pending", steps=2
+        )
+        corr_one = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Pagination One"
+        )
+        corr_two = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Pagination Two"
+        )
+
+        # Advance both to step 2 so both sit at pending_approval.
+        self._act(
+            test_client,
+            self._instance_id(engine, corr_one["document_id"]),
+            "approve",
+            checker_headers,
+        )
+        self._act(
+            test_client,
+            self._instance_id(engine, corr_two["document_id"]),
+            "approve",
+            checker_headers,
+        )
+
+        _, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert pending_total == 2  # sanity
+
+        # Final-approve the first instance -> it must leave immediately.
+        instance_one = self._instance_id(engine, corr_one["document_id"])
+        result = self._act(test_client, instance_one, "approve", checker_headers)
+        assert result["status"] == "approved"
+
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert pending_total == 1
+        assert pending_ids == {corr_two["id"]}
+
+        page_ids, page_total = self._status_ids(
+            test_client, auth_headers, "pending_approval", skip=0, limit=1
+        )
+        assert page_total == 1
+        assert page_ids == {corr_two["id"]}
+
+        approved_ids, approved_total = self._status_ids(
+            test_client, auth_headers, "approved"
+        )
+        assert approved_total == 1
+        assert approved_ids == {corr_one["id"]}
+
+    def test_stale_stored_status_healed_by_list(
+        self, client, auth_headers, seeded_data
+    ):
+        """Rows that went stale before this fix existed are corrected by the
+        first list call, not only when they happen to be paged."""
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Stale Heal"
+        )
+        corr = self._submit(
+            test_client, auth_headers, seeded_data, wf_id, "Stale Heal"
+        )
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+        self._act(test_client, instance_id, "approve", checker_headers)
+
+        # Simulate a pre-existing stale row: approved instance, stale status.
+        with Session(engine) as session:
+            row = session.get(Correspondence, corr["id"])
+            assert row
+            row.status = CorrespondenceStatus.PENDING_APPROVAL
+            session.add(row)
+            session.commit()
+
+        pending_ids, pending_total = self._status_ids(
+            test_client, auth_headers, "pending_approval"
+        )
+        assert corr["id"] not in pending_ids
+        assert pending_total == 0
+        assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.APPROVED
+
+

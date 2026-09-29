@@ -99,7 +99,7 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 - Deactivating a definition blocks new submissions only.
 - Definitions are category-agnostic (`document_category_id` was removed); category filtering happens at the document level. Multiple active definitions per category are allowed, so submission UIs need a picker.
 - `workflow_history` is the approval ledger; `audit/` stays the system-wide log. Both are written, never a third mechanism.
-- Approver eligibility (`workflow/approval_policy.py`) is layered **on top of** RBAC and User Level visibility — an approver who cannot view the document is not a valid approver.
+- Approver eligibility (`workflow/approval_policy.py`) is admin-configured and does **not** filter by User Level (`resolve_eligible_user_ids`; `list_pending` shows instances regardless of level — note `approval_service.act` refuses MAKER-role users). In exchange, an eligible approver at the current step of an in-flight instance can **read** the document even when its User Level links exclude them: memos do this unconditionally in `_check_view_access`, correspondence via `approver_view=True` on read paths only (detail, by-document, movements, replies, downloads) — mutations keep the strict level guard (`is_eligible_current_approver`). The grant lapses once the instance leaves `submitted`/`pending_approval`.
 - Activation does not validate that steps/approvers exist; step-order uniqueness is enforced only by a DB constraint.
 
 ## Module Notes

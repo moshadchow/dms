@@ -14,6 +14,8 @@ import Button from '@/components/ui/Button'
 import { formatDateTime } from '@/utils/formatters'
 import { getErrorMessage } from '@/api/client'
 import { useAuthStore } from '@/store/authStore'
+import { usePermissions } from '@/hooks/usePermissions'
+import { sanitizeHtml } from '@/utils/sanitizeHtml'
 
 const PRIORITY_BADGES: Record<string, { bg: string; color: string }> = {
   low: { bg: '#f1f5f9', color: '#64748b' }, normal: { bg: '#dbeafe', color: '#1e40af' },
@@ -22,10 +24,9 @@ const PRIORITY_BADGES: Record<string, { bg: string; color: string }> = {
 
 const STATUS_BADGES: Record<string, { bg: string; color: string }> = {
   draft: { bg: '#f1f5f9', color: '#64748b' }, received: { bg: '#dbeafe', color: '#1e40af' },
-  registered: { bg: '#dbeafe', color: '#1e40af' }, assigned: { bg: '#e0e7ff', color: '#3730a3' },
-  processing: { bg: '#fef3c7', color: '#92400e' },
+  assigned: { bg: '#e0e7ff', color: '#3730a3' },
   submitted: { bg: '#e0e7ff', color: '#3730a3' }, pending_approval: { bg: '#fef3c7', color: '#92400e' },
-  approved: { bg: '#d1fae5', color: '#065f46' }, ready_for_dispatch: { bg: '#d1fae5', color: '#065f46' },
+  approved: { bg: '#d1fae5', color: '#065f46' },
   dispatched: { bg: '#e0e7ff', color: '#3730a3' },
   delivered: { bg: '#d1fae5', color: '#065f46' }, acknowledged: { bg: '#d1fae5', color: '#065f46' },
   completed: { bg: '#d1fae5', color: '#065f46' },
@@ -49,7 +50,9 @@ export default function CorrespondenceDetailPage() {
   const [submitOpen, setSubmitOpen] = useState(false)
   const [replyOpen, setReplyOpen] = useState(false)
   const [repliesRefreshKey, setRepliesRefreshKey] = useState(0)
+  const [approvalRemarks, setApprovalRemarks] = useState('')
   const user = useAuthStore(s => s.user)
+  const { canCreate, canUpdate, canDownload } = usePermissions()
 
   const fetchCorr = async () => {
     if (!id) return
@@ -102,20 +105,21 @@ export default function CorrespondenceDetailPage() {
     fetchCorr()
   }
 
-  const actOnWorkflow = async (action: 'approve' | 'reject' | 'return') => {
+  const actOnWorkflow = async (action: 'approve' | 'reject' | 'return', remarks?: string) => {
     if (!corr || !corr.workflow_instance_id) return
     try {
-      await correspondenceApi.actOnWorkflowInstance(corr.workflow_instance_id, action)
+      await correspondenceApi.actOnWorkflowInstance(corr.workflow_instance_id, action, remarks || undefined)
       toast.success(`Correspondence ${action}${action === 'approve' ? 'd' : 'ed'}`)
+      setApprovalRemarks('')
       fetchCorr()
     } catch (err) {
       toast.error(getErrorMessage(err))
     }
   }
 
-  const handleApprove = () => actOnWorkflow('approve')
-  const handleReject = () => actOnWorkflow('reject')
-  const handleReturn = () => actOnWorkflow('return')
+  const handleApprove = () => actOnWorkflow('approve', approvalRemarks)
+  const handleReject = () => actOnWorkflow('reject', approvalRemarks)
+  const handleReturn = () => actOnWorkflow('return', approvalRemarks)
 
   const handleMarkResponded = async () => {
     if (!corr) return
@@ -155,24 +159,28 @@ export default function CorrespondenceDetailPage() {
   const pBadge = PRIORITY_BADGES[corr.priority] ?? PRIORITY_BADGES.normal
   const sBadge = STATUS_BADGES[corr.status] ?? STATUS_BADGES.draft
   const isAdmin = user?.roles?.some(r => r.name === 'admin' || r.name === 'superadmin')
-  const canEdit = corr.status === 'draft' || corr.status === 'received' || corr.status === 'returned'
-  const canSubmit = corr.status === 'draft' || corr.status === 'received' || corr.status === 'returned'
-  const canDispatch = (corr.status === 'approved' || corr.status === 'ready_for_dispatch') && isAdmin
+  const canEdit = ['draft', 'received', 'assigned', 'returned'].includes(corr.status) && canUpdate
+  const canSubmit = ['draft', 'received', 'assigned', 'returned'].includes(corr.status) && canUpdate
+  const canDispatch = corr.status === 'approved' && isAdmin
   const canDeliver = corr.status === 'dispatched' && isAdmin
   const canAcknowledge = corr.status === 'delivered' && isAdmin
   const canComplete = corr.status === 'acknowledged' && isAdmin
   const canArchive = corr.status === 'completed' && isAdmin
   const terminal = ['approved', 'dispatched', 'delivered', 'acknowledged', 'completed', 'cancelled', 'archived', 'rejected'].includes(corr.status)
-  const canReply = !terminal
-  const canMarkResponded = corr.direction === 'inbound' && !corr.response_received && !terminal
+  const canReply = !terminal && canCreate && canUpdate
+  const canMarkResponded = corr.direction === 'inbound' && !corr.response_received && !terminal && canUpdate
+  const canAssignForward = isAdmin && !terminal
+    && !['submitted', 'pending_approval'].includes(corr.status)
+    && !corr.dispatch_method
+  const canActOnWorkflow = !!corr.workflow_instance_id && corr.status === 'pending_approval' && canUpdate
 
   const handleComplete = async () => {
     try {
       await correspondenceApi.complete(corr.id, "Completed")
       toast.success("Correspondence completed")
       await fetchCorr()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to complete")
+    } catch (e) {
+      toast.error(getErrorMessage(e))
     }
   }
 
@@ -181,8 +189,8 @@ export default function CorrespondenceDetailPage() {
       await correspondenceApi.archive(corr.id, "Archived")
       toast.success("Correspondence archived")
       await fetchCorr()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to archive")
+    } catch (e) {
+      toast.error(getErrorMessage(e))
     }
   }
 
@@ -207,14 +215,30 @@ export default function CorrespondenceDetailPage() {
           {canDispatch && <Button size="sm" onClick={() => setDispatchOpen(true)}>Dispatch</Button>}
           {canDeliver && <Button size="sm" onClick={handleDeliver}>Mark Delivered</Button>}
           {canAcknowledge && <Button size="sm" onClick={handleAcknowledge}>Mark Acknowledged</Button>}
-          {corr.workflow_instance_id && <Button variant="accent" size="sm" onClick={handleDownloadFinal}>Download PDF</Button>}
-          {corr.workflow_instance_id && corr.status === 'pending_approval' && <Button size="sm" onClick={handleApprove}>Approve</Button>}
-          {corr.workflow_instance_id && corr.status === 'pending_approval' && <Button size="sm" onClick={handleReject}>Reject</Button>}
-          {corr.workflow_instance_id && corr.status === 'pending_approval' && <Button size="sm" onClick={handleReturn}>Return</Button>}
+          {corr.workflow_instance_id && canDownload && <Button variant="accent" size="sm" onClick={handleDownloadFinal}>Download PDF</Button>}
           {canComplete && <Button size="sm" onClick={handleComplete}>Finalize</Button>}
           {canArchive && <Button size="sm" onClick={handleArchive}>Archive</Button>}
         </div>
       </div>
+
+      {/* Approval actions with remarks */}
+      {canActOnWorkflow && (
+        <div style={{ ...sectionCard, marginBottom: '1.5rem', backgroundColor: 'var(--warning-soft, #fffbeb)', borderColor: 'var(--warning, #f59e0b)' }}>
+          <h4 style={{ margin: '0 0 8px', fontSize: '0.85rem', color: 'var(--text)' }}>Approval Decision</h4>
+          <textarea
+            value={approvalRemarks}
+            onChange={(e) => setApprovalRemarks(e.target.value)}
+            placeholder="Remarks (optional — shown in the movement history)"
+            rows={2}
+            style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: '0.82rem', resize: 'vertical', backgroundColor: 'var(--surface)', color: 'var(--text)', marginBottom: '10px' }}
+          />
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <Button variant="outline" size="sm" onClick={handleReturn}>Return</Button>
+            <Button variant="outline" size="sm" onClick={handleReject}>Reject</Button>
+            <Button size="sm" onClick={handleApprove}>Approve</Button>
+          </div>
+        </div>
+      )}
 
       {/* Two-column layout */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '1.5rem' }}>
@@ -225,7 +249,7 @@ export default function CorrespondenceDetailPage() {
             <h3 style={{ margin: '0 0 8px', fontSize: '0.95rem', color: 'var(--text)' }}>{corr.subject}</h3>
             {corr.body && (
               <div
-                dangerouslySetInnerHTML={{ __html: corr.body }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(corr.body) }}
                 style={{ fontSize: '0.85rem', lineHeight: 1.6, color: 'var(--text-secondary)' }}
               />
             )}
@@ -244,6 +268,7 @@ export default function CorrespondenceDetailPage() {
                       <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 4, fontSize: '0.7rem', background: att.attachment_type === 'original' ? '#dbeafe' : '#f1f5f9', color: att.attachment_type === 'original' ? '#1e40af' : '#64748b' }}>{att.attachment_type}</span>
                     </span>
                     <button
+                      disabled={!canDownload}
                       onClick={async () => {
                         try {
                           const blob = await correspondenceApi.downloadAttachment(att.correspondence_id, att.id)
@@ -252,7 +277,7 @@ export default function CorrespondenceDetailPage() {
                           URL.revokeObjectURL(url)
                         } catch (err) { toast.error(getErrorMessage(err)) }
                       }}
-                      style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.8rem' }}
+                      style={{ background: 'none', border: 'none', color: canDownload ? 'var(--primary)' : 'var(--text-tertiary)', cursor: canDownload ? 'pointer' : 'not-allowed', fontSize: '0.8rem' }}
                     >
                       Download
                     </button>
@@ -330,13 +355,13 @@ export default function CorrespondenceDetailPage() {
           <div style={sectionCard}>
             <h4 style={{ margin: '0 0 8px', fontSize: '0.85rem', color: 'var(--text)' }}>Actions</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {isAdmin && (
+              {canAssignForward && (
                 <>
                   <Button variant="outline" size="sm" fullWidth onClick={() => setAssignOpen(true)}>Assign</Button>
                   <Button variant="outline" size="sm" fullWidth onClick={() => setForwardOpen(true)}>Forward</Button>
                 </>
               )}
-              {corr.attachments && corr.attachments.length > 0 && (
+              {corr.attachments && corr.attachments.length > 0 && canDownload && (
                 <Button variant="ghost" size="sm" fullWidth onClick={async () => {
                   try {
                     const blob = await correspondenceApi.download(corr.id)
@@ -365,6 +390,7 @@ export default function CorrespondenceDetailPage() {
         isOpen={submitOpen}
         correspondenceId={corr.id}
         direction={corr.direction}
+        isReply={corr.parent_correspondence_id != null}
         onClose={() => setSubmitOpen(false)}
         onSuccess={fetchCorr}
       />

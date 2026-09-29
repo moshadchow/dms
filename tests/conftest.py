@@ -9,6 +9,7 @@ from sqlmodel import SQLModel, Session, create_engine, select
 import core.database
 import middleware.rbac
 import middleware.audit
+import notifications.tasks
 from core.database import get_session
 from core.security import create_access_token, hash_password
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
@@ -42,8 +43,14 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(core.database, "engine", engine)
     monkeypatch.setattr(middleware.rbac, "engine", engine)
     monkeypatch.setattr(middleware.audit, "engine", engine)
+    # notifications/tasks.py binds engine at import time — patch it too so
+    # background tasks run against the test DB instead of the real one.
+    monkeypatch.setattr(notifications.tasks, "engine", engine)
     monkeypatch.setattr(core.database.settings, "DEBUG", False)
     monkeypatch.setattr(core.database.settings, "STORAGE_ROOT", str(tmp_path / "storage"))
+    # Never open real network connections from tests (tasks send email once
+    # they can run to completion); _send_smtp skips when SMTP_HOST is empty.
+    monkeypatch.setattr(core.database.settings, "SMTP_HOST", "")
 
     def override_get_session():
         with Session(engine) as session:

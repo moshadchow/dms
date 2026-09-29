@@ -8,10 +8,16 @@ interface Props {
 const ACTION_LABELS: Record<string, { color: string; label: string }> = {
   assign:     { color: 'var(--info)', label: 'Assigned' },
   forward:    { color: 'var(--accent)', label: 'Forwarded' },
+  submit:     { color: 'var(--primary)', label: 'Submitted' },
+  approve:    { color: 'var(--success)', label: 'Approved' },
+  reject:     { color: 'var(--danger, #dc2626)', label: 'Rejected' },
+  return:     { color: 'var(--warning)', label: 'Returned' },
+  respond:    { color: 'var(--success)', label: 'Responded' },
   dispatch:   { color: 'var(--primary)', label: 'Dispatched' },
   delivered:  { color: 'var(--success)', label: 'Delivered' },
   acknowledged: { color: 'var(--success)', label: 'Acknowledged' },
-  return:     { color: 'var(--warning)', label: 'Returned' },
+  complete:   { color: 'var(--success)', label: 'Completed' },
+  archive:    { color: 'var(--text-tertiary)', label: 'Archived' },
 }
 
 export default function CorrespondenceTimeline({ movements }: Props) {

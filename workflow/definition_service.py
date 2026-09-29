@@ -235,10 +235,18 @@ class WorkflowDefinitionService:
     def get_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionDetailRead:
         wf = self._get_or_404(definition_id)
         self._check_company_access(wf, current_user)
+        return self._to_detail(wf)
 
+    def _to_detail(self, wf: WorkflowDefinition) -> WorkflowDefinitionDetailRead:
+        """Build the detail read schema without an access guard.
+
+        HTTP callers go through ``get_definition``; background tasks
+        (notifications) have no ``current_user`` and build the read schema
+        directly from a workflow they are already authorized to process.
+        """
         wf = self.session.exec(
             select(WorkflowDefinition)
-            .where(WorkflowDefinition.id == definition_id)
+            .where(WorkflowDefinition.id == wf.id)
         ).first()
 
         steps_read = self._build_steps_read(wf.steps)

@@ -6,6 +6,7 @@ from typing import List, Optional, Set
 
 import bleach
 from fastapi import BackgroundTasks, HTTPException, status
+from sqlalchemy import or_
 from sqlmodel import Session, col, select
 
 from audit.models import AuditAction, AuditModule
@@ -42,7 +43,9 @@ from correspondence.schemas import (
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
 from documents.utils import delete_from_disk, validate_file
 from directories.models import Directory
+from notifications.tasks import send_notification_task
 from users.models import RoleName, User, UserCategoryLink
+from workflow.approval_policy import is_eligible_current_approver
 from workflow.models import WorkflowInstance, WorkflowStatus
 
 # Reuse memo sanitization config
@@ -132,12 +135,35 @@ class CorrespondenceService:
         if correspondence.company_id != user.company_id:
             raise HTTPException(status_code=404, detail="Correspondence not found")
 
-    def _check_view_access(self, correspondence: Correspondence, user: User) -> None:
+    def _check_view_access(
+        self, correspondence: Correspondence, user: User, *, approver_view: bool = False
+    ) -> None:
         self._check_company_access(correspondence, user)
         if user.is_admin():
             return
+        # Non-admins: category access (explicitly, so document-less records are
+        # covered too), then document access + User Level visibility when a
+        # backing document exists. Mirrored by the list filter in
+        # list_correspondences so list ⊆ detail-accessible.
+        # approver_view=True (read paths only): an eligible approver at the
+        # current step of the in-flight workflow may read the document even
+        # when User Level links don't cover their level — matching memos'
+        # _is_eligible_approver. Mutations keep the strict guard.
+        if correspondence.category_id is not None:
+            ensure_category_access(self.session, user, correspondence.category_id)
         if correspondence.document_id is not None:
-            ensure_document_access(self.session, user, correspondence.document_id)
+            doc = ensure_document_access(self.session, user, correspondence.document_id)
+            try:
+                ensure_document_user_level_access(self.session, user, doc)
+            except HTTPException as exc:
+                if (
+                    exc.status_code != status.HTTP_403_FORBIDDEN
+                    or not approver_view
+                    or not is_eligible_current_approver(
+                        self.session, correspondence.document_id, user
+                    )
+                ):
+                    raise
 
     def _check_edit_access(self, correspondence: Correspondence, user: User) -> None:
         self._check_view_access(correspondence, user)
@@ -155,6 +181,11 @@ class CorrespondenceService:
     def _check_admin(self, user: User) -> None:
         if not user.is_admin():
             raise HTTPException(status_code=403, detail="Admin access required")
+
+    def _deny_superadmin_mutation(self, user: User) -> None:
+        """SUPERADMIN is read-only for correspondences (module-wide invariant)."""
+        if any(r.name == RoleName.SUPERADMIN for r in user.roles):
+            raise HTTPException(status_code=403, detail="Superadmin has read-only access to correspondences")
 
     def _resolve_company(self, user: User) -> Company:
         if not user.company_id:
@@ -199,6 +230,22 @@ class CorrespondenceService:
             if ul and ul.is_active:
                 valid.add(lid)
         return valid
+
+    def _ensure_document_in_company(self, document_id: int, company_id: int) -> Document:
+        """Load a document and verify it belongs to the given company.
+
+        Documents have no company_id; ownership resolves through
+        document -> directory -> category -> company. Deleted documents and
+        other companies' documents are indistinguishable (422 "not found").
+        """
+        doc = self.session.get(Document, document_id)
+        if not doc or doc.status == DocumentStatus.DELETED:
+            raise HTTPException(status_code=422, detail="Document not found")
+        directory = self.session.get(Directory, doc.directory_id) if doc.directory_id else None
+        category = self.session.get(Category, directory.category_id) if directory else None
+        if not category or category.company_id != company_id:
+            raise HTTPException(status_code=422, detail="Document not found")
+        return doc
 
     def _next_reference_number(self, company: Company) -> str:
         year = datetime.utcnow().year
@@ -303,6 +350,7 @@ class CorrespondenceService:
             response_deadline=corr.response_deadline,
             response_received=corr.response_received,
             responded_at=corr.responded_at,
+            response_correspondence_id=corr.response_correspondence_id,
             parent_correspondence_id=corr.parent_correspondence_id,
             author_signature_id=corr.author_signature_id,
             workflow_instance_id=corr.workflow_instance_id,
@@ -407,6 +455,7 @@ class CorrespondenceService:
             response_deadline=corr.response_deadline,
             response_received=corr.response_received,
             responded_at=corr.responded_at,
+            response_correspondence_id=corr.response_correspondence_id,
             parent_correspondence_id=corr.parent_correspondence_id,
             author_signature_id=corr.author_signature_id,
             workflow_instance_id=corr.workflow_instance_id,
@@ -472,28 +521,98 @@ class CorrespondenceService:
         if new_status and corr.status != new_status:
             corr.status = new_status
             corr.updated_at = datetime.utcnow()
+
+            # A reply that ends up rejected/returned/cancelled releases the
+            # parent's response flag — but only when this reply is the one that
+            # set it (response_correspondence_id match), so a manual
+            # "mark responded" is never wiped. Only on an actual transition:
+            # re-running sync on an already-rejected reply must not re-clear.
+            if (
+                new_status
+                in (
+                    CorrespondenceStatus.REJECTED,
+                    CorrespondenceStatus.RETURNED,
+                    CorrespondenceStatus.CANCELLED,
+                )
+                and corr.parent_correspondence_id is not None
+            ):
+                parent = self.session.get(Correspondence, corr.parent_correspondence_id)
+                if (
+                    parent is not None
+                    and parent.response_correspondence_id == corr.id
+                ):
+                    parent.response_received = False
+                    parent.responded_at = None
+                    parent.response_correspondence_id = None
+                    parent.updated_at = datetime.utcnow()
+                    self.session.add(parent)
+
             self.session.add(corr)
             self.session.commit()
+
+    def _reconcile_workflow_statuses(self, current_user: User) -> None:
+        """Bring stored statuses of workflow-linked correspondences up to date
+        with their workflow instance BEFORE list filters and counts run.
+
+        ``Correspondence.status`` is a lazy projection of the instance status;
+        an approval action only updates the instance. The stored states below
+        are exactly the ones that can lag a transition (``returned`` can still
+        be cancelled), so reconciling them first makes status-filtered lists,
+        totals and pagination truthful on the first request — and heals rows
+        that went stale before this pass existed.
+        """
+        query = select(Correspondence).where(
+            Correspondence.workflow_instance_id.is_not(None),
+            Correspondence.status.in_([
+                CorrespondenceStatus.SUBMITTED,
+                CorrespondenceStatus.PENDING_APPROVAL,
+                CorrespondenceStatus.RETURNED,
+            ]),
+        )
+        if any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+            pass  # superadmin reconciles across all companies
+        elif current_user.company_id:
+            query = query.where(
+                Correspondence.company_id == current_user.company_id
+            )
+        else:
+            return  # company-less admin lists nothing, so reconcile nothing
+        for corr in self.session.exec(query).all():
+            self._sync_workflow_status(corr)
 
     # ──────────────────────────────────────────
     # Public API
     # ──────────────────────────────────────────
 
     def create_draft(self, data: CorrespondenceCreate, current_user: User) -> "CorrespondenceDetailRead":
+        self._deny_superadmin_mutation(current_user)
         company = self._resolve_company(current_user)
 
-        # Validate category
-        if data.category_id is not None:
-            self._validate_category(data.category_id, company.id)
+        # Category is required for every correspondence: backing documents and
+        # attachment uploads are filed under the category's directory.
+        if data.category_id is None:
+            raise HTTPException(status_code=422, detail="Category is required for correspondence")
+        self._validate_category(data.category_id, company.id)
 
         # Direction-specific validation
         if data.direction == CorrespondenceDirection.INBOUND:
             if not data.date_received:
                 data.date_received = datetime.utcnow()
             if data.document_id:
-                doc = self.session.get(Document, data.document_id)
-                if not doc:
-                    raise HTTPException(status_code=422, detail="Document not found")
+                self._ensure_document_in_company(data.document_id, company.id)
+                already_linked = self.session.exec(
+                    select(Correspondence).where(
+                        Correspondence.document_id == data.document_id
+                    )
+                ).first()
+                if already_linked:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Document is already linked to correspondence "
+                            f"{already_linked.reference_number}"
+                        ),
+                    )
         else:
             if not data.body:
                 raise HTTPException(status_code=422, detail="Body is required for outbound/internal correspondence")
@@ -501,6 +620,13 @@ class CorrespondenceService:
         # Response deadline validation
         if data.response_required and not data.response_deadline:
             raise HTTPException(status_code=422, detail="Response deadline is required when response is required")
+
+        # Signature ownership — same rule as update/submit paths
+        if data.author_signature_id is not None:
+            from workflow.service import SignatureService
+            sig = SignatureService(self.session).validate_signature_exists(data.author_signature_id)
+            if sig.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="You can only attach your own signatures")
 
         # Parent correspondence validation
         if data.parent_correspondence_id:
@@ -602,8 +728,18 @@ class CorrespondenceService:
 
     def get_correspondence(self, correspondence_id: int, current_user: User) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
-        self._check_view_access(corr, current_user)
+        self._check_view_access(corr, current_user, approver_view=True)
         self._sync_workflow_status(corr)
+        # Sync this record's replies as well: a reply that was rejected or
+        # returned releases this record's response flag (see
+        # _sync_workflow_status), so the response panel must be fresh on read.
+        replies = self.session.exec(
+            select(Correspondence).where(
+                Correspondence.parent_correspondence_id == corr.id
+            )
+        ).all()
+        for reply in replies:
+            self._sync_workflow_status(reply)
         return self._to_detail(corr)
 
     def get_correspondence_by_document(self, document_id: int, current_user: User) -> "CorrespondenceDetailRead":
@@ -614,7 +750,7 @@ class CorrespondenceService:
         if not corr:
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Correspondence not found for this document")
-        self._check_view_access(corr, current_user)
+        self._check_view_access(corr, current_user, approver_view=True)
         self._sync_workflow_status(corr)
         return self._to_detail(corr)
 
@@ -637,11 +773,56 @@ class CorrespondenceService:
     ) -> "CorrespondenceListResponse":
         from correspondence.models import CorrespondenceListResponse, CorrespondenceRead
 
+        # Reconcile stale workflow-linked statuses first so the status filter
+        # and the count below operate on truthful values.
+        self._reconcile_workflow_statuses(current_user)
+
         query = select(Correspondence)
 
         # Company scoping
         if not current_user.is_admin():
             query = query.where(Correspondence.company_id == current_user.company_id)
+            # Mirror _check_view_access so every listed row is detail-accessible:
+            # (a) category is NULL or one of the user's linked, active categories
+            allowed_category_ids = list(self.session.exec(
+                select(UserCategoryLink.category_id)
+                .join(Category, Category.id == UserCategoryLink.category_id)
+                .where(
+                    UserCategoryLink.user_id == current_user.id,
+                    Category.is_active == True,  # noqa: E712
+                    Category.company_id == current_user.company_id,
+                )
+            ).all())
+            query = query.where(
+                or_(
+                    Correspondence.category_id.is_(None),
+                    Correspondence.category_id.in_(allowed_category_ids),
+                )
+            )
+            # (b) no document, or the document passes directory-category +
+            # User Level checks. A user without a level (or a document whose
+            # level links do not include them) matches nothing here.
+            doc_condition = Correspondence.document_id.is_(None)
+            if current_user.user_level_id is not None:
+                doc_query = (
+                    select(Document.id)
+                    .join(Directory, Directory.id == Document.directory_id)
+                    .where(
+                        Document.status != DocumentStatus.DELETED,
+                        Directory.category_id.in_(allowed_category_ids),
+                        Document.id.in_(
+                            select(DocumentUserLevelLink.document_id).where(
+                                DocumentUserLevelLink.user_level_id
+                                == current_user.user_level_id
+                            )
+                        ),
+                    )
+                )
+                doc_condition = or_(
+                    doc_condition,
+                    Correspondence.document_id.in_(doc_query),
+                )
+            query = query.where(doc_condition)
         elif any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
             pass  # superadmin sees all
         else:
@@ -720,6 +901,7 @@ class CorrespondenceService:
         corr = self._get_correspondence_or_404(correspondence_id)
         self._sync_workflow_status(corr)
         self._check_edit_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
 
         if data.subject is not None:
             corr.subject = data.subject
@@ -742,9 +924,10 @@ class CorrespondenceService:
                 corr.document.updated_at = datetime.utcnow()
         if data.priority is not None:
             corr.priority = data.priority
-        if data.category_id is not None:
-            if data.category_id:
-                self._validate_category(data.category_id, corr.company_id)
+        if "category_id" in data.model_fields_set:
+            if not data.category_id:
+                raise HTTPException(status_code=422, detail="Category is required for correspondence")
+            self._validate_category(data.category_id, corr.company_id)
             corr.category_id = data.category_id
         if data.sender_name is not None:
             corr.sender_name = data.sender_name
@@ -811,12 +994,18 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
 
         # Only author or admin can submit
         if not current_user.is_admin() and corr.created_by != current_user.id:
             raise HTTPException(status_code=403, detail="Only the author can submit")
 
-        if corr.status not in (CorrespondenceStatus.DRAFT, CorrespondenceStatus.RECEIVED, CorrespondenceStatus.RETURNED):
+        if corr.status not in (
+            CorrespondenceStatus.DRAFT,
+            CorrespondenceStatus.RECEIVED,
+            CorrespondenceStatus.ASSIGNED,
+            CorrespondenceStatus.RETURNED,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot submit correspondence in '{corr.status.value}' status",
@@ -885,8 +1074,25 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
         if not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Admin access required for assignment")
+
+        # Assignment is a registration-stage action: it must never overwrite
+        # workflow or post-workflow lifecycle state.
+        if corr.status in TERMINAL_STATUSES or corr.status in (
+            CorrespondenceStatus.SUBMITTED,
+            CorrespondenceStatus.PENDING_APPROVAL,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot assign correspondence in '{corr.status.value}' status",
+            )
+        if corr.dispatch_method is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot assign correspondence after dispatch",
+            )
 
         to_user = self.session.get(User, data.to_user_id)
         if not to_user or to_user.company_id != corr.company_id:
@@ -927,6 +1133,8 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
+        self._check_admin(current_user)
 
         to_user = self.session.get(User, data.to_user_id)
         if not to_user or to_user.company_id != corr.company_id:
@@ -966,6 +1174,7 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
         if not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Admin access required for dispatch")
 
@@ -1022,6 +1231,7 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
         if not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -1066,6 +1276,7 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
         if not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Admin access required")
 
@@ -1106,7 +1317,7 @@ class CorrespondenceService:
     def get_movements(self, correspondence_id: int, current_user: User) -> List["CorrespondenceMovementRead"]:
         from correspondence.models import CorrespondenceMovementRead
         corr = self._get_correspondence_or_404(correspondence_id)
-        self._check_view_access(corr, current_user)
+        self._check_view_access(corr, current_user, approver_view=True)
 
         movements = self.session.exec(
             select(CorrespondenceMovement)
@@ -1149,6 +1360,7 @@ class CorrespondenceService:
 
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_edit_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
 
         company = self._resolve_company(current_user)
 
@@ -1247,6 +1459,7 @@ class CorrespondenceService:
     ) -> None:
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_edit_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
 
         link = self.session.get(CorrespondenceAttachment, attachment_id)
         if not link or link.correspondence_id != corr.id:
@@ -1284,6 +1497,8 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
+        self._check_admin(current_user)
         self._sync_workflow_status(corr)
 
         if corr.status != CorrespondenceStatus.ACKNOWLEDGED:
@@ -1341,6 +1556,8 @@ class CorrespondenceService:
     ) -> "CorrespondenceDetailRead":
         corr = self._get_correspondence_or_404(correspondence_id)
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
+        self._check_admin(current_user)
         self._sync_workflow_status(corr)
 
         if corr.status != CorrespondenceStatus.COMPLETED:
@@ -1421,6 +1638,7 @@ class CorrespondenceService:
         Returns:
             CorrespondenceDetailRead of the newly created reply
         """
+        self._deny_superadmin_mutation(current_user)
         # Get parent correspondence and validate access
         parent = self.session.get(Correspondence, parent_id)
         if not parent:
@@ -1471,9 +1689,7 @@ class CorrespondenceService:
                 data.date_received = datetime.utcnow()
             # For inbound replies, we can accept an existing document_id
             if data.document_id:
-                doc = self.session.get(Document, data.document_id)
-                if not doc or doc.company_id != company.id:
-                    raise HTTPException(status_code=422, detail="Document not found")
+                self._ensure_document_in_company(data.document_id, company.id)
             # If no document provided, we'll create one later if needed
         else:
             # Outbound/internal requires body
@@ -1482,6 +1698,15 @@ class CorrespondenceService:
                     status_code=422,
                     detail="Body is required for outbound/internal correspondence"
                 )
+            # Validate the backing-document directory up front (category may have
+            # been inherited from a category-less parent) so no reply row is
+            # committed before this fails.
+            if data.category_id is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Correspondence must have a category to create a document",
+                )
+            self._resolve_backing_directory(data.category_id)
 
         # Generate reference number
         ref_number = self._next_reference_number(company)
@@ -1616,6 +1841,8 @@ class CorrespondenceService:
         Returns:
             CorrespondenceDetailRead of the submitted reply
         """
+        self._deny_superadmin_mutation(current_user)
+
         # Get the reply correspondence
         reply = self.session.get(Correspondence, correspondence_id)
         if not reply:
@@ -1632,13 +1859,25 @@ class CorrespondenceService:
             )
 
         # Validate status
-        if reply.status not in (CorrespondenceStatus.DRAFT, CorrespondenceStatus.RECEIVED, CorrespondenceStatus.RETURNED):
+        if reply.status not in (
+            CorrespondenceStatus.DRAFT,
+            CorrespondenceStatus.RECEIVED,
+            CorrespondenceStatus.ASSIGNED,
+            CorrespondenceStatus.RETURNED,
+        ):
             raise HTTPException(
                 status_code=409,
                 detail=f"Cannot submit reply in status '{reply.status.value}'"
             )
 
-        # Get parent correspondence for validation and response tracking
+        # All parent validations run BEFORE submission so a failure can never
+        # leave the reply in a workflow while the parent was not flagged.
+        if reply.parent_correspondence_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Correspondence is not a reply; use submit instead",
+            )
+
         parent = self.session.get(Correspondence, reply.parent_correspondence_id)
         if not parent:
             raise HTTPException(status_code=404, detail="Parent correspondence not found")
@@ -1650,6 +1889,13 @@ class CorrespondenceService:
                 detail=f"Parent correspondence is in terminal status '{parent.status.value}'"
             )
 
+        # Only inbound parents carry response tracking (mark_responded would 409)
+        if parent.direction != CorrespondenceDirection.INBOUND:
+            raise HTTPException(
+                status_code=409,
+                detail="Parent correspondence is not inbound and cannot be marked responded",
+            )
+
         # Submit using existing workflow logic (handles document fallback, signature, audit)
         result = self.submit_correspondence(
             correspondence_id=correspondence_id,
@@ -1658,8 +1904,9 @@ class CorrespondenceService:
             background_tasks=background_tasks,
         )
 
-        # Mark parent as having received a response after successful submission
-        self.mark_responded(parent.id, current_user)
+        # Mark parent as having received a response after successful submission,
+        # recording which reply answered it.
+        self.mark_responded(parent.id, current_user, response_correspondence_id=reply.id)
 
         return result
 
@@ -1667,12 +1914,17 @@ class CorrespondenceService:
         self,
         correspondence_id: int,
         current_user: User,
+        *,
+        response_correspondence_id: Optional[int] = None,
     ) -> "CorrespondenceDetailRead":
         """Mark an inbound correspondence as having received a response.
 
         Args:
             correspondence_id: ID of the inbound correspondence
             current_user: The user marking the response
+            response_correspondence_id: Set when the response is a submitted
+                reply; recorded so a later rejection/return of that reply can
+                release the flag. Manual marks leave it unset.
 
         Returns:
             CorrespondenceDetailRead of the updated correspondence
@@ -1684,6 +1936,7 @@ class CorrespondenceService:
 
         # Validate access
         self._check_view_access(corr, current_user)
+        self._deny_superadmin_mutation(current_user)
 
         # Validate it's an inbound correspondence
         if corr.direction != CorrespondenceDirection.INBOUND:
@@ -1703,6 +1956,8 @@ class CorrespondenceService:
         now = datetime.utcnow()
         corr.response_received = True
         corr.responded_at = now
+        if response_correspondence_id is not None:
+            corr.response_correspondence_id = response_correspondence_id
         corr.updated_at = now
 
         # Add movement record
@@ -1752,7 +2007,7 @@ class CorrespondenceService:
         if not parent:
             raise HTTPException(status_code=404, detail="Parent correspondence not found")
 
-        self._check_view_access(parent, current_user)
+        self._check_view_access(parent, current_user, approver_view=True)
 
         # Query for replies
         statement = select(Correspondence).where(
@@ -1764,7 +2019,8 @@ class CorrespondenceService:
         # Convert to detail reads with proper access checking
         result = []
         for reply in replies:
-            self._check_view_access(reply, current_user)
+            self._check_view_access(reply, current_user, approver_view=True)
+            self._sync_workflow_status(reply)
             result.append(self._to_detail(reply))
 
         return result

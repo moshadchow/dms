@@ -15,7 +15,7 @@ from audit.service import AuditService
 from core.access import ensure_document_access, ensure_document_user_level_access
 from documents.models import Document
 from users.models import User
-from workflow.approval_policy import resolve_eligible_user_ids
+from workflow.approval_policy import IN_FLIGHT_STATUSES, resolve_eligible_user_ids
 from workflow.models import (
     WorkflowDefinition,
     WorkflowHistory,
@@ -59,7 +59,7 @@ class WorkflowInstanceService:
         ).first()
 
     def _resolve_eligible_user_ids(self, step: WorkflowStep, document: Document) -> List[int]:
-        """Return user IDs eligible to act at this step, filtered by user level visibility."""
+        """Return user IDs eligible to act at this step (admin-configured, level-agnostic)."""
         return resolve_eligible_user_ids(self.session, step, document)
 
     def _to_instance_read(self, instance: WorkflowInstance) -> WorkflowInstanceRead:
@@ -331,10 +331,7 @@ class WorkflowInstanceService:
         """Return instances where the current user is an eligible approver at the current step."""
         all_instances = self.session.exec(
             select(WorkflowInstance)
-            .where(WorkflowInstance.status.in_([
-                WorkflowStatus.SUBMITTED,
-                WorkflowStatus.PENDING_APPROVAL,
-            ]))
+            .where(WorkflowInstance.status.in_(IN_FLIGHT_STATUSES))
         ).all()
 
         eligible_instances = []

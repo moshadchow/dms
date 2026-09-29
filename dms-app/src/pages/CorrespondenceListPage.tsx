@@ -7,6 +7,7 @@ import CorrespondenceFilters from '@/components/correspondence/CorrespondenceFil
 import CorrespondenceTable from '@/components/correspondence/CorrespondenceTable'
 import Button from '@/components/ui/Button'
 import { getErrorMessage } from '@/api/client'
+import { usePermissions } from '@/hooks/usePermissions'
 
 type TabKey = 'all' | 'inbound' | 'outbound' | 'internal' | 'pending' | 'overdue'
 
@@ -21,6 +22,7 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export default function CorrespondenceListPage() {
   const navigate = useNavigate()
+  const { canCreate } = usePermissions()
   const [items, setItems] = useState<Correspondence[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -86,9 +88,13 @@ export default function CorrespondenceListPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>Correspondence</h1>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <Button onClick={() => navigate('/correspondence/new?direction=inbound')} variant="outline" size="sm">+ Incoming</Button>
-          <Button onClick={() => navigate('/correspondence/new?direction=outbound')} variant="outline" size="sm">+ Outgoing</Button>
-          <Button onClick={() => navigate('/correspondence/new?direction=internal')} size="sm">+ Internal</Button>
+          {canCreate && (
+            <>
+              <Button onClick={() => navigate('/correspondence/new?direction=inbound')} variant="outline" size="sm">+ Incoming</Button>
+              <Button onClick={() => navigate('/correspondence/new?direction=outbound')} variant="outline" size="sm">+ Outgoing</Button>
+              <Button onClick={() => navigate('/correspondence/new?direction=internal')} size="sm">+ Internal</Button>
+            </>
+          )}
         </div>
       </div>
 

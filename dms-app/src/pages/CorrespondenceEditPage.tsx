@@ -28,6 +28,8 @@ const ALLOWED_MIME = [
   'image/png',
 ]
 
+const TERMINAL_STATUSES = ['approved', 'dispatched', 'delivered', 'acknowledged', 'completed', 'cancelled', 'archived', 'rejected']
+
 export default function CorrespondenceEditPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -61,6 +63,11 @@ export default function CorrespondenceEditPage() {
       correspondenceApi.get(Number(id)),
       categoriesApi.list().then(res => setCategories(res.items ?? res)),
     ]).then(([data]) => {
+      if (TERMINAL_STATUSES.includes(data.status) || data.dispatch_method) {
+        toast.error(`Correspondence in '${data.status.replace(/_/g, ' ')}' status cannot be edited`)
+        navigate(`/correspondence/${data.id}`)
+        return
+      }
       setCorr(data)
       setSubject(data.subject)
       setBody(data.body || '')
@@ -129,6 +136,7 @@ export default function CorrespondenceEditPage() {
   const handleSave = async () => {
     if (!corr) return
     if (!subject.trim()) { toast.error('Subject is required'); return }
+    if (!categoryId) { toast.error('Category is required'); return }
     setSaving(true)
     try {
       const data: CorrespondenceUpdate = {
@@ -219,9 +227,9 @@ export default function CorrespondenceEditPage() {
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Category</label>
+              <label style={labelStyle}>Category *</label>
               <select value={categoryId ?? ''} onChange={(e) => setCategoryId(Number(e.target.value) || null)} style={inputStyle}>
-                <option value="">— None —</option>
+                <option value="">— Select category —</option>
                 {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
@@ -271,7 +279,7 @@ export default function CorrespondenceEditPage() {
                           >
                             Download
                           </button>
-                          {(corr.status === 'draft' || corr.status === 'received' || corr.status === 'returned') && (
+                          {(corr.status === 'draft' || corr.status === 'received' || corr.status === 'assigned' || corr.status === 'returned') && (
                             <button
                               onClick={() => handleRemoveAttachment(att.id)}
                               disabled={removingAttId === att.id}

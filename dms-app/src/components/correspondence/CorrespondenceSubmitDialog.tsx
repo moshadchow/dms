@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
 import { correspondenceApi } from '@/api/correspondence.api'
+import { getErrorMessage } from '@/api/client'
 import type { CorrespondenceDirection } from '@/types/correspondence.types'
 
 interface CorrespondenceSubmitDialogProps {
   isOpen: boolean
   correspondenceId: number
   direction: CorrespondenceDirection
+  /** Submit a reply via submit-reply: also flags the parent as responded. */
+  isReply?: boolean
   onClose: () => void
   onSuccess: () => void
 }
@@ -22,6 +25,7 @@ export default function CorrespondenceSubmitDialog({
   isOpen,
   correspondenceId,
   direction,
+  isReply = false,
   onClose,
   onSuccess,
 }: CorrespondenceSubmitDialogProps) {
@@ -50,15 +54,17 @@ export default function CorrespondenceSubmitDialog({
     if (!selectedWorkflowId) return
     setLoading(true)
     try {
-      await correspondenceApi.submit(correspondenceId, {
-        workflow_definition_id: Number(selectedWorkflowId),
-      })
-      toast.success('Correspondence submitted for approval')
+      const payload = { workflow_definition_id: Number(selectedWorkflowId) }
+      if (isReply) {
+        await correspondenceApi.submitReply(correspondenceId, payload)
+      } else {
+        await correspondenceApi.submit(correspondenceId, payload)
+      }
+      toast.success(isReply ? 'Reply submitted for approval' : 'Correspondence submitted for approval')
       onSuccess()
       onClose()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to submit correspondence'
-      toast.error(msg)
+      toast.error(getErrorMessage(err))
     } finally {
       setLoading(false)
     }

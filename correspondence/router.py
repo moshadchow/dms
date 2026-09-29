@@ -392,7 +392,7 @@ def download_attachment(
 
     svc = CorrespondenceService(session)
     corr = svc._get_correspondence_or_404(correspondence_id)
-    svc._check_view_access(corr, current_user)
+    svc._check_view_access(corr, current_user, approver_view=True)
 
     link = session.get(CorrespondenceAttachment, attachment_id)
     if not link or link.correspondence_id != correspondence_id:
@@ -432,7 +432,7 @@ def download_document(
 
     svc = CorrespondenceService(session)
     corr = svc._get_correspondence_or_404(correspondence_id)
-    svc._check_view_access(corr, current_user)
+    svc._check_view_access(corr, current_user, approver_view=True)
 
     company = session.get(Company, corr.company_id)
     if not company:
@@ -471,7 +471,7 @@ def download_final(
 
     svc = CorrespondenceService(session)
     corr = svc._get_correspondence_or_404(correspondence_id)
-    svc._check_view_access(corr, current_user)
+    svc._check_view_access(corr, current_user, approver_view=True)
 
     pdf_path = generate_correspondence_pdf(session, corr, current_user)
     return FileResponse(

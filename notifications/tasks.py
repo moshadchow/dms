@@ -83,7 +83,7 @@ def send_notification_task(
             from workflow.service import WorkflowInstanceService, WorkflowDefinitionService
 
             instance_detail = WorkflowInstanceService(session)._to_instance_detail(instance_orm)
-            workflow_def_detail = WorkflowDefinitionService(session).get_definition(workflow_def_orm.id)
+            workflow_def_detail = WorkflowDefinitionService(session)._to_detail(workflow_def_orm)
 
             # Build step detail
             step_detail = WorkflowStepRead(

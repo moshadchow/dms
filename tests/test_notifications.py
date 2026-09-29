@@ -308,6 +308,82 @@ class TestSendNotificationTask:
         # for any audit log entries or other side effects
         assert notification is not None or True  # Task runs in separate session
 
+    @patch("smtplib.SMTP")
+    def test_send_notification_task_sends_without_current_user(
+        self, mock_smtp, monkeypatch, caplog, client, session, test_user, test_memo
+    ):
+        """Regression: the task called ``WorkflowDefinitionService.get_definition``
+        without the ``current_user`` guard argument, so every notification died
+        with TypeError before sending. It must now build the definition detail
+        internally and record a sent notification."""
+        import logging
+
+        import notifications.tasks as tasks_module
+        from workflow.models import WorkflowStepApprover
+
+        _, engine, _ = client
+        # Run the task against the test DB, not the real one, and force the
+        # SMTP path with a mocked server.
+        monkeypatch.setattr(tasks_module, "engine", engine)
+        monkeypatch.setattr(settings, "SMTP_HOST", "smtp.test.local")
+        monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "noreply@test.local")
+
+        mock_server = MagicMock()
+        mock_smtp.return_value.__enter__.return_value = mock_server
+
+        document = session.get(Document, test_memo.document_id)
+        wf_def = WorkflowDefinition(
+            name="Notification WF",
+            description="Test",
+            is_active=True,
+            created_by=test_user.id,
+        )
+        session.add(wf_def)
+        session.flush()
+
+        step = WorkflowStep(
+            workflow_definition_id=wf_def.id,
+            step_order=1,
+            step_name="Step 1",
+            approval_mode="sequential",
+            is_active=True,
+        )
+        session.add(step)
+        session.flush()
+        session.add(WorkflowStepApprover(workflow_step_id=step.id, user_id=test_user.id))
+        instance = WorkflowInstance(
+            document_id=document.id,
+            workflow_definition_id=wf_def.id,
+            current_step_order=1,
+            status="submitted",
+            submitted_by=test_user.id,
+        )
+        session.add(instance)
+        session.commit()
+
+        with caplog.at_level(logging.ERROR):
+            send_notification_task(
+                notification_type="submit",
+                instance_id=instance.id,
+                document_id=document.id,
+                step_order=1,
+            )
+
+        error_records = [
+            r.getMessage() for r in caplog.records if "Error in send_notification_task" in r.getMessage()
+        ]
+        assert error_records == []
+
+        notification = session.exec(
+            select(EmailNotification).where(
+                EmailNotification.instance_id == instance.id,
+                EmailNotification.notification_type == "submit",
+            )
+        ).first()
+        assert notification is not None
+        assert notification.status == "sent"
+        mock_server.send_message.assert_called_once()
+
 
 class TestNotificationIdempotency:
     """Test idempotency of email notifications."""

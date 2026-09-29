@@ -12,7 +12,7 @@ interface Props {
 const STATUS_BADGES: Record<string, { bg: string; color: string }> = {
   draft: { bg: '#f1f5f9', color: '#64748b' }, received: { bg: '#dbeafe', color: '#1e40af' },
   submitted: { bg: '#e0e7ff', color: '#3730a3' }, pending_approval: { bg: '#fef3c7', color: '#92400e' },
-  approved: { bg: '#d1fae5', color: '#065f46' }, ready_for_dispatch: { bg: '#d1fae5', color: '#065f46' },
+  approved: { bg: '#d1fae5', color: '#065f46' },
   dispatched: { bg: '#e0e7ff', color: '#3730a3' }, delivered: { bg: '#d1fae5', color: '#065f46' },
   acknowledged: { bg: '#d1fae5', color: '#065f46' }, completed: { bg: '#d1fae5', color: '#065f46' },
   cancelled: { bg: '#f1f5f9', color: '#64748b' }, archived: { bg: '#f1f5f9', color: '#64748b' },

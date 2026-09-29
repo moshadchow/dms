@@ -109,6 +109,12 @@ class Correspondence(SQLModel, table=True):
     response_deadline: Optional[datetime] = Field(default=None, index=True)
     response_received: bool = Field(default=False, nullable=False)
     responded_at: Optional[datetime] = Field(default=None)
+    # The reply that answered this correspondence (set on reply submission,
+    # cleared when that reply is rejected/returned/cancelled). NULL for
+    # manual "mark responded" actions.
+    response_correspondence_id: Optional[int] = Field(
+        default=None, foreign_key="correspondences.id"
+    )
 
     # Relationships
     parent_correspondence_id: Optional[int] = Field(default=None, foreign_key="correspondences.id", index=True)
@@ -248,6 +254,7 @@ class CorrespondenceRead(SQLModel):
     response_deadline: Optional[datetime] = None
     response_received: bool = False
     responded_at: Optional[datetime] = None
+    response_correspondence_id: Optional[int] = None
     parent_correspondence_id: Optional[int] = None
     author_signature_id: Optional[int] = None
     workflow_instance_id: Optional[int] = None
