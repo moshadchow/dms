@@ -160,7 +160,11 @@ export default function CorrespondenceDetailPage() {
   const sBadge = STATUS_BADGES[corr.status] ?? STATUS_BADGES.draft
   const isAdmin = user?.roles?.some(r => r.name === 'admin' || r.name === 'superadmin')
   const canEdit = ['draft', 'received', 'assigned', 'returned'].includes(corr.status) && canUpdate
-  const canSubmit = ['draft', 'received', 'assigned', 'returned'].includes(corr.status) && canUpdate
+  // Inbound records are the original incoming document — they are never
+  // submitted for approval; approval applies to the outbound reply instead.
+  const canSubmit = corr.direction !== 'inbound'
+    && ['draft', 'received', 'assigned', 'returned'].includes(corr.status)
+    && canUpdate
   const canDispatch = corr.status === 'approved' && isAdmin
   const canDeliver = corr.status === 'dispatched' && isAdmin
   const canAcknowledge = corr.status === 'delivered' && isAdmin

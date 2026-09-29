@@ -62,6 +62,47 @@ class WorkflowInstanceService:
         """Return user IDs eligible to act at this step (admin-configured, level-agnostic)."""
         return resolve_eligible_user_ids(self.session, step, document)
 
+    def _reject_inbound_correspondence_document(self, document_id: int) -> None:
+        """Refuse workflow submission for documents owned by an INBOUND correspondence.
+
+        The inbound record is the original incoming document and is never routed
+        for approval (see ``CorrespondenceService.submit_correspondence``); this
+        keeps ``POST /workflow-instances`` from achieving the same thing by
+        document ID. Both link paths are covered: ``Correspondence.document_id``
+        and ``CorrespondenceAttachment`` (uploaded originals — an outbound reply
+        also attaches the parent's inbound document as SUPPORTING, so *any*
+        linked inbound record blocks the document). Imported lazily: the
+        correspondence module defers its workflow imports the same way.
+        """
+        from correspondence.models import (
+            Correspondence,
+            CorrespondenceAttachment,
+            CorrespondenceDirection,
+        )
+
+        corr_ids = set(
+            self.session.exec(
+                select(Correspondence.id).where(Correspondence.document_id == document_id)
+            ).all()
+        )
+        corr_ids.update(
+            self.session.exec(
+                select(CorrespondenceAttachment.correspondence_id).where(
+                    CorrespondenceAttachment.document_id == document_id
+                )
+            ).all()
+        )
+        for corr_id in corr_ids:
+            corr = self.session.get(Correspondence, corr_id)
+            if corr is not None and corr.direction == CorrespondenceDirection.INBOUND:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Inbound correspondence documents cannot be submitted for "
+                        "approval; submit the outbound reply instead"
+                    ),
+                )
+
     def _to_instance_read(self, instance: WorkflowInstance) -> WorkflowInstanceRead:
         doc_title = instance.document.title if instance.document else None
         wf_name = instance.workflow_definition.name if instance.workflow_definition else None
@@ -186,6 +227,7 @@ class WorkflowInstanceService:
     ) -> WorkflowInstanceRead:
         document = ensure_document_access(self.session, current_user, data.document_id)
         ensure_document_user_level_access(self.session, current_user, document)
+        self._reject_inbound_correspondence_document(data.document_id)
 
         approved_instance = self.session.exec(
             select(WorkflowInstance).where(

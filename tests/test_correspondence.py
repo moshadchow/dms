@@ -828,21 +828,18 @@ class TestCorrespondenceWorkflowSync:
 
 
 class TestInboundSubmitWithAttachment:
-    def test_submit_inbound_without_document_uses_first_attachment(self, seeded_data, client, auth_headers):
+    """Submit-time document auto-fallback (first attachment when document_id is None).
+
+    Inbound records can no longer be submitted (see TestInboundSubmitRestriction),
+    so the fallback is exercised on an outbound draft whose auto-generated
+    backing-document link is cleared.
+    """
+
+    def test_submit_without_document_uses_first_attachment(self, seeded_data, client, auth_headers):
         test_client, engine, _ = client
-        wf_payload = {
-            "name": "Inbound Correspondence WF",
-            "description": "Inbound approval",
-            "steps": [{
-                "step_order": 1,
-                "step_name": "Review",
-                "approval_mode": "sequential",
-                "approvers": [{"user_id": seeded_data["admin_id"]}],
-            }],
-        }
-        wf_resp = test_client.post("/api/v1/workflows", json=wf_payload, headers=auth_headers["admin"])
-        assert wf_resp.status_code == 201
-        wf_def_id = wf_resp.json()["id"]
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Attachment Fallback WF"
+        )
 
         with Session(engine) as session:
             from users.models import User
@@ -850,13 +847,21 @@ class TestInboundSubmitWithAttachment:
             maker = session.get(User, seeded_data["maker_id"])
             svc = CorrespondenceService(session)
 
-            # Create inbound correspondence WITHOUT a document_id
+            # Outbound draft starts with an auto-generated backing document
             corr = svc.create_draft(
-                CorrespondenceCreate(**_corr_payload(seeded_data, direction="inbound", body=None)),
+                CorrespondenceCreate(**_corr_payload(seeded_data)),
                 maker,
             )
-            assert corr.document_id is None
-            assert corr.status == CorrespondenceStatus.RECEIVED
+            assert corr.document_id is not None
+            assert corr.status == CorrespondenceStatus.DRAFT
+
+            # Clear the link so submit must fall back to the first attachment
+            orm_corr = session.get(Correspondence, corr.id)
+            orm_corr.document_id = None
+            session.add(orm_corr)
+            session.commit()
+            session.refresh(orm_corr)
+            assert orm_corr.document_id is None
 
             # Upload an attachment via the service (creates Document + CorrespondenceAttachment)
             import io
@@ -870,7 +875,6 @@ class TestInboundSubmitWithAttachment:
             )
             svc.add_attachment(corr.id, upload_file, "original", maker)
 
-            # Add user level link so maker can access the document
             link = session.exec(
                 select(CorrespondenceAttachment)
                 .where(CorrespondenceAttachment.correspondence_id == corr.id)
@@ -883,9 +887,6 @@ class TestInboundSubmitWithAttachment:
             session.add(doc_link)
             session.commit()
 
-            # Verify document_id is still None on the correspondence
-            assert corr.document_id is None
-
             # Now submit — should auto-fallback to the attachment's document
             result = svc.submit_correspondence(
                 corr.id,
@@ -895,6 +896,256 @@ class TestInboundSubmitWithAttachment:
             assert result.workflow_instance_id is not None
             assert result.status == CorrespondenceStatus.SUBMITTED
             assert result.document_id == link.document_id
+
+
+class TestInboundSubmitRestriction:
+    """Inbound correspondence is the original incoming record and is never
+    submitted for approval — only the OUTBOUND reply is (service, API and the
+    generic workflow-instance endpoint)."""
+
+    def _create_inbound(self, engine, seeded_data):
+        from users.models import User
+
+        with Session(engine) as session:
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(
+                CorrespondenceCreate(
+                    **_corr_payload(
+                        seeded_data,
+                        direction="inbound",
+                        body=None,
+                        document_id=seeded_data["finance_document_id"],
+                    )
+                ),
+                maker,
+            )
+            assert corr.status == CorrespondenceStatus.RECEIVED
+            return corr.id
+
+    def test_submit_inbound_service_rejected(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Inbound Blocked WF"
+        )
+        corr_id = self._create_inbound(engine, seeded_data)
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            try:
+                svc.submit_correspondence(
+                    corr_id,
+                    CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                    maker,
+                )
+                assert False, "Should have raised"
+            except HTTPException as e:
+                assert e.status_code == 409
+                assert "inbound" in e.detail.lower()
+                assert "reply" in e.detail.lower()
+
+            orm_corr = session.get(Correspondence, corr_id)
+            assert orm_corr.workflow_instance_id is None
+            assert orm_corr.status == CorrespondenceStatus.RECEIVED
+
+    def test_submit_inbound_api_rejected(self, seeded_data, client, auth_headers):
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Inbound Blocked API WF"
+        )
+        corr_id = self._create_inbound(engine, seeded_data)
+
+        resp = test_client.post(
+            f"/api/v1/correspondences/{corr_id}/submit",
+            json={"workflow_definition_id": wf_def_id},
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 409
+        assert "inbound" in resp.json()["detail"].lower()
+
+    def test_submit_inbound_reply_rejected(self, seeded_data, client, auth_headers):
+        """A reply created with direction=inbound is still an inbound record."""
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Inbound Reply WF"
+        )
+        parent, maker = _make_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            maker = session.get(type(maker), maker.id)
+            svc = CorrespondenceService(session)
+            reply = svc.create_reply(
+                parent.id,
+                CorrespondenceCreate(**_corr_payload(seeded_data, direction="inbound", body=None)),
+                maker,
+            )
+            try:
+                svc.submit_reply(
+                    reply.id,
+                    CorrespondenceSubmit(workflow_definition_id=wf_def_id),
+                    maker,
+                )
+                assert False, "Should have raised"
+            except HTTPException as e:
+                assert e.status_code == 409
+                assert "inbound" in e.detail.lower()
+
+    def test_generic_instance_on_inbound_document_rejected(self, seeded_data, client, auth_headers):
+        """POST /workflow-instances must not route an inbound record's document."""
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Inbound Doc Blocked WF"
+        )
+        self._create_inbound(engine, seeded_data)
+
+        resp = test_client.post(
+            "/api/v1/workflow-instances",
+            json={
+                "document_id": seeded_data["finance_document_id"],
+                "workflow_definition_id": wf_def_id,
+            },
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 409
+        assert "inbound" in resp.json()["detail"].lower()
+
+    def test_generic_instance_on_inbound_attachment_rejected(self, seeded_data, client, auth_headers):
+        """Uploaded originals (attachment link only) are blocked too."""
+        import io
+
+        from starlette.datastructures import Headers
+        from starlette.datastructures import UploadFile as StarletteUploadFile
+        from users.models import User
+
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Inbound Attachment WF"
+        )
+        parent, _ = _make_inbound_parent(engine, seeded_data)
+
+        with Session(engine) as session:
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            upload_file = StarletteUploadFile(
+                file=io.BytesIO(b"incoming letter"),
+                filename="incoming.pdf",
+                headers=Headers({"content-type": "application/pdf"}),
+            )
+            att = svc.add_attachment(parent.id, upload_file, "original", maker)
+            doc_id = att.document_id
+
+        resp = test_client.post(
+            "/api/v1/workflow-instances",
+            json={"document_id": doc_id, "workflow_definition_id": wf_def_id},
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 409
+        assert "inbound" in resp.json()["detail"].lower()
+
+    def test_generic_instance_on_outbound_document_allowed(self, seeded_data, client, auth_headers):
+        """Control: outbound records keep their existing workflow submission."""
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Outbound Doc WF"
+        )
+
+        with Session(engine) as session:
+            from users.models import User
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = CorrespondenceService(session)
+            corr = svc.create_draft(CorrespondenceCreate(**_corr_payload(seeded_data)), maker)
+            doc_id = corr.document_id
+            assert doc_id is not None
+
+        resp = test_client.post(
+            "/api/v1/workflow-instances",
+            json={"document_id": doc_id, "workflow_definition_id": wf_def_id},
+            headers=auth_headers["maker"],
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_full_inbound_reply_approval_flow(self, seeded_data, client, auth_headers):
+        """End-to-end: INBOUND received → no submit → OUTBOUND reply →
+        submit-reply → approval workflow → status sync."""
+        test_client, engine, _ = client
+        wf_def_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Reply Approval E2E WF"
+        )
+
+        # 1. INBOUND record is received
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(
+                seeded_data,
+                direction="inbound",
+                body=None,
+                document_id=seeded_data["finance_document_id"],
+            ),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201, create.text
+        parent = create.json()
+        assert parent["direction"] == "inbound"
+        assert parent["status"] == "received"
+
+        # 2. Submit for Approval is refused on the inbound record
+        blocked = test_client.post(
+            f"/api/v1/correspondences/{parent['id']}/submit",
+            json={"workflow_definition_id": wf_def_id},
+            headers=auth_headers["maker"],
+        )
+        assert blocked.status_code == 409
+        assert "inbound" in blocked.json()["detail"].lower()
+
+        # 3. OUTBOUND reply is created against it
+        reply_resp = test_client.post(
+            f"/api/v1/correspondences/{parent['id']}/reply",
+            json=_corr_payload(seeded_data, direction="outbound"),
+            headers=auth_headers["maker"],
+        )
+        assert reply_resp.status_code == 201, reply_resp.text
+        reply = reply_resp.json()
+        assert reply["direction"] == "outbound"
+        assert reply["parent_correspondence_id"] == parent["id"]
+        assert reply["status"] == "draft"
+
+        # 4. The reply IS submitted for approval
+        submit = test_client.post(
+            f"/api/v1/correspondences/{reply['id']}/submit-reply",
+            json={"workflow_definition_id": wf_def_id},
+            headers=auth_headers["maker"],
+        )
+        assert submit.status_code == 200, submit.text
+        submitted = submit.json()
+        assert submitted["status"] in ("submitted", "pending_approval")
+        assert submitted["workflow_instance_id"] is not None
+
+        parent_detail = test_client.get(
+            f"/api/v1/correspondences/{parent['id']}", headers=auth_headers["maker"]
+        )
+        assert parent_detail.json()["response_received"] is True
+
+        # 5. Approval workflow runs unchanged and syncs the reply status
+        approve = test_client.post(
+            f"/api/v1/workflow-instances/{submitted['workflow_instance_id']}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert approve.status_code == 200, approve.text
+
+        final = test_client.get(
+            f"/api/v1/correspondences/{reply['id']}", headers=auth_headers["maker"]
+        )
+        assert final.json()["status"] == "approved"
+
+        # The inbound record still never entered a workflow
+        parent_final = test_client.get(
+            f"/api/v1/correspondences/{parent['id']}", headers=auth_headers["maker"]
+        )
+        assert parent_final.json()["workflow_instance_id"] is None
+        assert parent_final.json()["status"] == "received"
 
 
 # ── Lifecycle Tests (Complete/Archive) ───────────────

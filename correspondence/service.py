@@ -1000,6 +1000,23 @@ class CorrespondenceService:
         if not current_user.is_admin() and corr.created_by != current_user.id:
             raise HTTPException(status_code=403, detail="Only the author can submit")
 
+        # An inbound record is the original incoming document: it is never
+        # submitted for approval. Approval applies to the OUTBOUND reply (or an
+        # outbound/internal draft). Guard lives here — the single choke point
+        # for both POST /{id}/submit and POST /{id}/submit-reply (which
+        # delegates), so the rule cannot be bypassed through either endpoint.
+        if corr.direction == CorrespondenceDirection.INBOUND:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Inbound correspondence cannot be submitted for approval; "
+                    "create an outbound reply and submit that instead"
+                ),
+            )
+
+        # RECEIVED is only ever set on inbound records (see create_draft /
+        # create_reply), which the guard above already rejects; listed for
+        # completeness so status and direction rules stay readable together.
         if corr.status not in (
             CorrespondenceStatus.DRAFT,
             CorrespondenceStatus.RECEIVED,
