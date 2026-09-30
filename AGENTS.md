@@ -52,7 +52,9 @@ Fixture shapes (easy to guess wrong):
 
 Company-isolation regressions are the norm here; they get their own file (`test_audit_company.py`, `test_category_company.py`, `test_workflow_company.py`, `test_user_visibility.py`, `test_company_assignment.py`). Add new company-scoped features there rather than growing `test_<feature>.py`.
 
-**The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~2.5 min (54 tests) with PDF generation on top. Target a file/class while iterating, but budget a long run before declaring done.
+**The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~2.5 min (54 tests) with PDF generation on top. A full run is ~20 min. Target a file/class while iterating, but budget a long run before declaring done.
+
+**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::test_parallel_step_any_approve_completes`, `test_workflow_company.py::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 515 passed, 14 errors`. The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
 
 ## Module Convention
 `models.py` (SQLModel + read schemas) · `schemas.py` (write schemas, optional) · `service.py` (class-based, takes `Session`) · `router.py` (thin — business logic belongs in the service). Keep routers thin.
@@ -101,6 +103,7 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 - `workflow_history` is the approval ledger; `audit/` stays the system-wide log. Both are written, never a third mechanism.
 - Approver eligibility (`workflow/approval_policy.py`) is admin-configured and does **not** filter by User Level (`resolve_eligible_user_ids`; `list_pending` shows instances regardless of level — note `approval_service.act` refuses MAKER-role users). In exchange, an eligible approver at the current step of an in-flight instance can **read** the document even when its User Level links exclude them: memos do this unconditionally in `_check_view_access`, correspondence via `approver_view=True` on read paths only (detail, by-document, movements, replies, downloads) — mutations keep the strict level guard (`is_eligible_current_approver`). The grant lapses once the instance leaves `submitted`/`pending_approval`.
 - Activation does not validate that steps/approvers exist; step-order uniqueness is enforced only by a DB constraint.
+- **Duplicate-action guard** (`approval_service.py`): a repeated identical action by the same user at the same step → 409. Approve message is exactly `This record is already approved by the first approver.`; other actions get `You have already performed '<action>' on this step.` Enforced twice: pre-check `_ensure_no_duplicate_action` (friendly 409) and unique constraint `uq_workflow_actions_instance_step_user_action` on `workflow_actions (instance, step, acted_by, action)` (race backstop → `IntegrityError` → 409). **Guard ordering gotcha:** the instance-status guard (422, terminal status) and the eligibility guard (403) run *before* the duplicate check — so on a completed instance a repeat returns 422, not 409. To test duplicates you need an instance that stays actionable: a **sequential step with ≥2 approvers** (first approve leaves it `pending_approval`). Different action or different step never trips the guard.
 
 ## Module Notes
 - **`user_levels/`** — `DocumentUserLevelLink` gates document visibility in `documents/service.py`; Admin bypasses. A document with no links is visible to all linked levels; if no links exist at all, it is unconstrained.
@@ -119,6 +122,7 @@ Per-company credentials on the `Company` model, falling back to global `AZURE_*`
 ## Frontend Conventions
 - API modules import `apiClient` from `./client` (baseURL `/api/v1`, 401-refresh interceptor) — **not** `apiRoot` from `./base`. Paths are relative: `apiClient.get('/users')`.
 - Error display uses `getErrorMessage(err)` from `@/api/client`; toasts via `react-hot-toast`.
+- Toast placement: the global `<Toaster>` (`main.tsx`) is `top-right`. Workflow/approval error toasts pass a per-call `{ position: 'top-center' }` override (see `CorrespondenceDetailPage`, `MemoDetailPage`) — do not move the global Toaster to change one toast.
 - `store/authStore.ts` persists **only** tokens; the user object is refetched on every load by `ProtectedRoute` → `authApi.me()`.
 - `@` → `dms-app/src/`. Tailwind is used via `@tailwind` directives in `index.css` — **there is no `tailwind.config.js`**; use utilities directly.
 - Rich text is TipTap (see `dms-app/src/components/memo/`); sanitized HTML goes through `utils/sanitizeHtml.ts`.

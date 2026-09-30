@@ -2,10 +2,13 @@
 
 from sqlmodel import Session, select
 
+from core.security import create_access_token, hash_password
 from documents.models import Document, FileType
 from memos.models import Memo
 from memos.service import MemoService, render_markdown
 from memos.schemas import MemoCreate
+from users.models import Role, RoleName, User, UserRoleLink
+from workflow.models import WorkflowAction, WorkflowHistory
 
 
 # ── Helpers ──────────────────────────────────────
@@ -634,3 +637,298 @@ class TestApprovalHistoryStepName:
         actions = detail_resp.json()["actions"]
         assert len(actions) >= 1
         assert actions[0]["step_name"] == "Review"
+
+
+# ── Duplicate Action Protection (Step 26) ────────
+
+
+class TestMemoDuplicateApproval:
+    """HTTP-level duplicate guard on memo workflow instances (Step 26).
+
+    Memos approve through the shared workflow action endpoint; these tests
+    prove the per-step duplicate protection (409 + exact message + no extra
+    row) holds for memo instances without breaking sequential/parallel flow.
+    """
+
+    DUPLICATE_APPROVE_MESSAGE = "This record is already approved by the first approver."
+
+    def _make_checker(self, engine, seeded_data):
+        with Session(engine) as session:
+            role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+            assert role, "seeded CHECKER role missing"
+            user = User(
+                full_name="Memo Dup Checker",
+                email="memo.dup.checker@example.com",
+                hashed_password=hash_password("Test@1234"),
+                is_active=True,
+                user_level_id=seeded_data["high_level_id"],
+                company_id=seeded_data["company_id"],
+            )
+            session.add(user)
+            session.flush()
+            session.add(UserRoleLink(user_id=user.id, role_id=role.id))
+            session.commit()
+            checker_id = user.id
+        headers = {"Authorization": f"Bearer {create_access_token(checker_id)}"}
+        return checker_id, headers
+
+    def _create_workflow(self, test_client, auth_headers, *, name, steps):
+        resp = test_client.post(
+            "/api/v1/workflows",
+            json={"name": name, "description": "Memo dup guard", "steps": steps},
+            headers=auth_headers["admin"],
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    def _submit_memo(self, test_client, auth_headers, seeded_data, wf_id, *, subject):
+        create_resp = test_client.post(
+            "/api/v1/memos",
+            json=_memo_payload(seeded_data, subject=subject),
+            headers=auth_headers["maker"],
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        memo_id = create_resp.json()["id"]
+        doc_id = create_resp.json()["document_id"]
+        submit_resp = test_client.post(
+            f"/api/v1/memos/{memo_id}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+        assert submit_resp.status_code == 200, submit_resp.text
+        inst_resp = test_client.get(
+            f"/api/v1/workflow-instances/by-document/{doc_id}",
+            headers=auth_headers["admin"],
+        )
+        assert inst_resp.status_code == 200, inst_resp.text
+        return inst_resp.json()["id"]
+
+    def _action_rows(self, engine, instance_id):
+        with Session(engine) as session:
+            return session.exec(
+                select(WorkflowAction).where(
+                    WorkflowAction.workflow_instance_id == instance_id
+                )
+            ).all()
+
+    def _history_rows(self, engine, instance_id):
+        with Session(engine) as session:
+            return session.exec(
+                select(WorkflowHistory).where(
+                    WorkflowHistory.workflow_instance_id == instance_id
+                )
+            ).all()
+
+    def _sequential_instance(self, test_client, auth_headers, seeded_data, engine, name):
+        """Two-approver sequential step so the instance stays open after one approve."""
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client,
+            auth_headers,
+            name=name,
+            steps=[{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [
+                    {"user_id": seeded_data["admin_id"]},
+                    {"user_id": checker_id},
+                ],
+            }],
+        )
+        instance_id = self._submit_memo(
+            test_client, auth_headers, seeded_data, wf_id, subject=name
+        )
+        return instance_id, checker_headers
+
+    def test_first_approve_then_duplicate_rejected(self, seeded_data, client, auth_headers):
+        """DoD 1–2: first approve succeeds (1 row); repeat → 409 + exact message + no new row."""
+        test_client, engine, _ = client
+        instance_id, _ = self._sequential_instance(
+            test_client, auth_headers, seeded_data, engine, "Memo Dup Approve WF"
+        )
+
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "pending_approval"
+        rows = self._action_rows(engine, instance_id)
+        assert len(rows) == 1
+        history_before = len(self._history_rows(engine, instance_id))
+
+        second = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert second.status_code == 409, second.text
+        assert second.json()["detail"] == self.DUPLICATE_APPROVE_MESSAGE
+        assert len(self._action_rows(engine, instance_id)) == 1
+        assert len(self._history_rows(engine, instance_id)) == history_before
+
+    def test_duplicate_rejected_after_reload(self, seeded_data, client, auth_headers):
+        """DoD 3: a fresh detail fetch (page refresh) still reports 1 action; re-attempt rejected."""
+        test_client, engine, _ = client
+        instance_id, _ = self._sequential_instance(
+            test_client, auth_headers, seeded_data, engine, "Memo Dup Reload WF"
+        )
+
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+
+        detail = test_client.get(
+            f"/api/v1/workflow-instances/{instance_id}",
+            headers=auth_headers["admin"],
+        )
+        assert detail.status_code == 200
+        assert len(detail.json()["actions"]) == 1
+        assert detail.json()["current_step_id"] is not None
+
+        retry = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert retry.status_code == 409, retry.text
+        assert retry.json()["detail"] == self.DUPLICATE_APPROVE_MESSAGE
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+    def test_next_sequential_approver_approves(self, seeded_data, client, auth_headers):
+        """DoD 4: the guard only blocks the same user — the next approver still completes the memo."""
+        test_client, engine, _ = client
+        instance_id, checker_headers = self._sequential_instance(
+            test_client, auth_headers, seeded_data, engine, "Memo Dup Next Approver WF"
+        )
+
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "pending_approval"
+
+        second = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=checker_headers,
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "approved"
+        assert len(self._action_rows(engine, instance_id)) == 2
+
+    def test_return_works_then_duplicate_return_rejected(self, seeded_data, client, auth_headers):
+        """DoD 5: return succeeds once; a repeat return → 409 with the '<action>' message."""
+        test_client, engine, _ = client
+        instance_id, _ = self._sequential_instance(
+            test_client, auth_headers, seeded_data, engine, "Memo Dup Return WF"
+        )
+
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "return", "remarks": "needs changes"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "returned"
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+        second = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "return"},
+            headers=auth_headers["admin"],
+        )
+        assert second.status_code == 409, second.text
+        assert second.json()["detail"] == "You have already performed 'return' on this step."
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+    def test_clarify_then_approve_allowed_and_duplicate_clarify_rejected(
+        self, seeded_data, client, auth_headers
+    ):
+        """DoD 5: duplicate clarify → 409; clarify then approve (different actions) still allowed."""
+        test_client, engine, _ = client
+        instance_id, _ = self._sequential_instance(
+            test_client, auth_headers, seeded_data, engine, "Memo Dup Clarify WF"
+        )
+
+        clarify = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "clarify", "remarks": "please clarify"},
+            headers=auth_headers["admin"],
+        )
+        assert clarify.status_code == 200, clarify.text
+
+        duplicate_clarify = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "clarify"},
+            headers=auth_headers["admin"],
+        )
+        assert duplicate_clarify.status_code == 409, duplicate_clarify.text
+        assert duplicate_clarify.json()["detail"] == (
+            "You have already performed 'clarify' on this step."
+        )
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+        approve = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert approve.status_code == 200, approve.text
+        assert approve.json()["status"] == "pending_approval"
+        assert len(self._action_rows(engine, instance_id)) == 2
+
+    def test_parallel_multi_step_unaffected(self, seeded_data, client, auth_headers):
+        """DoD 6: parallel memo flows still advance — the guard only matches (instance, step, user, action)."""
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        approvers = [
+            {"user_id": seeded_data["admin_id"]},
+            {"user_id": checker_id},
+        ]
+        wf_id = self._create_workflow(
+            test_client,
+            auth_headers,
+            name="Memo Dup Parallel WF",
+            steps=[
+                {
+                    "step_order": 1,
+                    "step_name": "Parallel Review 1",
+                    "approval_mode": "parallel",
+                    "approvers": approvers,
+                },
+                {
+                    "step_order": 2,
+                    "step_name": "Parallel Review 2",
+                    "approval_mode": "parallel",
+                    "approvers": approvers,
+                },
+            ],
+        )
+        instance_id = self._submit_memo(
+            test_client, auth_headers, seeded_data, wf_id, subject="Parallel memo"
+        )
+
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "pending_approval"
+
+        second = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "approved"
+        assert len(self._action_rows(engine, instance_id)) == 2

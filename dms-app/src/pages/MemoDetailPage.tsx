@@ -27,6 +27,7 @@ export default function MemoDetailPage() {
   const memoId = Number(id)
   const hasRole = useAuthStore((s) => s.hasRole)
   const isMaker = hasRole('maker')
+  const user = useAuthStore((s) => s.user)
 
   const [memo, setMemo] = useState<MemoDetail | null>(null)
   const [instance, setInstance] = useState<WorkflowInstanceDetail | null>(null)
@@ -58,8 +59,15 @@ export default function MemoDetailPage() {
 
   const statusColor = (status: string | null) => STATUS_COLORS[status || 'draft'] || STATUS_COLORS.draft
 
+  const actedAtCurrentStep = (action: ApprovalAction): boolean =>
+    !!instance?.current_step_id &&
+    instance.actions.some(
+      (a) => a.acted_by === user?.id && a.action === action && a.workflow_step_id === instance.current_step_id,
+    )
+
   const handleAct = async () => {
     if (!instance) return
+    if (actedAtCurrentStep(selectedAction)) return
     setActing(true)
     try {
       const payload: WorkflowActionCreate = {
@@ -75,8 +83,7 @@ export default function MemoDetailPage() {
       const m = await memoApi.get(memoId)
       setMemo(m)
     } catch (err: any) {
-      const message = err?.response?.data?.detail || `Failed to ${selectedAction}`
-      toast.error(message)
+      toast.error(getErrorMessage(err), { position: 'top-center' })
     } finally {
       setActing(false)
     }
@@ -293,10 +300,20 @@ export default function MemoDetailPage() {
                   onChange={(e) => setSelectedAction(e.target.value as ApprovalAction)}
                   style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 6 }}
                 >
-                  <option value="approve">Approve</option>
-                  <option value="reject">Reject</option>
-                  <option value="return">Return</option>
+                  <option value="approve" disabled={actedAtCurrentStep('approve')}>Approve</option>
+                  <option value="reject" disabled={actedAtCurrentStep('reject')}>Reject</option>
+                  <option value="return" disabled={actedAtCurrentStep('return')}>Return</option>
                 </select>
+                {actedAtCurrentStep('approve') && (
+                  <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: '#92400e' }}>
+                    You have already approved this step — it is awaiting the next approver.
+                  </p>
+                )}
+                {actedAtCurrentStep(selectedAction) && !actedAtCurrentStep('approve') && (
+                  <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: '#92400e' }}>
+                    You have already performed this action on this step.
+                  </p>
+                )}
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px' }}>Remarks</label>
@@ -310,7 +327,7 @@ export default function MemoDetailPage() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                 <Button variant="secondary" size="sm" onClick={() => setActionModal({ open: false })}>Cancel</Button>
-                <Button onClick={handleAct} disabled={acting}>{acting ? 'Acting...' : 'Confirm'}</Button>
+                <Button onClick={handleAct} disabled={acting || actedAtCurrentStep(selectedAction)}>{acting ? 'Acting...' : 'Confirm'}</Button>
               </div>
             </div>
           </div>
