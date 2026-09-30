@@ -94,6 +94,7 @@ export interface WorkflowInstance {
   document_type: string | null
   current_step_order: number
   current_step_name: string | null
+  current_step_id?: number | null
   status: WorkflowStatus
   submitted_by: number
   submitted_by_name: string | null

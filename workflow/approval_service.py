@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import BackgroundTasks, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from audit.models import AuditAction, AuditModule
@@ -101,6 +102,42 @@ class ApprovalActionService:
         """Resolve eligible user IDs for a step (delegates to shared policy)."""
         return resolve_eligible_user_ids(self.session, step, document)
 
+    @staticmethod
+    def _duplicate_action_message(action: ApprovalAction) -> str:
+        if action == ApprovalAction.APPROVE:
+            return "This record is already approved by the first approver."
+        return f"You have already performed '{action.value}' on this step."
+
+    def _ensure_no_duplicate_action(
+        self,
+        instance: WorkflowInstance,
+        step: WorkflowStep,
+        user_id: int,
+        action: ApprovalAction,
+    ) -> None:
+        """Reject a repeated identical action by the same user at the same step."""
+        existing = self.session.exec(
+            select(WorkflowAction).where(
+                WorkflowAction.workflow_instance_id == instance.id,
+                WorkflowAction.workflow_step_id == step.id,
+                WorkflowAction.acted_by == user_id,
+                WorkflowAction.action == action,
+            )
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=self._duplicate_action_message(action),
+            )
+
+    def _handle_integrity_error(self, exc: IntegrityError, action: ApprovalAction) -> None:
+        """Race backstop: the unique constraint rejected a duplicate action row."""
+        self.session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=self._duplicate_action_message(action),
+        ) from exc
+
     def _get_instance_or_404(self, instance_id: int) -> WorkflowInstance:
         instance = self.session.get(WorkflowInstance, instance_id)
         if not instance:
@@ -164,6 +201,8 @@ class ApprovalActionService:
                 detail="You are not an eligible approver for this step",
             )
 
+        self._ensure_no_duplicate_action(instance, current_step, current_user.id, data.action)
+
         if data.action == ApprovalAction.APPROVE and current_user.id == instance.submitted_by:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -189,7 +228,10 @@ class ApprovalActionService:
             signature_id=data.signature_id,
         )
         self.session.add(action_record)
-        self.session.flush()
+        try:
+            self.session.flush()
+        except IntegrityError as exc:
+            self._handle_integrity_error(exc, data.action)
 
         old_status = instance.status
         step_advanced = False
@@ -253,7 +295,10 @@ class ApprovalActionService:
             company_id=instance.workflow_definition.company_id if instance.workflow_definition else None,
         )
 
-        self.session.commit()
+        try:
+            self.session.commit()
+        except IntegrityError as exc:
+            self._handle_integrity_error(exc, data.action)
         self.session.refresh(instance)
 
         # Enqueue email notifications after commit

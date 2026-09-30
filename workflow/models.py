@@ -3,6 +3,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
+from sqlalchemy import UniqueConstraint
 
 if TYPE_CHECKING:
     from company_profile.models import Company
@@ -192,6 +193,15 @@ class WorkflowActionBase(SQLModel):
 
 class WorkflowAction(WorkflowActionBase, table=True):
     __tablename__ = "workflow_actions"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_instance_id",
+            "workflow_step_id",
+            "acted_by",
+            "action",
+            name="uq_workflow_actions_instance_step_user_action",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     workflow_instance_id: int = Field(foreign_key="workflow_instances.id", index=True, nullable=False)
@@ -356,6 +366,7 @@ class WorkflowInstanceRead(SQLModel):
     document_type: Optional[str] = None
     current_step_order: int
     current_step_name: Optional[str] = None
+    current_step_id: Optional[int] = None
     status: WorkflowStatus
     submitted_by: int
     submitted_by_name: Optional[str] = None

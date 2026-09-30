@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { correspondenceApi } from '@/api/correspondence.api'
+import { workflowApi } from '@/api/workflow.api'
 import type { CorrespondenceDetail, DispatchMethod } from '@/types/correspondence.types'
+import type { WorkflowInstanceDetail } from '@/types/workflow.types'
 import CorrespondenceTimeline from '@/components/correspondence/CorrespondenceTimeline'
 import CorrespondenceResponsePanel from '@/components/correspondence/CorrespondenceResponsePanel'
 import CorrespondenceDispatchDialog from '@/components/correspondence/CorrespondenceDispatchDialog'
@@ -53,6 +55,8 @@ export default function CorrespondenceDetailPage() {
   const [repliesRefreshKey, setRepliesRefreshKey] = useState(0)
   const [approvalRemarks, setApprovalRemarks] = useState('')
   const [approvalSignatureId, setApprovalSignatureId] = useState<number | null>(null)
+  const [wfInstance, setWfInstance] = useState<WorkflowInstanceDetail | null>(null)
+  const [acting, setActing] = useState(false)
   const user = useAuthStore(s => s.user)
   const { canCreate, canUpdate, canDownload } = usePermissions()
 
@@ -71,6 +75,24 @@ export default function CorrespondenceDetailPage() {
   }
 
   useEffect(() => { fetchCorr() }, [id])
+
+  const fetchWfInstance = async (instanceId: number) => {
+    try {
+      const detail = await workflowApi.getInstance(instanceId)
+      setWfInstance(detail)
+    } catch {
+      setWfInstance(null)
+    }
+  }
+
+  useEffect(() => {
+    if (corr?.workflow_instance_id && corr.status === 'pending_approval') {
+      const instanceId = corr.workflow_instance_id
+      workflowApi.getInstance(instanceId)
+        .then(detail => { setWfInstance(detail) })
+        .catch(() => { setWfInstance(null) })
+    }
+  }, [corr?.workflow_instance_id, corr?.status])
 
   const handleDispatch = async (data: { dispatch_method: DispatchMethod; dispatch_reference?: string; remarks?: string }) => {
     if (!corr) return
@@ -108,7 +130,8 @@ export default function CorrespondenceDetailPage() {
   }
 
   const actOnWorkflow = async (action: 'approve' | 'reject' | 'return', remarks?: string) => {
-    if (!corr || !corr.workflow_instance_id) return
+    if (!corr || !corr.workflow_instance_id || acting) return
+    setActing(true)
     try {
       await correspondenceApi.actOnWorkflowInstance(
         corr.workflow_instance_id,
@@ -118,11 +141,21 @@ export default function CorrespondenceDetailPage() {
       )
       toast.success(`Correspondence ${action}${action === 'approve' ? 'd' : 'ed'}`)
       setApprovalRemarks('')
-      fetchCorr()
+      await fetchCorr()
+      await fetchWfInstance(corr.workflow_instance_id)
     } catch (err) {
-      toast.error(getErrorMessage(err))
+      toast.error(getErrorMessage(err), { position: 'top-center' })
+      fetchWfInstance(corr.workflow_instance_id)
+    } finally {
+      setActing(false)
     }
   }
+
+  const actedAtCurrentStep = (action: 'approve' | 'reject' | 'return'): boolean =>
+    !!wfInstance?.current_step_id
+    && wfInstance.actions.some(
+      a => a.acted_by === user?.id && a.action === action && a.workflow_step_id === wfInstance.current_step_id,
+    )
 
   const handleApprove = () => actOnWorkflow('approve', approvalRemarks)
   const handleReject = () => actOnWorkflow('reject', approvalRemarks)
@@ -247,10 +280,15 @@ export default function CorrespondenceDetailPage() {
             <SignaturePicker value={approvalSignatureId} onChange={setApprovalSignatureId} />
           </div>
           <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-            <Button variant="outline" size="sm" onClick={handleReturn}>Return</Button>
-            <Button variant="outline" size="sm" onClick={handleReject}>Reject</Button>
-            <Button size="sm" onClick={handleApprove}>Approve</Button>
+            <Button variant="outline" size="sm" loading={acting} disabled={actedAtCurrentStep('return')} onClick={handleReturn}>Return</Button>
+            <Button variant="outline" size="sm" loading={acting} disabled={actedAtCurrentStep('reject')} onClick={handleReject}>Reject</Button>
+            <Button size="sm" loading={acting} disabled={actedAtCurrentStep('approve')} onClick={handleApprove}>Approve</Button>
           </div>
+          {actedAtCurrentStep('approve') && (
+            <p style={{ margin: '8px 0 0', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              You have already approved this step — it is awaiting the next approver.
+            </p>
+          )}
         </div>
       )}
 

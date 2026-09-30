@@ -134,7 +134,7 @@ export default function PendingApprovalPage() {
       refreshPendingCount()
     } catch (err: any) {
       const msg = err?.response?.data?.detail || `Failed to ${action} document`
-      toast.error(msg)
+      toast.error(msg, { position: 'top-center' })
     } finally {
       setSubmitting(false)
     }

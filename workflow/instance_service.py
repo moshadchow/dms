@@ -112,6 +112,7 @@ class WorkflowInstanceService:
 
         current_step = self._get_current_step(instance)
         step_name = current_step.step_name if current_step else None
+        step_id = current_step.id if current_step else None
 
         return WorkflowInstanceRead(
             id=instance.id,
@@ -122,6 +123,7 @@ class WorkflowInstanceService:
             document_type=doc_type,
             current_step_order=instance.current_step_order,
             current_step_name=step_name,
+            current_step_id=step_id,
             status=instance.status,
             submitted_by=instance.submitted_by,
             submitted_by_name=submitter_name,

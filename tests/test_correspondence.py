@@ -2987,3 +2987,202 @@ class TestDownloadFinalSignatures:
             assert "c.png" in resolved.name
 
 
+
+
+# -- Duplicate approval guard: OUTBOUND sequential --
+
+
+class TestOutboundDuplicateApproval:
+    """The spec scenario: sequential OUTBOUND workflow, approver 1 approves,
+    tries again -> 409 with the required warning, no second workflow_actions
+    row, and approver 2 can still complete the step."""
+
+    DUPLICATE_MESSAGE = "This record is already approved by the first approver."
+
+    def _make_checker(self, engine, seeded_data):
+        from core.security import create_access_token, hash_password
+        from users.models import Role, RoleName, User, UserCategoryLink, UserRoleLink
+
+        with Session(engine) as session:
+            role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+            assert role, "seeded CHECKER role missing"
+            user = User(
+                full_name="Outbound Dup Checker",
+                email="outbound.dup.checker@example.com",
+                hashed_password=hash_password("Test@1234"),
+                is_active=True,
+                user_level_id=seeded_data["medium_level_id"],
+                company_id=seeded_data["company_id"],
+            )
+            session.add(user)
+            session.flush()
+            session.add(UserRoleLink(user_id=user.id, role_id=role.id))
+            session.add(
+                UserCategoryLink(
+                    user_id=user.id, category_id=seeded_data["finance_category_id"]
+                )
+            )
+            session.commit()
+            checker_id = user.id
+        headers = {"Authorization": f"Bearer {create_access_token(checker_id)}"}
+        return headers
+
+    def _create_outbound_workflow(self, test_client, auth_headers, seeded_data, checker_id):
+        payload = {
+            "name": "Outbound Dup Guard WF",
+            "description": "Outbound sequential approval",
+            "steps": [{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [
+                    {"user_id": seeded_data["admin_id"]},
+                    {"user_id": checker_id},
+                ],
+            }],
+        }
+        resp = test_client.post(
+            "/api/v1/workflows", json=payload, headers=auth_headers["admin"]
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    def _instance_id(self, engine, document_id):
+        from workflow.models import WorkflowInstance
+
+        with Session(engine) as session:
+            instance = session.exec(
+                select(WorkflowInstance).where(
+                    WorkflowInstance.document_id == document_id
+                )
+            ).first()
+            assert instance
+            return instance.id
+
+    def _action_rows(self, engine, instance_id):
+        from workflow.models import WorkflowAction
+
+        with Session(engine) as session:
+            return session.exec(
+                select(WorkflowAction).where(
+                    WorkflowAction.workflow_instance_id == instance_id
+                )
+            ).all()
+
+    def _act(self, test_client, instance_id, headers, action="approve"):
+        return test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": action, "remarks": "duplicate guard test"},
+            headers=headers,
+        )
+
+    def test_outbound_duplicate_approval_rejected(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        checker_headers = self._make_checker(engine, seeded_data)
+        with Session(engine) as session:
+            from users.models import User
+            checker_id = session.exec(
+                select(User).where(User.email == "outbound.dup.checker@example.com")
+            ).one().id
+
+        wf_id = self._create_outbound_workflow(
+            test_client, auth_headers, seeded_data, checker_id
+        )
+
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, subject="Outbound Dup Guard"),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201, create.text
+        corr = create.json()
+        assert corr["direction"] == "outbound"
+
+        sub = test_client.post(
+            f"/api/v1/correspondences/{corr['id']}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+        assert sub.status_code == 200, sub.text
+
+        instance_id = self._instance_id(engine, corr["document_id"])
+
+        # Approver 1 approves -> success, exactly one approval row.
+        first = self._act(test_client, instance_id, auth_headers["admin"])
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "pending_approval"
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+        # Approver 1 tries again -> rejected with the required warning.
+        dup = self._act(test_client, instance_id, auth_headers["admin"])
+        assert dup.status_code == 409
+        assert dup.json()["detail"] == self.DUPLICATE_MESSAGE
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+        # Refresh/reopen does not unlock the previous approver.
+        detail = test_client.get(
+            f"/api/v1/correspondences/{corr['id']}",
+            headers=auth_headers["maker"],
+        )
+        assert detail.status_code == 200
+        assert detail.json()["status"] == "pending_approval"
+        again = self._act(test_client, instance_id, auth_headers["admin"])
+        assert again.status_code == 409
+        assert len(self._action_rows(engine, instance_id)) == 1
+
+        # Next sequential approver can still approve normally.
+        second = self._act(test_client, instance_id, checker_headers)
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "approved"
+        assert len(self._action_rows(engine, instance_id)) == 2
+
+        # Correspondence status syncs to approved.
+        final = test_client.get(
+            f"/api/v1/correspondences/{corr['id']}",
+            headers=auth_headers["maker"],
+        )
+        assert final.json()["status"] == "approved"
+
+    def test_outbound_other_actions_unaffected(
+        self, client, auth_headers, seeded_data
+    ):
+        """Return/Reject paths keep working alongside the duplicate guard."""
+        test_client, engine, _ = client
+        checker_headers = self._make_checker(engine, seeded_data)
+        with Session(engine) as session:
+            from users.models import User
+            checker_id = session.exec(
+                select(User).where(User.email == "outbound.dup.checker@example.com")
+            ).one().id
+
+        wf_id = self._create_outbound_workflow(
+            test_client, auth_headers, seeded_data, checker_id
+        )
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, subject="Outbound Return Guard"),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201, create.text
+        corr = create.json()
+        sub = test_client.post(
+            f"/api/v1/correspondences/{corr['id']}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+        assert sub.status_code == 200, sub.text
+        instance_id = self._instance_id(engine, corr["document_id"])
+
+        # Approver 1 returns -> allowed; a second identical return -> 409.
+        ret = self._act(
+            test_client, instance_id, auth_headers["admin"], action="return"
+        )
+        assert ret.status_code == 200, ret.text
+        assert ret.json()["status"] == "returned"
+        dup_ret = self._act(
+            test_client, instance_id, auth_headers["admin"], action="return"
+        )
+        assert dup_ret.status_code == 409
+        assert len(self._action_rows(engine, instance_id)) == 1

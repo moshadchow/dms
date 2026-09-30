@@ -1101,6 +1101,296 @@ class TestApprovalActionService:
             assert result.status == WorkflowStatus.APPROVED
 
 
+# ── Duplicate action guard ─────────────────────
+
+
+class TestDuplicateApprovalGuard:
+    """Same approver, same step, same action → 409 and no second row."""
+
+    def _setup(self, session, seeded_data, *, wf_name="Duplicate Guard WF"):
+        from users.models import Role, RoleName, User, UserRoleLink
+        from workflow.schemas import WorkflowDefinitionCreate
+
+        admin = session.get(User, seeded_data["admin_id"])
+        maker = session.get(User, seeded_data["maker_id"])
+
+        role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+        assert role, "seeded CHECKER role missing"
+        checker = User(
+            full_name="Duplicate Guard Checker",
+            email="dup.guard@example.com",
+            hashed_password="x",
+            is_active=True,
+            user_level_id=seeded_data["high_level_id"],
+            company_id=seeded_data["company_id"],
+        )
+        session.add(checker)
+        session.flush()
+        session.add(UserRoleLink(user_id=checker.id, role_id=role.id))
+        session.commit()
+
+        wfs = WorkflowDefinitionService(session)
+        payload = WorkflowDefinitionCreate(
+            name=wf_name,
+            steps=[{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [
+                    {"user_id": seeded_data["admin_id"]},
+                    {"user_id": checker.id},
+                ],
+            }],
+        )
+        wf = wfs.create_definition(payload, current_user=admin)
+
+        instance_svc = WorkflowInstanceService(session)
+        instance = instance_svc.submit_instance(
+            WorkflowInstanceCreate(
+                document_id=seeded_data["finance_document_id"],
+                workflow_definition_id=wf.id,
+            ),
+            current_user=maker,
+        )
+        return instance, admin, checker
+
+    @staticmethod
+    def _count(session, model, instance_id):
+        return len(session.exec(
+            select(model).where(model.workflow_instance_id == instance_id)
+        ).all())
+
+    def test_first_approve_succeeds_with_single_row(self, seeded_data, client):
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+
+            result = svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            # Step stays open: the second sequential approver has not acted.
+            assert result.status == WorkflowStatus.PENDING_APPROVAL
+            assert self._count(session, WorkflowAction, instance.id) == 1
+
+    def test_duplicate_approve_rejected_no_new_row(self, seeded_data, client):
+        from fastapi import HTTPException
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            history_before = self._count(session, WorkflowHistory, instance.id)
+
+            with pytest.raises(HTTPException) as exc_info:
+                svc.act_on_instance(
+                    instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                    current_user=admin,
+                )
+            assert exc_info.value.status_code == 409
+            assert exc_info.value.detail == (
+                "This record is already approved by the first approver."
+            )
+            assert self._count(session, WorkflowAction, instance.id) == 1
+            assert self._count(session, WorkflowHistory, instance.id) == history_before
+
+    def test_duplicate_rejected_after_page_reload(self, seeded_data, client):
+        """Server-side state only: a fresh session (page refresh) cannot approve again."""
+        from fastapi import HTTPException
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            ApprovalActionService(session).act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            instance_id = instance.id
+            admin_id = admin.id
+
+        with Session(engine) as session2:
+            from users.models import User
+            admin2 = session2.get(User, admin_id)
+            with pytest.raises(HTTPException) as exc_info:
+                ApprovalActionService(session2).act_on_instance(
+                    instance_id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                    current_user=admin2,
+                )
+            assert exc_info.value.status_code == 409
+            assert self._count(session2, WorkflowAction, instance_id) == 1
+
+    def test_next_sequential_approver_can_approve(self, seeded_data, client):
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            result = svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=checker,
+            )
+            assert result.status == WorkflowStatus.APPROVED
+            assert self._count(session, WorkflowAction, instance.id) == 2
+
+    def test_race_backstop_unique_constraint_maps_to_409(
+        self, seeded_data, client, monkeypatch
+    ):
+        """Simulates two requests passing the pre-check concurrently: the DB
+        unique constraint rejects the second insert and it maps to 409."""
+        from fastapi import HTTPException
+
+        _, engine, _ = client
+        monkeypatch.setattr(
+            ApprovalActionService,
+            "_ensure_no_duplicate_action",
+            lambda self, instance, step, user_id, action: None,
+        )
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                svc.act_on_instance(
+                    instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                    current_user=admin,
+                )
+            assert exc_info.value.status_code == 409
+            assert exc_info.value.detail == (
+                "This record is already approved by the first approver."
+            )
+            assert self._count(session, WorkflowAction, instance.id) == 1
+
+    def test_clarify_then_approve_allowed(self, seeded_data, client):
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.CLARIFY),
+                current_user=admin,
+            )
+            result = svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            assert result.status == WorkflowStatus.PENDING_APPROVAL
+            assert self._count(session, WorkflowAction, instance.id) == 2
+
+    def test_duplicate_clarify_rejected(self, seeded_data, client):
+        from fastapi import HTTPException
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.CLARIFY),
+                current_user=admin,
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                svc.act_on_instance(
+                    instance.id, WorkflowActionCreate(action=ApprovalAction.CLARIFY),
+                    current_user=admin,
+                )
+            assert exc_info.value.status_code == 409
+            assert exc_info.value.detail == (
+                "You have already performed 'clarify' on this step."
+            )
+            assert self._count(session, WorkflowAction, instance.id) == 1
+
+    def test_reject_by_second_approver_still_works(self, seeded_data, client):
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            result = svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.REJECT),
+                current_user=checker,
+            )
+            assert result.status == WorkflowStatus.REJECTED
+            assert self._count(session, WorkflowAction, instance.id) == 2
+
+    def test_return_then_duplicate_return_rejected(self, seeded_data, client):
+        from fastapi import HTTPException
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            instance, admin, checker = self._setup(session, seeded_data)
+            svc = ApprovalActionService(session)
+            svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.RETURN),
+                current_user=admin,
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                svc.act_on_instance(
+                    instance.id, WorkflowActionCreate(action=ApprovalAction.RETURN),
+                    current_user=admin,
+                )
+            assert exc_info.value.status_code == 409
+            assert self._count(session, WorkflowAction, instance.id) == 1
+
+    def test_parallel_multi_step_same_approver_unaffected(self, seeded_data, client):
+        """Parallel steps advance on first approve — the same approver acting on
+        the next step is a different step and must not be blocked."""
+        from users.models import User
+        from workflow.schemas import WorkflowDefinitionCreate
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            admin = session.get(User, seeded_data["admin_id"])
+            maker = session.get(User, seeded_data["maker_id"])
+
+            wfs = WorkflowDefinitionService(session)
+            payload = WorkflowDefinitionCreate(
+                name="Parallel Multi-Step WF",
+                steps=[{
+                    "step_order": order,
+                    "step_name": f"Parallel {order}",
+                    "approval_mode": "parallel",
+                    "approvers": [{"user_id": seeded_data["admin_id"]}],
+                } for order in (1, 2)],
+            )
+            wf = wfs.create_definition(payload, current_user=admin)
+
+            instance = WorkflowInstanceService(session).submit_instance(
+                WorkflowInstanceCreate(
+                    document_id=seeded_data["finance_document_id"],
+                    workflow_definition_id=wf.id,
+                ),
+                current_user=maker,
+            )
+            svc = ApprovalActionService(session)
+            first = svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            assert first.current_step_order == 2
+            second = svc.act_on_instance(
+                instance.id, WorkflowActionCreate(action=ApprovalAction.APPROVE),
+                current_user=admin,
+            )
+            assert second.status == WorkflowStatus.APPROVED
+            assert self._count(session, WorkflowAction, instance.id) == 2
+
+
 # ── API Tests: Workflow Instances ──────────────
 
 
@@ -1249,3 +1539,151 @@ class TestWorkflowInstanceAPI:
         )
         assert response.status_code == 200
         assert response.json()["status"] == "approved"
+
+
+class TestDuplicateApprovalAPI:
+    """HTTP-level duplicate guard: 409 + exact message + no extra row."""
+
+    DUPLICATE_MESSAGE = "This record is already approved by the first approver."
+
+    def _make_checker(self, engine, seeded_data):
+        from core.security import create_access_token, hash_password
+        from users.models import Role, RoleName, User, UserRoleLink
+
+        with Session(engine) as session:
+            role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+            assert role, "seeded CHECKER role missing"
+            user = User(
+                full_name="API Dup Checker",
+                email="api.dup.checker@example.com",
+                hashed_password=hash_password("Test@1234"),
+                is_active=True,
+                user_level_id=seeded_data["high_level_id"],
+                company_id=seeded_data["company_id"],
+            )
+            session.add(user)
+            session.flush()
+            session.add(UserRoleLink(user_id=user.id, role_id=role.id))
+            session.commit()
+            checker_id = user.id
+        headers = {"Authorization": f"Bearer {create_access_token(checker_id)}"}
+        return checker_id, headers
+
+    def _setup_instance(self, test_client, auth_headers, seeded_data, checker_id, name):
+        payload = _create_workflow_payload(
+            name=name,
+            steps=[{
+                "step_order": 1,
+                "step_name": "Review",
+                "approval_mode": "sequential",
+                "approvers": [
+                    {"user_id": seeded_data["admin_id"]},
+                    {"user_id": checker_id},
+                ],
+            }],
+        )
+        wf_resp = test_client.post(
+            "/api/v1/workflows", json=payload, headers=auth_headers["admin"],
+        )
+        assert wf_resp.status_code == 201, wf_resp.text
+        inst_resp = test_client.post(
+            "/api/v1/workflow-instances",
+            json={
+                "document_id": seeded_data["finance_document_id"],
+                "workflow_definition_id": wf_resp.json()["id"],
+            },
+            headers=auth_headers["maker"],
+        )
+        assert inst_resp.status_code == 201, inst_resp.text
+        return inst_resp.json()["id"]
+
+    def _action_rows(self, engine, instance_id):
+        with Session(engine) as session:
+            return session.exec(
+                select(WorkflowAction).where(
+                    WorkflowAction.workflow_instance_id == instance_id
+                )
+            ).all()
+
+    def test_duplicate_approve_api_rejected_next_approver_works(
+        self, seeded_data, client, auth_headers
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        inst_id = self._setup_instance(
+            test_client, auth_headers, seeded_data, checker_id,
+            "API Dup Guard WF",
+        )
+
+        # 1. First approver approves once → success, exactly one row.
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{inst_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "pending_approval"
+        assert len(self._action_rows(engine, inst_id)) == 1
+
+        # 2./3. Same approver again → 409 with the required message, no new row.
+        dup = test_client.post(
+            f"/api/v1/workflow-instances/{inst_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert dup.status_code == 409
+        assert dup.json()["detail"] == self.DUPLICATE_MESSAGE
+        assert len(self._action_rows(engine, inst_id)) == 1
+
+        # 5. Reopening the page (fresh GET) does not change server state.
+        detail = test_client.get(
+            f"/api/v1/workflow-instances/{inst_id}", headers=auth_headers["admin"],
+        )
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["current_step_id"] is not None
+        assert len(body["actions"]) == 1
+        assert body["actions"][0]["action"] == "approve"
+        assert body["actions"][0]["acted_by"] == seeded_data["admin_id"]
+        again = test_client.post(
+            f"/api/v1/workflow-instances/{inst_id}/actions",
+            json={"action": "approve"},
+            headers=auth_headers["admin"],
+        )
+        assert again.status_code == 409
+
+        # 4. Next sequential approver approves normally.
+        second = test_client.post(
+            f"/api/v1/workflow-instances/{inst_id}/actions",
+            json={"action": "approve"},
+            headers=checker_headers,
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "approved"
+        assert len(self._action_rows(engine, inst_id)) == 2
+
+    def test_duplicate_reject_api_rejected(
+        self, seeded_data, client, auth_headers
+    ):
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        inst_id = self._setup_instance(
+            test_client, auth_headers, seeded_data, checker_id,
+            "API Dup Reject WF",
+        )
+        first = test_client.post(
+            f"/api/v1/workflow-instances/{inst_id}/actions",
+            json={"action": "reject", "remarks": "no"},
+            headers=auth_headers["admin"],
+        )
+        assert first.status_code == 200, first.text
+
+        dup = test_client.post(
+            f"/api/v1/workflow-instances/{inst_id}/actions",
+            json={"action": "reject"},
+            headers=auth_headers["admin"],
+        )
+        # Instance is already 'rejected' → status guard fires first (422), and
+        # no duplicate row exists either way.
+        assert dup.status_code in (409, 422)
+        assert len(self._action_rows(engine, inst_id)) == 1
