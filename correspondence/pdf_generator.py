@@ -1,10 +1,13 @@
 """Correspondence PDF Generator
 
 Generates a final PDF for correspondence with content, metadata, and signatures.
-Follows the same pattern as memos/pdf_generator.py but with correspondence-specific layout.
+Signature resolution (recorded FK first, else the user's active signature) is
+delegated to signatures/service.py — the same helpers the memo PDF uses — so the
+two generators can never diverge.
 """
 import html
 import io
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -31,11 +34,13 @@ from correspondence.models import Correspondence, CorrespondenceStatus
 from users.models import User
 from workflow.models import WorkflowInstance, WorkflowStatus, WorkflowAction, WorkflowStep
 
+logger = logging.getLogger(__name__)
 
-def _load_signature_image(sig_path: str, company: Company) -> Optional[Image]:
+
+def _load_signature_image(path: Path) -> Optional[Image]:
+    """Build a scaled reportlab Image from an already-resolved signature file."""
     try:
-        abs_path = storage_service.resolve_path(company, sig_path)
-        img = Image(str(abs_path))
+        img = Image(str(path))
         max_w, max_h = 180 * mm, 30 * mm
         img_w, img_h = img.drawWidth, img.drawHeight
         ratio = min(max_w / img_w, max_h / img_h)
@@ -43,6 +48,7 @@ def _load_signature_image(sig_path: str, company: Company) -> Optional[Image]:
         img.drawHeight = img_h * ratio
         return img
     except Exception:
+        logger.warning("Failed to render signature image %s", path, exc_info=True)
         return None
 
 
@@ -249,22 +255,44 @@ def generate_correspondence_pdf(
 
     story.append(Spacer(1, 12))
 
-    # Approvals / Signatures
+    # Signatures — recorded FK first, else the user's active signature; both
+    # resolution steps live in signatures/service.py (shared with the memo PDF).
+    from signatures.service import SignatureService
+
+    sig_service = SignatureService(session)
+
+    def _append_signature(signature_id: Optional[int], fallback_user_id: Optional[int]) -> None:
+        sig = sig_service.select_signature(
+            signature_id=signature_id,
+            fallback_user_id=fallback_user_id,
+        )
+        if sig is None:
+            story.append(Paragraph("[No signature on file]", small_style))
+        else:
+            path = sig_service.resolve_file_path(sig)
+            sig_img = _load_signature_image(path) if path else None
+            if sig_img is not None:
+                story.append(sig_img)
+            else:
+                logger.warning(
+                    "Signature %s (user %s) could not be loaded for correspondence %s",
+                    sig.id, sig.user_id, correspondence.reference_number,
+                )
+                story.append(Paragraph("[Signature image unavailable]", small_style))
+        story.append(Spacer(1, 6))
+
+    # Author signature (renders even before submission)
+    story.append(Paragraph("Author Signature:", small_style))
+    _append_signature(
+        correspondence.author_signature_id,
+        correspondence.created_by,
+    )
+
+    # Approvals
     if correspondence.workflow_instance_id:
         instance = session.get(WorkflowInstance, correspondence.workflow_instance_id)
         if instance:
             story.append(Paragraph("<b>Approvals</b>", heading_style))
-
-            # Author signature
-            if correspondence.author_signature_id:
-                from workflow.models import Signature
-                sig = session.get(Signature, correspondence.author_signature_id)
-                if sig:
-                    sig_img = _load_signature_image(sig.file_path, company)
-                    if sig_img:
-                        story.append(Paragraph("Author Signature:", small_style))
-                        story.append(sig_img)
-                        story.append(Spacer(1, 6))
 
             # Workflow actions
             actions = session.exec(
@@ -275,7 +303,7 @@ def generate_correspondence_pdf(
 
             for action in actions:
                 step = session.get(WorkflowStep, action.workflow_step_id)
-                step_name = step.step_name if step else f"Step {action.workflow_step_order}"
+                step_name = step.step_name if step else "Unknown Step"
                 acted_by_user = session.get(User, action.acted_by)
                 acted_by_name = acted_by_user.full_name if acted_by_user else f"User {action.acted_by}"
 
@@ -284,15 +312,8 @@ def generate_correspondence_pdf(
                     action_text += f" ({action.acted_at.strftime('%d %b %Y %H:%M')})"
                 story.append(Paragraph(action_text, small_style))
 
-                # Action signature
-                if action.signature_id:
-                    from workflow.models import Signature
-                    sig = session.get(Signature, action.signature_id)
-                    if sig:
-                        sig_img = _load_signature_image(sig.file_path, company)
-                        if sig_img:
-                            story.append(sig_img)
-                            story.append(Spacer(1, 4))
+                # Action signature (recorded FK first, else actor's active signature)
+                _append_signature(action.signature_id, action.acted_by)
 
                 if action.remarks:
                     story.append(Paragraph(f"  Note: {html.escape(action.remarks)}", small_style))

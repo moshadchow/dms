@@ -2577,3 +2577,413 @@ class TestPendingApprovalListSync:
         assert self._db_status(engine, corr["id"]) == CorrespondenceStatus.APPROVED
 
 
+# ── Download final PDF signatures ───────────────────────
+
+
+def _png_bytes(width: int, height: int = 4) -> bytes:
+    """Minimal valid RGB PNG built with the stdlib (no imaging dependency)."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    rgb = (30, 64, 175)
+    raw = b"".join(b"\x00" + bytes(rgb) * width for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+def _make_upload_file(content: bytes, filename: str, content_type: str):
+    import io
+
+    from starlette.datastructures import Headers, UploadFile
+
+    headers = Headers(raw=[(b"content-type", content_type.encode())])
+    return UploadFile(filename=filename, file=io.BytesIO(content), headers=headers)
+
+
+class TestDownloadFinalSignatures:
+    """Checker-review PDF (`GET /correspondences/{id}/download-final`) must
+    render signatures.
+
+    Regression cover for the root cause: the PDF reads
+    `Correspondence.author_signature_id` / `workflow_actions.signature_id`, so
+    those FKs must be recorded at submit/approve, with the shared
+    signatures/service.py fallback (latest active signature of the user) when
+    no FK was captured — matching memo semantics.
+    """
+
+    # Distinctive natural widths so the rendered XObject can be identified.
+    AUTHOR_WIDTH = 13
+    APPROVER_WIDTH = 29
+
+    def _make_checker(self, engine, seeded_data):
+        from core.security import create_access_token, hash_password
+        from users.models import Role, RoleName, User, UserCategoryLink, UserRoleLink
+
+        with Session(engine) as session:
+            role = session.exec(select(Role).where(Role.name == RoleName.CHECKER)).first()
+            assert role, "seeded CHECKER role missing"
+            user = User(
+                full_name="Sign PDF Checker",
+                email="checker.signpdf@example.com",
+                hashed_password=hash_password("Test@1234"),
+                is_active=True,
+                user_level_id=seeded_data["medium_level_id"],
+                company_id=seeded_data["company_id"],
+            )
+            session.add(user)
+            session.flush()
+            session.add(UserRoleLink(user_id=user.id, role_id=role.id))
+            session.add(
+                UserCategoryLink(
+                    user_id=user.id, category_id=seeded_data["finance_category_id"]
+                )
+            )
+            session.commit()
+            checker_id = user.id
+        headers = {"Authorization": f"Bearer {create_access_token(checker_id)}"}
+        return checker_id, headers
+
+    def _create_workflow(self, test_client, auth_headers, approver_id, name, steps=1):
+        payload = {
+            "name": name,
+            "description": "Download-final signature test",
+            "steps": [
+                {
+                    "step_order": i,
+                    "step_name": f"Review {i}",
+                    "approval_mode": "sequential",
+                    "approvers": [{"user_id": approver_id}],
+                }
+                for i in range(1, steps + 1)
+            ],
+        }
+        resp = test_client.post(
+            "/api/v1/workflows", json=payload, headers=auth_headers["admin"]
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    def _instance_id(self, engine, document_id):
+        from workflow.models import WorkflowInstance
+
+        with Session(engine) as session:
+            instance = session.exec(
+                select(WorkflowInstance).where(
+                    WorkflowInstance.document_id == document_id
+                )
+            ).first()
+            assert instance
+            return instance.id
+
+    def _upload_signature(self, test_client, headers, width):
+        import io
+
+        resp = test_client.post(
+            "/api/v1/signatures",
+            headers=headers,
+            files={"file": ("sig.png", io.BytesIO(_png_bytes(width)), "image/png")},
+            data={"sig_type": "e_signature"},
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    def _create_and_submit(
+        self, test_client, auth_headers, seeded_data, wf_id, subject, signature_id=None
+    ):
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, subject=subject),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201, create.text
+        corr = create.json()
+        payload = {"workflow_definition_id": wf_id}
+        if signature_id is not None:
+            payload["signature_id"] = signature_id
+        submit = test_client.post(
+            f"/api/v1/correspondences/{corr['id']}/submit",
+            json=payload,
+            headers=auth_headers["maker"],
+        )
+        assert submit.status_code == 200, submit.text
+        return corr, submit.json()
+
+    def _download_final(self, test_client, corr_id, headers):
+        resp = test_client.get(
+            f"/api/v1/correspondences/{corr_id}/download-final", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"].startswith("application/pdf")
+        return resp.content
+
+    def _pdf_text(self, content: bytes) -> str:
+        import io
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(content))
+        return "".join(page.extract_text() or "" for page in reader.pages)
+
+    def test_submit_with_signature_id_records_and_renders_author_signature(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Signed Submit WF"
+        )
+        sig_id = self._upload_signature(
+            test_client, auth_headers["maker"], self.AUTHOR_WIDTH
+        )
+
+        corr, submitted = self._create_and_submit(
+            test_client, auth_headers, seeded_data, wf_id,
+            "Signed Submit", signature_id=sig_id,
+        )
+        assert submitted["author_signature_id"] == sig_id
+
+        pdf = self._download_final(test_client, corr["id"], auth_headers["maker"])
+        assert b"/Subtype /Image" in pdf
+        assert b"/Width 13" in pdf
+
+    def test_download_final_falls_back_to_active_signature_without_fk(
+        self, client, auth_headers, seeded_data
+    ):
+        """The original bug scenario: no signature_id was ever sent, but the
+        user has an active signature on file — it must still be rendered."""
+        test_client, engine, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Fallback Sig WF"
+        )
+        self._upload_signature(test_client, auth_headers["maker"], self.AUTHOR_WIDTH)
+
+        corr, submitted = self._create_and_submit(
+            test_client, auth_headers, seeded_data, wf_id, "Fallback Sig"
+        )
+        assert submitted["author_signature_id"] is None  # sanity: no FK recorded
+
+        pdf = self._download_final(test_client, corr["id"], auth_headers["maker"])
+        assert b"/Subtype /Image" in pdf
+        assert b"/Width 13" in pdf
+
+    def test_download_final_without_any_signature_has_placeholder(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="No Sig WF"
+        )
+        corr, _ = self._create_and_submit(
+            test_client, auth_headers, seeded_data, wf_id, "No Signature"
+        )
+
+        pdf = self._download_final(test_client, corr["id"], auth_headers["maker"])
+        assert b"/Subtype /Image" not in pdf
+        assert "No signature on file" in self._pdf_text(pdf)
+
+    def test_submit_rejects_foreign_signature(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Foreign Sig WF"
+        )
+        admin_sig_id = self._upload_signature(
+            test_client, auth_headers["admin"], self.APPROVER_WIDTH
+        )
+
+        create = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(seeded_data, subject="Foreign Sig"),
+            headers=auth_headers["maker"],
+        )
+        assert create.status_code == 201, create.text
+        submit = test_client.post(
+            f"/api/v1/correspondences/{create.json()['id']}/submit",
+            json={"workflow_definition_id": wf_id, "signature_id": admin_sig_id},
+            headers=auth_headers["maker"],
+        )
+        assert submit.status_code == 403
+        assert "own signatures" in submit.json()["detail"]
+
+    def test_approval_signature_recorded_and_rendered(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Approver Sig WF"
+        )
+        self._upload_signature(test_client, auth_headers["maker"], self.AUTHOR_WIDTH)
+        approver_sig_id = self._upload_signature(
+            test_client, auth_headers["admin"], self.APPROVER_WIDTH
+        )
+
+        corr, _ = self._create_and_submit(
+            test_client, auth_headers, seeded_data, wf_id, "Approver Signature"
+        )
+        instance_id = self._instance_id(engine, corr["document_id"])
+
+        approve = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve", "signature_id": approver_sig_id},
+            headers=auth_headers["admin"],
+        )
+        assert approve.status_code == 200, approve.text
+
+        from workflow.models import WorkflowAction
+
+        with Session(engine) as session:
+            action = session.exec(
+                select(WorkflowAction).where(
+                    WorkflowAction.workflow_instance_id == instance_id
+                )
+            ).first()
+            assert action is not None
+            assert action.signature_id == approver_sig_id
+
+        pdf = self._download_final(test_client, corr["id"], auth_headers["admin"])
+        assert pdf.count(b"/Subtype /Image") >= 2  # author + approver
+        assert b"/Width 13" in pdf
+        assert b"/Width 29" in pdf
+
+    def test_checker_downloads_signed_pdf_during_review(
+        self, client, auth_headers, seeded_data
+    ):
+        """The reported flow: Checker reviews a submitted correspondence and
+        downloads the final PDF — the maker's signature must be present."""
+        test_client, engine, _ = client
+        checker_id, checker_headers = self._make_checker(engine, seeded_data)
+        wf_id = self._create_workflow(
+            test_client, auth_headers, checker_id, "Checker Review WF"
+        )
+        self._upload_signature(test_client, auth_headers["maker"], self.AUTHOR_WIDTH)
+
+        corr, submitted = self._create_and_submit(
+            test_client, auth_headers, seeded_data, wf_id, "Checker Review"
+        )
+        assert submitted["author_signature_id"] is None  # fallback path
+
+        pdf = self._download_final(test_client, corr["id"], checker_headers)
+        assert b"/Subtype /Image" in pdf
+        assert b"/Width 13" in pdf
+
+    def test_reply_submit_signature_reaches_final_pdf(
+        self, client, auth_headers, seeded_data
+    ):
+        test_client, engine, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, name="Reply Sig WF"
+        )
+        sig_id = self._upload_signature(
+            test_client, auth_headers["maker"], self.AUTHOR_WIDTH
+        )
+
+        parent = test_client.post(
+            "/api/v1/correspondences",
+            json=_corr_payload(
+                seeded_data,
+                direction="inbound",
+                body=None,
+                document_id=seeded_data["finance_document_id"],
+                subject="Reply Signature Parent",
+            ),
+            headers=auth_headers["maker"],
+        )
+        assert parent.status_code == 201, parent.text
+
+        reply = test_client.post(
+            f"/api/v1/correspondences/{parent.json()['id']}/reply",
+            json=_corr_payload(seeded_data, direction="outbound", subject="Reply Sig"),
+            headers=auth_headers["maker"],
+        )
+        assert reply.status_code == 201, reply.text
+
+        submit = test_client.post(
+            f"/api/v1/correspondences/{reply.json()['id']}/submit-reply",
+            json={"workflow_definition_id": wf_id, "signature_id": sig_id},
+            headers=auth_headers["maker"],
+        )
+        assert submit.status_code == 200, submit.text
+        assert submit.json()["author_signature_id"] == sig_id
+
+        pdf = self._download_final(
+            test_client, reply.json()["id"], auth_headers["maker"]
+        )
+        assert b"/Subtype /Image" in pdf
+        assert b"/Width 13" in pdf
+
+    # ── Shared resolver unit tests ──────────────────────
+
+    def test_select_signature_prefers_fk_over_newest_active(
+        self, seeded_data, client
+    ):
+        from signatures.service import SignatureService
+        from workflow.models import SignatureType
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            from users.models import User
+
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = SignatureService(session)
+            first = svc.upload_signature(
+                _make_upload_file(_png_bytes(11), "a.png", "image/png"),
+                maker,
+                SignatureType.E_SIGNATURE,
+            )
+            second = svc.upload_signature(
+                _make_upload_file(_png_bytes(22), "b.png", "image/png"),
+                maker,
+                SignatureType.E_SIGNATURE,
+            )
+            assert first.id != second.id
+
+            chosen = svc.select_signature(
+                signature_id=first.id, fallback_user_id=maker.id
+            )
+            assert chosen is not None and chosen.id == first.id
+
+            fallback = svc.select_signature(
+                signature_id=None, fallback_user_id=maker.id
+            )
+            assert fallback is not None and fallback.id == second.id
+
+            none = svc.select_signature(signature_id=None, fallback_user_id=None)
+            assert none is None
+
+    def test_resolve_file_path_returns_company_relative_path(
+        self, seeded_data, client
+    ):
+        from signatures.service import SignatureService
+        from workflow.models import Signature, SignatureType
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            from users.models import User
+
+            maker = session.get(User, seeded_data["maker_id"])
+            svc = SignatureService(session)
+            created = svc.upload_signature(
+                _make_upload_file(_png_bytes(7), "c.png", "image/png"),
+                maker,
+                SignatureType.E_SIGNATURE,
+            )
+            sig = session.get(Signature, created.id)
+            assert sig is not None
+            resolved = svc.resolve_file_path(sig)
+            assert resolved is not None
+            assert resolved.exists()
+            assert "c.png" in resolved.name
+
+

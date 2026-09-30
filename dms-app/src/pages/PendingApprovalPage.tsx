@@ -7,6 +7,7 @@ import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { useWorkflowStore } from '@/store/workflowStore'
 import Button from '@/components/ui/Button'
+import SignaturePicker from '@/components/signature/SignaturePicker'
 import type {
   WorkflowInstance,
   ApprovalAction,
@@ -44,6 +45,7 @@ export default function PendingApprovalPage() {
   const [memoDetail, setMemoDetail] = useState<MemoDetail | null>(null)
   const [corrDetail, setCorrDetail] = useState<CorrespondenceDetail | null>(null)
   const [memoLoading, setMemoLoading] = useState(false)
+  const [signatureId, setSignatureId] = useState<number | null>(null)
 
   const loadPending = useCallback(async () => {
     setLoading(true)
@@ -68,6 +70,7 @@ export default function PendingApprovalPage() {
   const openReviewModal = async (instance: WorkflowInstance) => {
     setSelectedInstance(instance)
     setRemarks('')
+    setSignatureId(null)
     setMemoDetail(null)
     setCorrDetail(null)
     setModalOpen(true)
@@ -94,8 +97,24 @@ export default function PendingApprovalPage() {
     setModalOpen(false)
     setSelectedInstance(null)
     setRemarks('')
+    setSignatureId(null)
     setMemoDetail(null)
     setCorrDetail(null)
+  }
+
+  const handleDownloadFinalPdf = async () => {
+    if (!corrDetail) return
+    try {
+      const blob = await correspondenceApi.downloadFinal(corrDetail.id)
+      const url = URL.createObjectURL(blob)
+      const el = document.createElement('a')
+      el.href = url
+      el.download = `${corrDetail.reference_number}_final.pdf`
+      el.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      toast.error(getErrorMessage(err))
+    }
   }
 
   const handleSubmit = async (action: ApprovalAction) => {
@@ -105,6 +124,7 @@ export default function PendingApprovalPage() {
       await workflowApi.actOnInstance(selectedInstance.id, {
         action,
         remarks: remarks.trim() || undefined,
+        ...(action === 'approve' && signatureId ? { signature_id: signatureId } : {}),
       })
 
       const label = action.charAt(0).toUpperCase() + action.slice(1)
@@ -375,10 +395,18 @@ export default function PendingApprovalPage() {
                     <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Subject</p>
                     <p style={{ fontSize: '0.88rem', color: 'var(--text)', fontWeight: 600, margin: 0 }}>{corrDetail.subject}</p>
                   </div>
-                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.82rem', color: 'var(--text-secondary)', alignItems: 'center' }}>
                     <span>Direction: <strong>{corrDetail.direction}</strong></span>
                     <span>Priority: <strong>{corrDetail.priority}</strong></span>
                     <span>Reference: <strong>{corrDetail.reference_number}</strong></span>
+                    {corrDetail.workflow_instance_id && (
+                      <button
+                        onClick={handleDownloadFinalPdf}
+                        style={{ fontSize: '0.78rem', color: '#4f46e5', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0, fontWeight: 600 }}
+                      >
+                        Download PDF (with signatures)
+                      </button>
+                    )}
                   </div>
                   {corrDetail.body && (
                     <div>
@@ -461,6 +489,9 @@ export default function PendingApprovalPage() {
                   }}
                 />
               </div>
+
+              {/* Signature — attached to the workflow action when approving */}
+              <SignaturePicker value={signatureId} onChange={setSignatureId} />
             </div>
 
             {/* Modal footer */}

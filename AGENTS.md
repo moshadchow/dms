@@ -95,7 +95,7 @@ Do not invent permission verbs — the matrix is fixed at `view`, `download`, `c
 ## Workflow / Approval
 Status flow: `draft → submitted → pending_approval → (returned | rejected | approved | cancelled) → published? → archived`.
 
-- `WorkflowInstanceService.submit_instance()` **snapshots** the definition's steps. Editing a definition never affects in-flight instances.
+- Step edits never delete rows: `update_definition` **supersedes** them (`workflow_steps.is_active=False`) so completed instances keep their historical chain (`workflow_actions.workflow_step_id` keeps resolving), and only runs when no instance is `draft/submitted/pending_approval/returned` (409 otherwise). All step-resolution queries filter `is_active=True`. There is no physical per-instance step snapshot — the edit guard is what keeps in-flight instances untouched.
 - Deactivating a definition blocks new submissions only.
 - Definitions are category-agnostic (`document_category_id` was removed); category filtering happens at the document level. Multiple active definitions per category are allowed, so submission UIs need a picker.
 - `workflow_history` is the approval ledger; `audit/` stays the system-wide log. Both are written, never a third mechanism.

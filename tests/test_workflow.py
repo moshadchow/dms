@@ -238,6 +238,266 @@ class TestWorkflowDefinitionService:
             assert detail.steps[1].step_name == "New Step B"
 
 
+class TestStepEditActiveInstanceGuard:
+    """ADMIN may modify steps only while no instance is still active.
+
+    Step edits supersede rows (is_active=False) instead of deleting them, so
+    completed instances keep their historical workflow snapshot — the
+    workflow_actions rows continue to reference the rows they acted on.
+    """
+
+    @staticmethod
+    def _create(session, admin, name: str, steps: list | None = None):
+        from workflow.schemas import WorkflowDefinitionCreate
+        return WorkflowDefinitionService(session).create_definition(
+            WorkflowDefinitionCreate(**_create_workflow_payload(name=name, steps=steps)),
+            current_user=admin,
+        )
+
+    @staticmethod
+    def _submit(session, document_id, definition_id, maker):
+        return WorkflowInstanceService(session).submit_instance(
+            WorkflowInstanceCreate(
+                document_id=document_id,
+                workflow_definition_id=definition_id,
+            ),
+            current_user=maker,
+        )
+
+    @staticmethod
+    def _approve(session, instance_id, admin):
+        return ApprovalActionService(session).act_on_instance(
+            instance_id,
+            WorkflowActionCreate(action=ApprovalAction.APPROVE),
+            current_user=admin,
+        )
+
+    @staticmethod
+    def _steps_of(session, definition_id):
+        return session.exec(
+            select(WorkflowStep)
+            .where(WorkflowStep.workflow_definition_id == definition_id)
+            .order_by(WorkflowStep.step_order, WorkflowStep.id)
+        ).all()
+
+    @staticmethod
+    def _steps_payload(*names, approver_id):
+        from workflow.schemas import WorkflowStepCreate, WorkflowStepApproverCreate
+        return [
+            WorkflowStepCreate(
+                step_order=i,
+                step_name=name,
+                approval_mode="sequential",
+                approvers=[WorkflowStepApproverCreate(user_id=approver_id)],
+            )
+            for i, name in enumerate(names, start=1)
+        ]
+
+    def test_step_edit_blocked_while_instance_active(self, seeded_data, client):
+        from fastapi import HTTPException
+        from users.models import User
+        from workflow.schemas import WorkflowDefinitionUpdate
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            admin = session.get(User, seeded_data["admin_id"])
+            maker = session.get(User, seeded_data["maker_id"])
+            created = self._create(
+                session, admin, "Blocked Edit WF",
+                steps=[{
+                    "step_order": 1,
+                    "step_name": "Checker Step",
+                    "approval_mode": "sequential",
+                    "approvers": [{"user_id": admin.id}],
+                }],
+            )
+            original = self._steps_of(session, created.id)
+            instance = self._submit(
+                session, seeded_data["finance_document_id"], created.id, maker
+            )
+
+            update = WorkflowDefinitionUpdate(
+                steps=self._steps_payload("Changed Step", approver_id=admin.id)
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                WorkflowDefinitionService(session).update_definition(created.id, update, admin)
+            assert exc_info.value.status_code == 409
+            assert "active workflow instances" in exc_info.value.detail
+
+            steps_after = self._steps_of(session, created.id)
+            assert [s.id for s in steps_after] == [s.id for s in original]
+            assert steps_after[0].step_name == "Checker Step"
+            assert instance.status == WorkflowStatus.SUBMITTED
+
+    def test_step_edit_allowed_once_instances_terminal(self, seeded_data, client):
+        from users.models import User
+        from workflow.schemas import WorkflowDefinitionUpdate
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            admin = session.get(User, seeded_data["admin_id"])
+            maker = session.get(User, seeded_data["maker_id"])
+            created = self._create(
+                session, admin, "Completed Instance WF",
+                steps=[{
+                    "step_order": 1,
+                    "step_name": "Original Step",
+                    "approval_mode": "sequential",
+                    "approvers": [{"user_id": admin.id}],
+                }],
+            )
+            old_steps = self._steps_of(session, created.id)
+            instance = self._submit(
+                session, seeded_data["finance_document_id"], created.id, maker
+            )
+            approved = self._approve(session, instance.id, admin)
+            assert approved.status == WorkflowStatus.APPROVED
+
+            actions = session.exec(
+                select(WorkflowAction).where(WorkflowAction.workflow_instance_id == instance.id)
+            ).all()
+            assert len(actions) == 1
+            assert actions[0].workflow_step_id == old_steps[0].id
+
+            update = WorkflowDefinitionUpdate(
+                steps=self._steps_payload("Renamed Step", approver_id=admin.id)
+            )
+            WorkflowDefinitionService(session).update_definition(created.id, update, admin)
+
+            # Superseded, never deleted: the historical action's FK still resolves.
+            assert old_steps[0].is_active is False
+            assert session.get(WorkflowStep, old_steps[0].id) is not None
+            assert actions[0].workflow_step_id == old_steps[0].id
+
+            new_steps = [s for s in self._steps_of(session, created.id) if s.is_active]
+            assert len(new_steps) == 1
+            assert new_steps[0].id != old_steps[0].id
+            assert new_steps[0].step_name == "Renamed Step"
+
+            detail = WorkflowDefinitionService(session).get_definition(created.id, admin)
+            assert [s.step_name for s in detail.steps] == ["Renamed Step"]
+
+    def test_unchanged_step_payload_allowed_while_active(self, seeded_data, client):
+        from users.models import User
+        from workflow.schemas import WorkflowDefinitionUpdate
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            admin = session.get(User, seeded_data["admin_id"])
+            maker = session.get(User, seeded_data["maker_id"])
+            steps = [{
+                "step_order": 1,
+                "step_name": "Same Step",
+                "approval_mode": "sequential",
+                "approvers": [{"user_id": admin.id}],
+            }]
+            created = self._create(session, admin, "Noop Edit WF", steps=steps)
+            original = self._steps_of(session, created.id)
+            self._submit(session, seeded_data["finance_document_id"], created.id, maker)
+
+            # The edit form always sends the full step list; an unchanged
+            # payload must not trip the in-flight guard nor version rows.
+            update = WorkflowDefinitionUpdate(
+                steps=self._steps_payload("Same Step", approver_id=admin.id)
+            )
+            WorkflowDefinitionService(session).update_definition(created.id, update, admin)
+
+            after = self._steps_of(session, created.id)
+            assert [s.id for s in after] == [s.id for s in original]
+            assert all(s.is_active for s in after)
+
+    def test_new_instance_resolves_new_steps_after_supersede(self, seeded_data, client):
+        from users.models import User
+        from workflow.schemas import WorkflowDefinitionUpdate
+
+        _, engine, _ = client
+        with Session(engine) as session:
+            admin = session.get(User, seeded_data["admin_id"])
+            maker = session.get(User, seeded_data["maker_id"])
+            created = self._create(
+                session, admin, "Versioned Steps WF",
+                steps=[
+                    {
+                        "step_order": 1,
+                        "step_name": "First Review",
+                        "approval_mode": "sequential",
+                        "approvers": [{"user_id": admin.id}],
+                    },
+                    {
+                        "step_order": 2,
+                        "step_name": "Second Review",
+                        "approval_mode": "sequential",
+                        "approvers": [{"user_id": admin.id}],
+                    },
+                ],
+            )
+            old_steps = self._steps_of(session, created.id)
+            assert len(old_steps) == 2
+
+            # Complete one instance on the original chain.
+            inst1 = self._submit(
+                session, seeded_data["finance_document_id"], created.id, maker
+            )
+            self._approve(session, inst1.id, admin)
+            approved1 = self._approve(session, inst1.id, admin)
+            assert approved1.status == WorkflowStatus.APPROVED
+
+            # All instances terminal → step edit goes through.
+            update = WorkflowDefinitionUpdate(
+                steps=self._steps_payload("New First", "New Second", approver_id=admin.id)
+            )
+            WorkflowDefinitionService(session).update_definition(created.id, update, admin)
+            active = [s for s in self._steps_of(session, created.id) if s.is_active]
+            assert [s.step_name for s in active] == ["New First", "New Second"]
+
+            # A fresh instance runs entirely on the new chain. The seeded
+            # maker is only linked to finance/legal and lacks this document's
+            # user level, so grant both accesses first.
+            from users.models import UserCategoryLink
+            from documents.models import DocumentUserLevelLink
+            session.add(
+                UserCategoryLink(
+                    user_id=maker.id, category_id=seeded_data["hr_category_id"]
+                )
+            )
+            session.add(
+                DocumentUserLevelLink(
+                    document_id=seeded_data["hr_document_id"],
+                    user_level_id=seeded_data["medium_level_id"],
+                )
+            )
+            session.flush()
+            inst2 = self._submit(
+                session, seeded_data["hr_document_id"], created.id, maker
+            )
+            assert inst2.current_step_order == 1
+
+            after_first = self._approve(session, inst2.id, admin)
+            assert after_first.current_step_order == 2
+            assert after_first.status == WorkflowStatus.PENDING_APPROVAL
+            actions2 = session.exec(
+                select(WorkflowAction).where(WorkflowAction.workflow_instance_id == inst2.id)
+            ).all()
+            # The action landed on the NEW step 1 (id 3), not the superseded
+            # twin that shares its step_order.
+            assert actions2[-1].workflow_step_id == active[0].id
+
+            final = self._approve(session, inst2.id, admin)
+            assert final.status == WorkflowStatus.APPROVED
+            # The second action resolved the NEW step 2 by step_order.
+            actions2 = session.exec(
+                select(WorkflowAction).where(WorkflowAction.workflow_instance_id == inst2.id)
+            ).all()
+            assert actions2[-1].workflow_step_id == active[1].id
+
+            # The completed historical instance still points at the old chain.
+            actions1 = session.exec(
+                select(WorkflowAction).where(WorkflowAction.workflow_instance_id == inst1.id)
+            ).all()
+            old_ids = {s.id for s in old_steps}
+            assert {a.workflow_step_id for a in actions1} <= old_ids
+
+
 # ── API Tests ────────────────────────────────────
 
 

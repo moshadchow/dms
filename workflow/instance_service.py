@@ -55,6 +55,7 @@ class WorkflowInstanceService:
             .where(
                 WorkflowStep.workflow_definition_id == instance.workflow_definition_id,
                 WorkflowStep.step_order == instance.current_step_order,
+                WorkflowStep.is_active == True,
             )
         ).first()
 
@@ -255,7 +256,10 @@ class WorkflowInstanceService:
 
         steps = self.session.exec(
             select(WorkflowStep)
-            .where(WorkflowStep.workflow_definition_id == wf_def.id)
+            .where(
+                WorkflowStep.workflow_definition_id == wf_def.id,
+                WorkflowStep.is_active == True,
+            )
             .order_by(WorkflowStep.step_order)
         ).all()
         if not steps:

@@ -116,6 +116,7 @@ class ApprovalActionService:
             .where(
                 WorkflowStep.workflow_definition_id == instance.workflow_definition_id,
                 WorkflowStep.step_order == instance.current_step_order,
+                WorkflowStep.is_active == True,
             )
         ).first()
 
@@ -323,6 +324,7 @@ class ApprovalActionService:
             .where(
                 WorkflowStep.workflow_definition_id == instance.workflow_definition_id,
                 WorkflowStep.step_order > instance.current_step_order,
+                WorkflowStep.is_active == True,
             )
             .order_by(WorkflowStep.step_order)
         ).first()

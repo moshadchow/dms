@@ -408,3 +408,49 @@ class SignatureService:
                 detail=f"Signature {signature_id} not found or is inactive",
             )
         return sig
+
+    # ── Shared PDF resolution ────────────────────
+    # Single implementation used by both the memo and correspondence final-PDF
+    # generators so signature semantics can never diverge between them.
+
+    def select_signature(
+        self,
+        signature_id: Optional[int] = None,
+        fallback_user_id: Optional[int] = None,
+    ) -> Optional[Signature]:
+        """Resolve which signature a PDF should render.
+
+        An explicit FK (captured at submit/approve) wins; otherwise fall back to
+        the user's most recently created active signature. A recorded FK is
+        honoured even after the signature was soft-deleted — the signature
+        captured at signing time is a historical record.
+        """
+        if signature_id is not None:
+            sig = self.session.get(Signature, signature_id)
+            if sig is not None:
+                return sig
+        if fallback_user_id is not None:
+            return self.session.exec(
+                select(Signature)
+                .where(
+                    Signature.user_id == fallback_user_id,
+                    Signature.is_active == True,
+                )
+                .order_by(Signature.created_at.desc())
+            ).first()
+        return None
+
+    def resolve_file_path(self, signature: Signature) -> Optional[Path]:
+        """Absolute path of a signature image, resolved against its owner's company.
+
+        Returns None when the owner has no company or the stored path cannot be
+        resolved. Never raises — callers decide how to render the absence.
+        """
+        owner = signature.user
+        company: Optional[Company] = owner.company if owner else None
+        if not company:
+            return None
+        try:
+            return storage_service.resolve_path(company, signature.file_path)
+        except HTTPException:
+            return None

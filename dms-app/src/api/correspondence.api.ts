@@ -101,8 +101,17 @@ export const correspondenceApi = {
     return res.data
   },
 
-  actOnWorkflowInstance: async (instanceId: number, action: 'approve' | 'reject' | 'return' | 'clarify' | 'forward', remarks?: string): Promise<unknown> => {
-    const res = await apiClient.post(`/workflow-instances/${instanceId}/actions`, { action, remarks })
+  actOnWorkflowInstance: async (
+    instanceId: number,
+    action: 'approve' | 'reject' | 'return' | 'clarify' | 'forward',
+    remarks?: string,
+    signatureId?: number,
+  ): Promise<unknown> => {
+    const res = await apiClient.post(`/workflow-instances/${instanceId}/actions`, {
+      action,
+      remarks,
+      ...(signatureId ? { signature_id: signatureId } : {}),
+    })
     return res.data
   },
 

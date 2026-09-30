@@ -254,6 +254,7 @@ class MemoService:
             select(WorkflowStep).where(
                 WorkflowStep.workflow_definition_id == instance.workflow_definition_id,
                 WorkflowStep.step_order == instance.current_step_order,
+                WorkflowStep.is_active == True,
             )
         ).first()
 
@@ -709,13 +710,6 @@ class MemoService:
                 detail="Memo has not been approved yet. Final draft is only available after approval.",
             )
 
-        # Get workflow steps in order
-        steps = self.session.exec(
-            select(WorkflowStep)
-            .where(WorkflowStep.workflow_definition_id == approved_instance.workflow_definition_id)
-            .order_by(WorkflowStep.step_order)
-        ).all()
-
         # Get all actions for this instance
         from workflow.models import WorkflowAction
         actions = self.session.exec(
@@ -723,28 +717,22 @@ class MemoService:
             .where(WorkflowAction.workflow_instance_id == approved_instance.id)
         ).all()
 
-        # Build approval entries with signatures (auto-load from user's centrally managed signatures)
-        from workflow.models import Signature
+        # Build approval entries with signatures: recorded FK first, else the
+        # actor's centrally managed active signature (shared signatures/ helpers,
+        # same resolution the correspondence PDF uses)
+        from signatures.service import SignatureService
+        sig_service = SignatureService(self.session)
         approval_entries = []
         for action in actions:
             step_name = None
             if action.workflow_step:
                 step_name = action.workflow_step.step_name
 
-            signature_path = None
-            action_sig = self.session.exec(
-                select(Signature)
-                .where(Signature.user_id == action.acted_by, Signature.is_active == True)
-                .order_by(Signature.created_at.desc())
-            ).first()
-            if action_sig:
-                # Use company-aware resolution for signature file
-                sig_company: Company = action_sig.user.company
-                if sig_company:
-                    try:
-                        signature_path = storage_service.resolve_path(sig_company, action_sig.file_path)
-                    except HTTPException:
-                        pass
+            action_sig = sig_service.select_signature(
+                signature_id=action.signature_id,
+                fallback_user_id=action.acted_by,
+            )
+            signature_path = sig_service.resolve_file_path(action_sig) if action_sig else None
 
             acted_by_name = action.acted_by_user.full_name if action.acted_by_user else f"User #{action.acted_by}"
             acted_at = action.acted_at.strftime("%Y-%m-%d %H:%M") if action.acted_at else ""
@@ -758,28 +746,26 @@ class MemoService:
                 "remarks": action.remarks,
             })
 
-        # Sort approval entries by step order
-        step_order_map = {step.id: step.step_order for step in steps}
+        # Sort approval entries by step order. The map comes from the
+        # instance's own action rows, not the definition's steps: a superseded
+        # (is_active=False) step row is part of this instance's history, and
+        # the current active chain may differ entirely.
+        step_order_map = {
+            a.workflow_step_id: a.workflow_step.step_order
+            for a in actions
+            if a.workflow_step is not None
+        }
         approval_entries.sort(key=lambda e: step_order_map.get(
             next((a.workflow_step_id for a in actions if a.acted_by == e.get("acted_by")), 0),
             0,
         ))
 
-        # Get maker's signature path (auto-load from user's centrally managed signatures)
-        author_signature_path = None
-        author_sig = self.session.exec(
-            select(Signature)
-            .where(Signature.user_id == memo.created_by, Signature.is_active == True)
-            .order_by(Signature.created_at.desc())
-        ).first()
-        if author_sig:
-            # Use company-aware resolution for author signature
-            author_company: Company = author_sig.user.company
-            if author_company:
-                try:
-                    author_signature_path = storage_service.resolve_path(author_company, author_sig.file_path)
-                except HTTPException:
-                    pass
+        # Maker's signature: recorded FK first, else the author's active signature
+        author_sig = sig_service.select_signature(
+            signature_id=memo.author_signature_id,
+            fallback_user_id=memo.created_by,
+        )
+        author_signature_path = sig_service.resolve_file_path(author_sig) if author_sig else None
 
         # Format memo date
         memo_date = memo.memo_date.strftime("%Y-%m-%d") if memo.memo_date else ""

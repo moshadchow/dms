@@ -72,6 +72,7 @@ def send_notification_task(
                 select(WorkflowStep).where(
                     WorkflowStep.workflow_definition_id == workflow_def_orm.id,
                     WorkflowStep.step_order == (step_order or instance_orm.current_step_order),
+                    WorkflowStep.is_active == True,
                 )
             ).first()
 

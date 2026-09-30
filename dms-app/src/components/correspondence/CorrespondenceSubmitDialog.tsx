@@ -3,6 +3,7 @@ import { toast } from 'react-hot-toast'
 import { workflowApi } from '@/api/workflow.api'
 import { correspondenceApi } from '@/api/correspondence.api'
 import { getErrorMessage } from '@/api/client'
+import SignaturePicker from '@/components/signature/SignaturePicker'
 import type { CorrespondenceDirection } from '@/types/correspondence.types'
 
 interface CorrespondenceSubmitDialogProps {
@@ -31,6 +32,7 @@ export default function CorrespondenceSubmitDialog({
 }: CorrespondenceSubmitDialogProps) {
   const [workflows, setWorkflows] = useState<Array<{ id: number; name: string }>>([])
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<number | ''>('')
+  const [signatureId, setSignatureId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadingWorkflows, setLoadingWorkflows] = useState(false)
 
@@ -54,7 +56,10 @@ export default function CorrespondenceSubmitDialog({
     if (!selectedWorkflowId) return
     setLoading(true)
     try {
-      const payload = { workflow_definition_id: Number(selectedWorkflowId) }
+      const payload = {
+        workflow_definition_id: Number(selectedWorkflowId),
+        signature_id: signatureId ?? undefined,
+      }
       if (isReply) {
         await correspondenceApi.submitReply(correspondenceId, payload)
       } else {
@@ -103,7 +108,7 @@ export default function CorrespondenceSubmitDialog({
             </div>
           ) : (
             <div style={{ marginBottom: '1rem' }}>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.35rem' }}>
                 Workflow
               </label>
               <select
@@ -119,6 +124,10 @@ export default function CorrespondenceSubmitDialog({
               </select>
             </div>
           )}
+
+          <div style={{ marginBottom: '0.25rem' }}>
+            <SignaturePicker value={signatureId} onChange={setSignatureId} />
+          </div>
         </div>
 
         {/* Footer */}

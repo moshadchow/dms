@@ -10,6 +10,7 @@ import CorrespondenceAssignDialog from '@/components/correspondence/Corresponden
 import CorrespondenceSubmitDialog from '@/components/correspondence/CorrespondenceSubmitDialog'
 import CorrespondenceReplyDialog from '@/components/correspondence/CorrespondenceReplyDialog'
 import CorrespondenceRepliesList from '@/components/correspondence/CorrespondenceRepliesList'
+import SignaturePicker from '@/components/signature/SignaturePicker'
 import Button from '@/components/ui/Button'
 import { formatDateTime } from '@/utils/formatters'
 import { getErrorMessage } from '@/api/client'
@@ -51,6 +52,7 @@ export default function CorrespondenceDetailPage() {
   const [replyOpen, setReplyOpen] = useState(false)
   const [repliesRefreshKey, setRepliesRefreshKey] = useState(0)
   const [approvalRemarks, setApprovalRemarks] = useState('')
+  const [approvalSignatureId, setApprovalSignatureId] = useState<number | null>(null)
   const user = useAuthStore(s => s.user)
   const { canCreate, canUpdate, canDownload } = usePermissions()
 
@@ -108,7 +110,12 @@ export default function CorrespondenceDetailPage() {
   const actOnWorkflow = async (action: 'approve' | 'reject' | 'return', remarks?: string) => {
     if (!corr || !corr.workflow_instance_id) return
     try {
-      await correspondenceApi.actOnWorkflowInstance(corr.workflow_instance_id, action, remarks || undefined)
+      await correspondenceApi.actOnWorkflowInstance(
+        corr.workflow_instance_id,
+        action,
+        remarks || undefined,
+        action === 'approve' ? approvalSignatureId ?? undefined : undefined,
+      )
       toast.success(`Correspondence ${action}${action === 'approve' ? 'd' : 'ed'}`)
       setApprovalRemarks('')
       fetchCorr()
@@ -236,6 +243,9 @@ export default function CorrespondenceDetailPage() {
             rows={2}
             style={{ width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: '0.82rem', resize: 'vertical', backgroundColor: 'var(--surface)', color: 'var(--text)', marginBottom: '10px' }}
           />
+          <div style={{ marginBottom: '10px' }}>
+            <SignaturePicker value={approvalSignatureId} onChange={setApprovalSignatureId} />
+          </div>
           <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
             <Button variant="outline" size="sm" onClick={handleReturn}>Return</Button>
             <Button variant="outline" size="sm" onClick={handleReject}>Reject</Button>

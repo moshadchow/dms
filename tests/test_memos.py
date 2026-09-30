@@ -466,6 +466,63 @@ class TestFinalDraftDownload:
         # PDF files start with %PDF
         assert response.content[:5] == b"%PDF-"
 
+    def test_download_final_draft_after_step_supersede(self, seeded_data, client, auth_headers):
+        """A step edit after approval supersedes definition steps; the
+        completed memo's approval chain and PDF must stay intact."""
+        test_client, _, _ = client
+        wf_id = _create_workflow_for_finance(
+            test_client, auth_headers, seeded_data, "Supersede WF"
+        )
+        create_resp = test_client.post(
+            "/api/v1/memos", json=_memo_payload(seeded_data), headers=auth_headers["maker"],
+        )
+        memo_id = create_resp.json()["id"]
+        submit_resp = test_client.post(
+            f"/api/v1/memos/{memo_id}/submit",
+            json={"workflow_definition_id": wf_id},
+            headers=auth_headers["maker"],
+        )
+        assert submit_resp.status_code == 200
+
+        instance_resp = test_client.get(
+            f"/api/v1/workflow-instances/by-document/{create_resp.json()['document_id']}",
+            headers=auth_headers["admin"],
+        )
+        instance_id = instance_resp.json()["id"]
+        approve_resp = test_client.post(
+            f"/api/v1/workflow-instances/{instance_id}/actions",
+            json={"action": "approve", "remarks": "Approved"},
+            headers=auth_headers["admin"],
+        )
+        assert approve_resp.status_code == 200
+        assert approve_resp.json()["status"] == "approved"
+
+        # Instance is terminal → the ADMIN may modify the steps.
+        put_resp = test_client.put(
+            f"/api/v1/workflows/{wf_id}",
+            json={
+                "steps": [{
+                    "step_order": 1,
+                    "step_name": "Renamed Review",
+                    "approval_mode": "sequential",
+                    "approvers": [{"user_id": seeded_data["admin_id"]}],
+                }],
+            },
+            headers=auth_headers["admin"],
+        )
+        assert put_resp.status_code == 200, put_resp.text
+        detail = test_client.get(
+            f"/api/v1/workflows/{wf_id}", headers=auth_headers["admin"]
+        )
+        assert [s["step_name"] for s in detail.json()["steps"]] == ["Renamed Review"]
+
+        response = test_client.get(
+            f"/api/v1/memos/{memo_id}/download-final-draft",
+            headers=auth_headers["maker"],
+        )
+        assert response.status_code == 200
+        assert response.content[:5] == b"%PDF-"
+
     def test_download_final_draft_not_approved(self, seeded_data, client, auth_headers):
         """Test that download fails when memo workflow is not approved."""
         test_client, _, _ = client

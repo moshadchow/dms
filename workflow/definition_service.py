@@ -14,11 +14,12 @@ from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from users.models import RoleName, User
 from workflow.models import (
-    WorkflowAction,
     WorkflowDefinition,
     WorkflowDefinitionDetailRead,
     WorkflowDefinitionListResponse,
     WorkflowDefinitionRead,
+    WorkflowInstance,
+    WorkflowStatus,
     WorkflowStep,
     WorkflowStepApprover,
     WorkflowStepRead,
@@ -38,6 +39,32 @@ class WorkflowDefinitionService:
     # ──────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────
+
+    @staticmethod
+    def _steps_unchanged(
+        current_steps: List[WorkflowStep],
+        incoming: List[WorkflowStepCreate],
+    ) -> bool:
+        """True when the payload matches the current active steps exactly.
+
+        The edit form always submits the full step list; an unchanged payload
+        must neither version step rows nor trip the in-flight guard.
+        """
+
+        def signature(order: int, name: str, mode, approvers) -> tuple:
+            mode_value = mode.value if hasattr(mode, "value") else mode
+            approver_ids = sorted((a.user_id, a.role_id) for a in approvers)
+            return (order, name, mode_value, approver_ids)
+
+        current = [
+            signature(s.step_order, s.step_name, s.approval_mode, s.approvers)
+            for s in sorted(current_steps, key=lambda s: s.step_order)
+        ]
+        incoming_sig = [
+            signature(s.step_order, s.step_name, s.approval_mode, s.approvers)
+            for s in sorted(incoming, key=lambda s: s.step_order)
+        ]
+        return current == incoming_sig
 
     @staticmethod
     def _validate_step_approvers(steps: List[WorkflowStepCreate]) -> None:
@@ -249,7 +276,7 @@ class WorkflowDefinitionService:
             .where(WorkflowDefinition.id == wf.id)
         ).first()
 
-        steps_read = self._build_steps_read(wf.steps)
+        steps_read = self._build_steps_read([s for s in wf.steps if s.is_active])
 
         return WorkflowDefinitionDetailRead(
             id=wf.id,
@@ -356,43 +383,54 @@ class WorkflowDefinitionService:
         if data.steps is not None:
             self._validate_step_approvers(data.steps)
 
-            step_ids = [step.id for step in wf.steps]
-            if step_ids:
-                actions_exist = self.session.exec(
-                    select(WorkflowAction.workflow_step_id).where(
-                        WorkflowAction.workflow_step_id.in_(step_ids)
-                    ).limit(1)
+            active_steps = [s for s in wf.steps if s.is_active]
+            if not self._steps_unchanged(active_steps, data.steps):
+                active_statuses = (
+                    WorkflowStatus.DRAFT,
+                    WorkflowStatus.SUBMITTED,
+                    WorkflowStatus.PENDING_APPROVAL,
+                    WorkflowStatus.RETURNED,
+                )
+                active_instance = self.session.exec(
+                    select(WorkflowInstance.id)
+                    .where(
+                        WorkflowInstance.workflow_definition_id == wf.id,
+                        WorkflowInstance.status.in_(active_statuses),
+                    )
+                    .limit(1)
                 ).first()
-                if actions_exist is not None:
+                if active_instance is not None:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail="Cannot modify steps: this workflow has active instances with approval actions. "
-                        "Deactivate or complete existing instances before updating steps.",
+                        detail="Cannot modify steps: this workflow still has active workflow "
+                        "instances (draft, submitted, pending approval, or returned). "
+                        "Complete, reject, or cancel them before updating steps.",
                     )
 
-            for step in wf.steps:
-                for approver in step.approvers:
-                    self.session.delete(approver)
-                self.session.delete(step)
-            self.session.flush()
-
-            for step_data in data.steps:
-                step = WorkflowStep(
-                    workflow_definition_id=wf.id,
-                    step_order=step_data.step_order,
-                    step_name=step_data.step_name,
-                    approval_mode=step_data.approval_mode,
-                )
-                self.session.add(step)
+                # Supersede instead of deleting: historical instances keep
+                # their workflow snapshot because workflow_actions rows stay
+                # pointed at these step rows (audit trail must survive edits).
+                for step in active_steps:
+                    step.is_active = False
                 self.session.flush()
 
-                for approver_data in step_data.approvers:
-                    approver = WorkflowStepApprover(
-                        workflow_step_id=step.id,
-                        user_id=approver_data.user_id,
-                        role_id=approver_data.role_id,
+                for step_data in data.steps:
+                    step = WorkflowStep(
+                        workflow_definition_id=wf.id,
+                        step_order=step_data.step_order,
+                        step_name=step_data.step_name,
+                        approval_mode=step_data.approval_mode,
                     )
-                    self.session.add(approver)
+                    self.session.add(step)
+                    self.session.flush()
+
+                    for approver_data in step_data.approvers:
+                        approver = WorkflowStepApprover(
+                            workflow_step_id=step.id,
+                            user_id=approver_data.user_id,
+                            role_id=approver_data.role_id,
+                        )
+                        self.session.add(approver)
 
         wf.updated_at = datetime.utcnow()
         self.session.commit()
@@ -408,6 +446,8 @@ class WorkflowDefinitionService:
             "description": wf.description,
             "is_active": wf.is_active,
         }
+        if data.steps is not None:
+            new_value["steps"] = len(data.steps)
 
         self._log_audit(
             AuditAction.UPDATE_WORKFLOW,

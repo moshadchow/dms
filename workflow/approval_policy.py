@@ -93,6 +93,7 @@ def is_eligible_current_approver(
             select(WorkflowStep).where(
                 WorkflowStep.workflow_definition_id == instance.workflow_definition_id,
                 WorkflowStep.step_order == instance.current_step_order,
+                WorkflowStep.is_active == True,
             )
         ).first()
         if not step:
