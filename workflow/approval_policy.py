@@ -11,7 +11,9 @@ from typing import List
 
 from sqlmodel import Session, select
 
+from correspondence.models import Correspondence, CorrespondenceAttachment
 from documents.models import Document
+from memos.models import Memo, MemoAttachment
 from users.models import User, UserRoleLink
 from workflow.models import WorkflowInstance, WorkflowStatus, WorkflowStep
 
@@ -99,6 +101,50 @@ def is_eligible_current_approver(
         if not step:
             continue
         if user.id in resolve_eligible_user_ids(session, step, instance.document):
+            return True
+
+    return False
+
+
+def is_eligible_approver_reader(
+    session: Session,
+    document_id: int,
+    user: User,
+) -> bool:
+    """Read-grant for ``documents/`` read paths (detail, view, download).
+
+    Extends :func:`is_eligible_current_approver` to documents that are
+    *attachments* of a memo or correspondence: the in-flight workflow lives on
+    the container's backing document, not on the attached document, so the
+    direct check alone would miss it (e.g. a memo attachment the current-step
+    approver is expected to read). Returns True when the user is an eligible
+    approver at the current step of an in-flight instance on either:
+
+    1. the document itself, or
+    2. a memo whose ``document_id`` references it via ``memo_attachments``, or
+    3. a correspondence with it in ``correspondence_attachments``.
+    """
+    if is_eligible_current_approver(session, document_id, user):
+        return True
+
+    memo_ids = session.exec(
+        select(MemoAttachment.memo_id).where(MemoAttachment.document_id == document_id)
+    ).all()
+    for memo_id in memo_ids:
+        memo = session.get(Memo, memo_id)
+        if memo and is_eligible_current_approver(session, memo.document_id, user):
+            return True
+
+    corr_ids = session.exec(
+        select(CorrespondenceAttachment.correspondence_id).where(
+            CorrespondenceAttachment.document_id == document_id
+        )
+    ).all()
+    for corr_id in corr_ids:
+        corr = session.get(Correspondence, corr_id)
+        if corr and corr.document_id and is_eligible_current_approver(
+            session, corr.document_id, user
+        ):
             return True
 
     return False

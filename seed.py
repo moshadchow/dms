@@ -158,32 +158,7 @@ def seed() -> None:
             if users_without_level:
                 print(f"  [=] Assigned 'Low' level to {len(users_without_level)} existing user(s)")
 
-        # ── 4. Default Admin user ─────────────
-        admin_exists = session.exec(
-            select(User).where(User.email == DEFAULT_ADMIN["email"])
-        ).first()
-
-        if not admin_exists:
-            admin_user = User(
-                full_name=DEFAULT_ADMIN["full_name"],
-                email=DEFAULT_ADMIN["email"],
-                hashed_password=hash_password(DEFAULT_ADMIN["password"]),
-                user_level_id=level_map.get("High", level_map.get("Low")).id if level_map else None,
-            )
-            session.add(admin_user)
-            session.flush()
-
-            session.add(
-                UserRoleLink(
-                    user_id=admin_user.id,
-                    role_id=role_map[RoleName.ADMIN].id,
-                )
-            )
-            print(f"  [+] Admin user created: {DEFAULT_ADMIN['email']}")
-        else:
-            print(f"  [=] Admin user already exists: {DEFAULT_ADMIN['email']}")
-
-        # ── 5. Default Super Admin user ───────
+        # ── 4. Default Super Admin user ───────
         superadmin_exists = session.exec(
             select(User).where(User.email == DEFAULT_SUPERADMIN["email"])
         ).first()
@@ -208,7 +183,7 @@ def seed() -> None:
         else:
             print(f"  [=] Super Admin user already exists: {DEFAULT_SUPERADMIN['email']}")
 
-        # ── 6. Default storage capacity ─────
+        # ── 5. Default storage capacity ─────
         cap_row = session.get(SystemSetting, "storage_capacity_gb")
         if not cap_row:
             session.add(

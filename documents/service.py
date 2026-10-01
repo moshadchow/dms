@@ -26,6 +26,7 @@ from documents.utils import delete_from_disk, resolve_storage_path, save_upload,
 from users.models import User, UserCategoryLink
 from user_levels.models import UserLevel
 from company_profile.models import Company
+from workflow.approval_policy import is_eligible_approver_reader
 
 
 class DocumentService:
@@ -44,6 +45,24 @@ class DocumentService:
             document_id,
             include_deleted=include_deleted,
         )
+
+    def _ensure_read_level_access(self, current_user: User, doc: Document) -> None:
+        """User Level visibility for read paths, with the approver read-grant.
+
+        An eligible approver at the current step of an in-flight instance may
+        read the document (and attachments of memos/correspondences they are
+        approving) even when User Level links exclude them — mirroring
+        correspondence ``_check_view_access(approver_view=True)`` and memos
+        ``_is_eligible_approver``. Mutations keep the strict guard.
+        """
+        try:
+            ensure_document_user_level_access(self.session, current_user, doc)
+        except HTTPException as exc:
+            if (
+                exc.status_code != 403
+                or not is_eligible_approver_reader(self.session, doc.id, current_user)
+            ):
+                raise
 
     @staticmethod
     def _to_read(doc: Document) -> DocumentRead:
@@ -72,7 +91,7 @@ class DocumentService:
 
     def get_document(self, document_id: int, current_user: User) -> DocumentRead:
         doc = self._get_orm(document_id, current_user)
-        ensure_document_user_level_access(self.session, current_user, doc)
+        self._ensure_read_level_access(current_user, doc)
         return self._to_read(doc)
 
     def list_documents(
@@ -394,7 +413,7 @@ class DocumentService:
         DocumentRead is used only for mime_type and file_name — no lazy attrs.
         """
         doc = self._get_orm(document_id, current_user)
-        ensure_document_user_level_access(self.session, current_user, doc)
+        self._ensure_read_level_access(current_user, doc)
         # Determine company from document's directory -> category -> company
         company = doc.directory.category.company
         abs_path = resolve_storage_path(doc.storage_path, company)

@@ -2,14 +2,12 @@
 
 FastAPI backend at repo root + React/Vite SPA in `dms-app/`. Python 4-space/`snake_case`; TypeScript 2-space, `PascalCase` components, `camelCase` hooks/stores.
 
-`CLAUDE.md` is a legacy near-duplicate of this file and has drifted (it lists `ruff`/`black`, which are **not** installed). Treat this file as authoritative.
-
 ## Commands
 
 Backend (run from repo root, `venv/` is the working interpreter):
 ```
 alembic upgrade head          # apply migrations — REQUIRED; run before first boot
-python seed.py                # roles, permissions, admin user — once, after migrate
+python seed.py                # roles, permissions, user levels, SuperAdmin — once, after migrate
 uvicorn main:app --reload     # dev server on :8000
 pytest                        # full suite
 pytest tests/test_correspondence.py             # one file
@@ -40,10 +38,10 @@ Any model change needs a migration. **Never** rely on `DEBUG=True` in a shared/d
 ## DB / Startup Invariant
 `main.py`'s lifespan calls `create_db_and_tables()` when `DEBUG=True`, silently bypassing Alembic. It builds tables from SQLModel metadata only, so it will not apply column adds to existing tables. Production runs `DEBUG=false` + `alembic upgrade head` only.
 
-Postgres in production (`requirements.txt`: `psycopg2-binary`). Storage: `STORAGE_ROOT` from `.env`, default `storage/uploads`.
+Postgres in production (`requirements.txt`: `psycopg2-binary`). Storage: `STORAGE_ROOT` from `.env` — code default is `storage`, `.env.example` sets `storage/uploads`.
 
 ## Testing: SQLite In-Memory
-`tests/conftest.py` builds a `StaticPool` in-memory engine — **not** Postgres — and monkeypatches `engine` in three modules: `core.database`, `middleware.rbac`, `middleware.audit`. A new module that does `from core.database import engine` at import time bypasses the patch and hits the real DB; add it to the fixture.
+`tests/conftest.py` builds a `StaticPool` in-memory engine — **not** Postgres — and monkeypatches `engine` in four modules: `core.database`, `middleware.rbac`, `middleware.audit`, `notifications.tasks`, plus settings (`DEBUG=False`, `STORAGE_ROOT` → per-test temp dir, `SMTP_HOST=""` so no mail goes out). A new module that does `from core.database import engine` at import time bypasses the patch and hits the real DB; add it to the fixture.
 
 Fixture shapes (easy to guess wrong):
 - `client` yields a **tuple** `(test_client, engine, storage_path)` — not just a client.
@@ -52,9 +50,9 @@ Fixture shapes (easy to guess wrong):
 
 Company-isolation regressions are the norm here; they get their own file (`test_audit_company.py`, `test_category_company.py`, `test_workflow_company.py`, `test_user_visibility.py`, `test_company_assignment.py`). Add new company-scoped features there rather than growing `test_<feature>.py`.
 
-**The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~2.5 min (54 tests) with PDF generation on top. A full run is ~20 min. Target a file/class while iterating, but budget a long run before declaring done.
+**The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~5 min (100 tests) with PDF generation on top. A full run is ~20 min. Target a file/class while iterating, but budget a long run before declaring done.
 
-**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::test_parallel_step_any_approve_completes`, `test_workflow_company.py::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 515 passed, 14 errors`. The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
+**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 520 passed, 14 errors` (the 2 + 14 are constant; passed grows with new tests). The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
 
 ## Module Convention
 `models.py` (SQLModel + read schemas) · `schemas.py` (write schemas, optional) · `service.py` (class-based, takes `Session`) · `router.py` (thin — business logic belongs in the service). Keep routers thin.
@@ -79,7 +77,7 @@ Exceptions live in `core/exceptions.py`; access guards in `core/access.py` (`ens
 **Always resolve through `documents/utils.py::resolve_storage_path(relative_path, company)`** — never `STORAGE_ROOT / relative_path` by hand. It validates the resolved path stays under the company root (path-traversal guard) and 404s if absent. `resolve_path_with_fallback` tries the company-prefixed path first, then the legacy non-prefixed path, for pre-migration files. `delete_from_disk` is idempotent. `scripts/migrate_storage.py` and `scripts/fix_storage_paths.py` backfill the layout.
 
 ## RBAC: two layers
-1. `middleware/rbac.py` `ROUTE_PERMISSION_MAP` maps `(HTTP_METHOD, path_prefix)` → `PermissionAction`. **New endpoints must be added here** or the middleware silently skips them. Paths under `PUBLIC_PATH_PREFIXES` (`/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, `/health`) bypass it entirely. Known quirks: `PATCH /api/v1/workflows/{id}/activate` has no entry, and in `correspondence/` both `POST .../{id}/...` and `DELETE .../{id}/...` map to `UPDATE`.
+1. `middleware/rbac.py` `ROUTE_PERMISSION_MAP` maps `(HTTP_METHOD, path_prefix)` → `PermissionAction`, matched by **longest prefix** — so a broad prefix covers its subpaths (e.g. in `correspondence/` both `POST .../{id}/...` and `DELETE .../{id}/...` resolve to `UPDATE`). A new **top-level prefix** with no entry is silently skipped by the middleware (only per-endpoint guards remain), so add one. Paths under `PUBLIC_PATH_PREFIXES` (`/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, `/health`) bypass it entirely.
 2. Per-endpoint `dependencies=[Depends(require_permission(PermissionAction.X))]` in the router.
 
 Do not invent permission verbs — the matrix is fixed at `view`, `download`, `create`, `update`, `delete` (see Seed Data).
@@ -102,11 +100,12 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 - Definitions are category-agnostic (`document_category_id` was removed); category filtering happens at the document level. Multiple active definitions per category are allowed, so submission UIs need a picker.
 - `workflow_history` is the approval ledger; `audit/` stays the system-wide log. Both are written, never a third mechanism.
 - Approver eligibility (`workflow/approval_policy.py`) is admin-configured and does **not** filter by User Level (`resolve_eligible_user_ids`; `list_pending` shows instances regardless of level — note `approval_service.act` refuses MAKER-role users). In exchange, an eligible approver at the current step of an in-flight instance can **read** the document even when its User Level links exclude them: memos do this unconditionally in `_check_view_access`, correspondence via `approver_view=True` on read paths only (detail, by-document, movements, replies, downloads) — mutations keep the strict level guard (`is_eligible_current_approver`). The grant lapses once the instance leaves `submitted`/`pending_approval`.
+- `documents/` read paths (detail, view, download — `DocumentService._ensure_read_level_access`) use `is_eligible_approver_reader`, which also traverses `memo_attachments`/`correspondence_attachments`: the instance lives on the *container's* backing document, not the attachment. `workspace`/variants keep the strict level guard. See `tests/test_document_approver_read.py`.
 - Activation does not validate that steps/approvers exist; step-order uniqueness is enforced only by a DB constraint.
 - **Duplicate-action guard** (`approval_service.py`): a repeated identical action by the same user at the same step → 409. Approve message is exactly `This record is already approved by the first approver.`; other actions get `You have already performed '<action>' on this step.` Enforced twice: pre-check `_ensure_no_duplicate_action` (friendly 409) and unique constraint `uq_workflow_actions_instance_step_user_action` on `workflow_actions (instance, step, acted_by, action)` (race backstop → `IntegrityError` → 409). **Guard ordering gotcha:** the instance-status guard (422, terminal status) and the eligibility guard (403) run *before* the duplicate check — so on a completed instance a repeat returns 422, not 409. To test duplicates you need an instance that stays actionable: a **sequential step with ≥2 approvers** (first approve leaves it `pending_approval`). Different action or different step never trips the guard.
 
 ## Module Notes
-- **`user_levels/`** — `DocumentUserLevelLink` gates document visibility in `documents/service.py`; Admin bypasses. A document with no links is visible to all linked levels; if no links exist at all, it is unconstrained.
+- **`user_levels/`** — `DocumentUserLevelLink` gates document visibility in `documents/service.py`; Admin bypasses. Non-admins only see documents linked to **their** level (list and detail both filter), and a document with **no** links is admin-only: excluded from lists, 403 `You do not have access to this document` on detail/download.
 - **`memos/`** — markdown → HTML → reportlab PDF (`memos/pdf_generator.py`). Reportlab's `Paragraph` parser is strict about balanced tags, so `_apply_inline_formatting` strips italics to plain text and `_sanitize_for_reportlab()` removes malformed tags. `_check_edit_access`: terminal statuses are frozen; the author may edit any non-terminal status; eligible approvers only in `draft`/`returned`/`rejected`.
 - **`correspondence/`** — inbound/outbound/internal register. Key facts: `document_id` is nullable; outbound/internal auto-generate an HTML backing document from `body`; **a category is required to attach files** (`_resolve_backing_directory`); `/{id}/download` falls back to the first attachment; `/{id}/download-final` renders a signed PDF (`correspondence/pdf_generator.py`). Status model is richer than workflow: `received/registered/assigned/processing → draft/submitted/pending_approval/… → ready_for_dispatch → dispatched → delivered → acknowledged → completed → archived` (`TERMINAL_STATUSES` in `service.py`; also frozen once `dispatch_method` is set). Replies: `POST /{parent_id}/reply`, `POST /{id}/submit-reply`, `POST /{id}/mark-responded`, `GET /{parent_id}/replies`, keyed on `parent_correspondence_id` + `response_received`/`responded_at`. All mutations append to `CorrespondenceMovement` (the timeline).
 - **`notifications/`** — `EmailService` is fire-and-forget and never raises; `EmailNotification` rows give idempotency. SMTP via `core/config.py` `SMTP_*`.
@@ -120,8 +119,8 @@ Per-company credentials on the `Company` model, falling back to global `AZURE_*`
 **JWK parsing:** `python-jose`'s `jwk.construct()` fails on Azure keys carrying `x5c`. `auth/azure_service.py` builds RSA keys from the X.509 chain with `cryptography`. Do not revert.
 
 ## Frontend Conventions
-- API modules import `apiClient` from `./client` (baseURL `/api/v1`, 401-refresh interceptor) — **not** `apiRoot` from `./base`. Paths are relative: `apiClient.get('/users')`.
-- Error display uses `getErrorMessage(err)` from `@/api/client`; toasts via `react-hot-toast`.
+- API modules import `apiClient` from `./client` (baseURL `/api/v1`; interceptors: 401-refresh + Blob error parsing) — **not** `apiRoot` from `./base`. Paths are relative: `apiClient.get('/users')`.
+- Error display uses `getErrorMessage(err)` from `@/api/client`; toasts via `react-hot-toast`. Download endpoints use `responseType: 'blob'` — the response error interceptor converts Blob error bodies to JSON in place, so `getErrorMessage(err)` and `err.response.data.detail` surface the real `detail`. Don't re-solve this per caller.
 - Toast placement: the global `<Toaster>` (`main.tsx`) is `top-right`. Workflow/approval error toasts pass a per-call `{ position: 'top-center' }` override (see `CorrespondenceDetailPage`, `MemoDetailPage`) — do not move the global Toaster to change one toast.
 - `store/authStore.ts` persists **only** tokens; the user object is refetched on every load by `ProtectedRoute` → `authApi.me()`.
 - `@` → `dms-app/src/`. Tailwind is used via `@tailwind` directives in `index.css` — **there is no `tailwind.config.js`**; use utilities directly.
@@ -134,7 +133,7 @@ Per-company credentials on the `Company` model, falling back to global `AZURE_*`
 - No new dependencies without explicit approval.
 
 ## Seed Data
-`seed.py` creates five roles: SuperAdmin and Admin get all five permissions; Maker gets view/download/create/update; Checker gets view/download/update; Auditor gets view/download. Default admin `admin@dms.local` / `Admin@1234`.
+`seed.py` (run once, after migrate) creates the five permissions and five roles (SuperAdmin + Admin: all five; Maker: view/download/create/update; Checker: view/download/update; Auditor: view/download), the High/Medium/Low user levels (backfilling `Low` onto users that have none), the default **SuperAdmin** `superadmin@dms.local` / `SuperAdmin@1234`, and 100 GB storage capacity. It does **not** create an admin user — bootstrap through the SuperAdmin (`DEFAULT_ADMIN` in `seed.py` is an unused constant).
 
 ## Deploy
 Production is **not** Docker: `dms-backend.service` (systemd unit, uvicorn on 127.0.0.1:8000) + `dms.conf` (nginx TLS terminating, serves `dms-app/dist`, proxies `/api` and `/health`, SPA fallback to `index.html`). `docker-compose.yml` is stale — it builds `./backend` and `./frontend`, which do not exist; the root `Dockerfile` is current.

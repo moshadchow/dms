@@ -16,11 +16,24 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config
 })
 
-// ── Response: handle 401 (token refresh) only ─────────────────────
+// ── Response: handle 401 (token refresh) + blob error bodies ─────
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: unknown) => {
     if (!axios.isAxiosError(error)) return Promise.reject(error)
+
+    // Blob responses (downloads) deliver error bodies as a Blob, so callers
+    // reading `response.data.detail` (or getErrorMessage) would miss the real
+    // message and fall back to the generic status text. Parse it in place.
+    const blobData = error.response?.data
+    if (blobData instanceof Blob) {
+      try {
+        const text = await blobData.text()
+        error.response!.data = JSON.parse(text)
+      } catch {
+        // non-JSON error body — leave the Blob as-is
+      }
+    }
 
     const status = error.response?.status
 
