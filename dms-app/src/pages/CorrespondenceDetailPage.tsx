@@ -60,18 +60,23 @@ export default function CorrespondenceDetailPage() {
   const user = useAuthStore(s => s.user)
   const { canCreate, canUpdate, canDownload } = usePermissions()
 
-  const fetchCorr = async () => {
-    if (!id) return
-    setLoading(true)
-    try {
-      const data = await correspondenceApi.get(Number(id))
-      setCorr(data)
-    } catch (err) {
-      toast.error(getErrorMessage(err))
-      navigate('/correspondence')
-    } finally {
-      setLoading(false)
-    }
+  const fetchCorr = () => {
+    if (!id) return Promise.resolve()
+    return Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        return correspondenceApi.get(Number(id))
+      })
+      .then((data) => {
+        setCorr(data)
+      })
+      .catch((err) => {
+        toast.error(getErrorMessage(err))
+        navigate('/correspondence')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }
 
   useEffect(() => { fetchCorr() }, [id])

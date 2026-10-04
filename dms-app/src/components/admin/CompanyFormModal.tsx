@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'react-hot-toast'
 import { companiesApi } from '@/api/companies.api'
+import { getErrorMessage } from '@/api/client'
 import type { Company, CompanyCreateRequest, CompanyUpdateRequest } from '@/types/company.types'
 
 interface Props {
@@ -24,29 +25,32 @@ export default function CompanyFormModal({ isOpen, editing, onClose, onSuccess }
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (editing) {
-      setForm({
-        company_id: editing.company_id,
-        full_name: editing.full_name,
-        short_name: editing.short_name,
-        address: editing.address || '',
-        contact_person: editing.contact_person || '',
-        contact_no: editing.contact_no || '',
-        email_address: editing.email_address || '',
-        is_active: editing.is_active,
+    Promise.resolve()
+      .then(() => {
+        if (editing) {
+          setForm({
+            company_id: editing.company_id,
+            full_name: editing.full_name,
+            short_name: editing.short_name,
+            address: editing.address || '',
+            contact_person: editing.contact_person || '',
+            contact_no: editing.contact_no || '',
+            email_address: editing.email_address || '',
+            is_active: editing.is_active,
+          })
+        } else {
+          setForm({
+            company_id: '',
+            full_name: '',
+            short_name: '',
+            address: '',
+            contact_person: '',
+            contact_no: '',
+            email_address: '',
+            is_active: true,
+          })
+        }
       })
-    } else {
-      setForm({
-        company_id: '',
-        full_name: '',
-        short_name: '',
-        address: '',
-        contact_person: '',
-        contact_no: '',
-        email_address: '',
-        is_active: true,
-      })
-    }
   }, [editing, isOpen])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -82,9 +86,8 @@ export default function CompanyFormModal({ isOpen, editing, onClose, onSuccess }
       }
       onSuccess()
       onClose()
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || 'Operation failed'
-      toast.error(msg)
+    } catch (err) {
+      toast.error(getErrorMessage(err))
     } finally {
       setSaving(false)
     }

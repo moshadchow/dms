@@ -351,7 +351,10 @@ class UserService:
         if data.user_level_id is not None or (hasattr(data, 'user_level_id') and 'user_level_id' in data.model_fields_set):
             user.user_level_id = data.user_level_id
 
-        # Company assignment — only for ADMIN users
+        # Company assignment — ADMIN targets can be set or cleared. Other roles
+        # are normally fixed, with one repair exception: a company-less user
+        # (e.g. provisioned by the pre-company-scoped Azure flow) can be given
+        # a company, otherwise those accounts would be unmanageable forever.
         if 'company_id' in data.model_fields_set:
             # Defense-in-depth: admin cannot change their own company
             if current_user is not None and current_user.id == user_id:
@@ -360,7 +363,13 @@ class UserService:
                     detail="Admin cannot change their own company",
                 )
             target_user_roles = [r.name for r in user.roles]
-            if RoleName.ADMIN in target_user_roles:
+            is_admin_target = RoleName.ADMIN in target_user_roles
+            is_orphan_repair = (
+                data.company_id is not None
+                and user.company_id is None
+                and RoleName.SUPERADMIN not in target_user_roles
+            )
+            if is_admin_target or is_orphan_repair:
                 if data.company_id is not None:
                     company = self.session.get(Company, data.company_id)
                     if not company:

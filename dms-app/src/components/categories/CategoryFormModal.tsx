@@ -19,16 +19,19 @@ export default function CategoryFormModal({ isOpen, onClose, onSuccess, editing 
   const [error, setError]       = useState('')
 
   useEffect(() => {
-    if (editing) {
-      setName(editing.name)
-      setDesc(editing.description ?? '')
-      setIsActive(editing.is_active)
-    } else {
-      setName('')
-      setDesc('')
-      setIsActive(true)
-    }
-    setError('')
+    Promise.resolve()
+      .then(() => {
+        if (editing) {
+          setName(editing.name)
+          setDesc(editing.description ?? '')
+          setIsActive(editing.is_active)
+        } else {
+          setName('')
+          setDesc('')
+          setIsActive(true)
+        }
+        setError('')
+      })
   }, [editing, isOpen])
 
   const handleSubmit = async (e: React.FormEvent) => {

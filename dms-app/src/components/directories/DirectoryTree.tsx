@@ -54,7 +54,7 @@ export default function DirectoryTree({ categoryId, tree, onRefresh }: Props) {
     navigate(`/directory/${node.id}`)
   }
 
-  const handleFormSuccess = (_dir: Directory) => {
+  const handleFormSuccess = () => {
     onRefresh()
   }
 

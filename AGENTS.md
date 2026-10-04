@@ -25,7 +25,7 @@ npm run build    # tsc && vite build — this IS the typecheck step
 npm run lint     # ESLint
 ```
 
-Copy `.env.example` → `.env`. Never commit `.env` (Azure secrets).
+Copy `.env.example` → `.env`. Never commit `.env`. There are **no** Azure AD credentials in `.env` — Entra ID config is per company, in the database.
 
 ## Spec-Driven Workflow
 Features are numbered steps. Specs live in `specs/NN-kebab-slug.md`; `/create-spec` (`.opencode/commands/create-spec.md`, mirrored in `.claude/commands/`) scaffolds the next one with a required structure (Overview / Depends on / Routes / Database changes / Files to change / Files to create / New dependencies / Rules for implementation / Definition of done). Check `specs/` for the highest number before starting new work. `plans/` holds derived implementation plans and is currently empty.
@@ -110,11 +110,17 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 - **`correspondence/`** — inbound/outbound/internal register. Key facts: `document_id` is nullable; outbound/internal auto-generate an HTML backing document from `body`; **a category is required to attach files** (`_resolve_backing_directory`); `/{id}/download` falls back to the first attachment; `/{id}/download-final` renders a signed PDF (`correspondence/pdf_generator.py`). Status model is richer than workflow: `received/registered/assigned/processing → draft/submitted/pending_approval/… → ready_for_dispatch → dispatched → delivered → acknowledged → completed → archived` (`TERMINAL_STATUSES` in `service.py`; also frozen once `dispatch_method` is set). Replies: `POST /{parent_id}/reply`, `POST /{id}/submit-reply`, `POST /{id}/mark-responded`, `GET /{parent_id}/replies`, keyed on `parent_correspondence_id` + `response_received`/`responded_at`. All mutations append to `CorrespondenceMovement` (the timeline).
 - **`notifications/`** — `EmailService` is fire-and-forget and never raises; `EmailNotification` rows give idempotency. SMTP via `core/config.py` `SMTP_*`.
 - **`signatures/`** — JPEG/PNG, 5 MB, soft-delete, stored under the company `signatures/` root. Referenced by `signature_id` on workflow approvals.
-- **`company_profile/`** — SUPERADMIN-only CRUD at `/api/v1/companies`; per-company Azure AD config at `/{id}/azure-config` (GET: own company or any for SUPERADMIN; PUT/DELETE: SUPERADMIN only; secret is never returned).
+- **`company_profile/`** — SUPERADMIN-only CRUD at `/api/v1/companies`; per-company Azure AD config at `/{id}/azure-config` (GET: own company or any for SUPERADMIN; PUT/DELETE: SUPERADMIN only; secret is write-only — absent from `CompanyRead`/`AzureConfigRead` and redacted in audit payloads; enabling requires client ID + secret + tenant ID). Company-scoped Azure login behavior lives under **Azure AD** below.
 - **`storage_usage/`** — quota accounting, admin endpoints at `/api/v1/storage`.
 
 ## Azure AD
-Per-company credentials on the `Company` model, falling back to global `AZURE_*` env. Login takes optional `company_id`; the callback recovers it from the state parameter. Flow: `/azure/login` → Azure → callback (code exchange + ID token validation + JIT user provisioning) → redirect to `{FRONTEND_URL}/auth/callback?access_token=...&refresh_token=...`, handled by `dms-app/src/pages/AzureCallbackPage.tsx`.
+**Company-scoped and database-driven — there is no global `.env` fallback** (`AZURE_CLIENT_ID/SECRET/TENANT_ID/SCOPES` do not exist; `core/config.py` keeps only `AZURE_REDIRECT_URI` + `FRONTEND_URL`). Config lives on `Company` (`azure_client_id`, `azure_client_secret`, `azure_tenant_id`, `azure_enabled`, `azure_default_role_name`), managed via `/api/v1/companies/{id}/azure-config` (secret is write-only: never in `CompanyRead`, `AzureConfigRead`, or audit payloads).
+
+`GET /azure/login?company_id=<id>` **requires** the company and validates it server-side (exists → active → `azure_enabled` → client ID + tenant ID present) before building the Entra authorize URL from *that* company's config; failures redirect to `{FRONTEND_URL}/login?error=…` with a user-safe message. The validated `company_id` is stored in the server-side `_pending_auth` map keyed by the random `state` — that map (not client-decoded state) is the authority the callback uses to reload the **same** config for token exchange and ID-token validation (issuer/audience/JWKS per company tenant; TTL-pruned, pop-once). Flow: `/azure/login` → Azure → callback (code exchange + ID token validation + JIT user provisioning) → redirect to `{FRONTEND_URL}/auth/callback?access_token=...&refresh_token=...`, handled by `dms-app/src/pages/AzureCallbackPage.tsx`. `GET /auth/azure/config` returns `{enabled, companies}` (active + fully configured only) for the login page's company selector.
+
+**Company isolation:** `resolve_azure_user` requires `company_id`; an existing user matched by `oid` or `email` must belong to that exact company or gets 403 (`_ensure_company_membership`) — users are never relinked or moved across companies. JIT users get the authenticating company's `company_id`.
+
+**Orphaned accounts:** users provisioned before company-scoped Azure auth have `company_id = NULL` — invisible to ADMIN and rejected (403) on Azure login. Repair them with `PATCH /api/v1/users/{id}` from SUPERADMIN: `update_user` normally only applies `company_id` to ADMIN-role targets (reassignment of MAKER/CHECKER/AUDITOR is ignored — `test_non_admin_user_update_ignores_company`), but it *does* assign a company to **any non-SUPERADMIN user whose `company_id` is currently NULL** (same exists/active validation as the ADMIN path). SUPERADMIN targets never receive a company.
 
 **JWK parsing:** `python-jose`'s `jwk.construct()` fails on Azure keys carrying `x5c`. `auth/azure_service.py` builds RSA keys from the X.509 chain with `cryptography`. Do not revert.
 
@@ -126,6 +132,7 @@ Per-company credentials on the `Company` model, falling back to global `AZURE_*`
 - `@` → `dms-app/src/`. Tailwind is used via `@tailwind` directives in `index.css` — **there is no `tailwind.config.js`**; use utilities directly.
 - Rich text is TipTap (see `dms-app/src/components/memo/`); sanitized HTML goes through `utils/sanitizeHtml.ts`.
 - Typecheck is part of `npm run build`; there is no standalone `typecheck` script.
+- `npm run lint` passes with 0 errors. `react-hooks/set-state-in-effect` (React-Compiler-era rule) is enforced at `error`; effects must not call setState synchronously — use `Promise.resolve().then(...)` chains for loading/fetch and promise-deferred resets for reset-on-open/param-change effects (see `WorkflowConfigPanel`, `CompanyFormModal`).
 
 ## Dependency Pins (do not bump)
 - `bcrypt==4.0.1` — passlib 1.7.4 is incompatible with bcrypt 4.1+.

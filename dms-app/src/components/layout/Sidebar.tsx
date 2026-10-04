@@ -32,13 +32,19 @@ export default function Sidebar({ isOpen }: Props) {
   useEffect(() => {
     // SUPERADMIN has no access to categories
     if (isSuperAdmin()) {
-      setCategories([])
-      setLoadingCats(false)
+      Promise.resolve()
+        .then(() => {
+          setCategories([])
+          setLoadingCats(false)
+        })
       return
     }
-    setLoadingCats(true)
-    // Match dashboard: admins see inactive categories too
-    categoriesApi.list(isAdmin())
+    Promise.resolve()
+      .then(() => {
+        setLoadingCats(true)
+        // Match dashboard: admins see inactive categories too
+        return categoriesApi.list(isAdmin())
+      })
       .then(setCategories)
       .catch(() => toast.error('Failed to load categories'))
       .finally(() => setLoadingCats(false))

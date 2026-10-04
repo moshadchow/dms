@@ -27,26 +27,38 @@ export default function CompanyProfilePage() {
   const [total, setTotal] = useState(0)
   const LIMIT = 20
 
-  const loadCompanies = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await companiesApi.list({
-        skip: (page - 1) * LIMIT,
-        limit: LIMIT,
-        search: search.trim() || undefined,
-        is_active: filterActive === '' ? undefined : filterActive === 'true',
+  const loadCompanies = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        return companiesApi.list({
+          skip: (page - 1) * LIMIT,
+          limit: LIMIT,
+          search: search.trim() || undefined,
+          is_active: filterActive === '' ? undefined : filterActive === 'true',
+        })
       })
-      setCompanies(data.items)
-      setTotal(data.total)
-    } catch {
-      toast.error('Failed to load companies')
-    } finally {
-      setLoading(false)
-    }
+      .then((data) => {
+        setCompanies(data.items)
+        setTotal(data.total)
+      })
+      .catch(() => {
+        toast.error('Failed to load companies')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [page, search, filterActive])
 
+  // Reset page when search/filters change (adjusted during render)
+  const filterKey = `${search}|${filterActive}`
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey)
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey)
+    setPage(1)
+  }
+
   useEffect(() => { loadCompanies() }, [loadCompanies])
-  useEffect(() => { setPage(1) }, [search, filterActive])
 
   const totalPages = Math.ceil(total / LIMIT) || 1
 

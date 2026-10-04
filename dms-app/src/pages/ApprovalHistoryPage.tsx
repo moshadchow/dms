@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
+import { getErrorMessage } from "@/api/client";
 import { workflowApi } from "@/api/workflow.api";
 import { useAuthStore } from "@/store/authStore";
 import type {
@@ -41,7 +41,6 @@ function formatDate(iso: string) {
 }
 
 export default function ApprovalHistoryPage() {
-  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
 
   const [instances, setInstances] = useState<WorkflowInstance[]>([]);
@@ -49,24 +48,28 @@ export default function ApprovalHistoryPage() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<WorkflowInstanceDetail | null>(null);
   const [detailHistory, setDetailHistory] = useState<WorkflowHistory[]>([]);
   const [detailActions, setDetailActions] = useState<WorkflowAction[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
 
-  const fetchInstances = useCallback(async (skip: number) => {
-    setLoading(true);
-    try {
-      const res = await workflowApi.getMyInstances({ skip, limit: LIMIT });
-      setInstances(res.items);
-      setTotal(res.total);
-    } catch {
-      toast.error("Failed to load submission history");
-    } finally {
-      setLoading(false);
-    }
+  const fetchInstances = useCallback((skip: number) => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true);
+        return workflowApi.getMyInstances({ skip, limit: LIMIT });
+      })
+      .then((res) => {
+        setInstances(res.items);
+        setTotal(res.total);
+      })
+      .catch(() => {
+        toast.error("Failed to load submission history");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -74,7 +77,6 @@ export default function ApprovalHistoryPage() {
   }, [page, fetchInstances]);
 
   const openDetail = async (id: string) => {
-    setSelectedId(id);
     setShowModal(true);
     setDetailLoading(true);
     setDetail(null);
@@ -94,7 +96,6 @@ export default function ApprovalHistoryPage() {
 
   const closeModal = () => {
     setShowModal(false);
-    setSelectedId(null);
     setDetail(null);
     setDetailHistory([]);
     setDetailActions([]);
@@ -106,9 +107,8 @@ export default function ApprovalHistoryPage() {
       await workflowApi.cancelInstance(inst.id);
       toast.success("Submission cancelled");
       fetchInstances(page * LIMIT);
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || "Failed to cancel submission";
-      toast.error(msg);
+    } catch (err) {
+      toast.error(getErrorMessage(err));
     }
   };
 

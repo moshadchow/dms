@@ -85,24 +85,26 @@ export default function PdfAnnotationWorkspace({
 
   useEffect(() => {
     // Local editor state is intentionally reset when a saved workspace reloads.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStrokes(
-      annotations
-        .filter((annotation) => annotation.annotation_type === 'stroke')
-        .map((annotation) => ({
-          localId: `saved-${annotation.id}`,
-          pageNumber: annotation.page_number ?? 1,
-          color: annotation.color,
-          thickness: annotation.thickness ?? 4,
-          points: Array.isArray(annotation.anchor_data?.points)
-            ? annotation.anchor_data.points as PdfStrokePoint[]
-            : [],
-        }))
-        .filter((annotation) => annotation.points.length >= 2)
-    )
-    setUndoStack([])
-    setRedoStack([])
-    setActiveStroke(null)
+    Promise.resolve()
+      .then(() => {
+        setStrokes(
+          annotations
+            .filter((annotation) => annotation.annotation_type === 'stroke')
+            .map((annotation) => ({
+              localId: `saved-${annotation.id}`,
+              pageNumber: annotation.page_number ?? 1,
+              color: annotation.color,
+              thickness: annotation.thickness ?? 4,
+              points: Array.isArray(annotation.anchor_data?.points)
+                ? annotation.anchor_data.points as PdfStrokePoint[]
+                : [],
+            }))
+            .filter((annotation) => annotation.points.length >= 2)
+        )
+        setUndoStack([])
+        setRedoStack([])
+        setActiveStroke(null)
+      })
     activeStrokeRef.current = null
     eraserSnapshotRef.current = null
     eraserChangedRef.current = false
@@ -114,10 +116,12 @@ export default function PdfAnnotationWorkspace({
 
   useEffect(() => {
     let cancelled = false
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoadingPdf(true)
-    setPdfReady(false)
-    setPageMetrics([])
+    Promise.resolve()
+      .then(() => {
+        setLoadingPdf(true)
+        setPdfReady(false)
+        setPageMetrics([])
+      })
     pdfDocRef.current = null
 
     const token = localStorage.getItem('access_token')

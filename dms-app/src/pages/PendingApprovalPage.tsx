@@ -47,20 +47,25 @@ export default function PendingApprovalPage() {
   const [memoLoading, setMemoLoading] = useState(false)
   const [signatureId, setSignatureId] = useState<number | null>(null)
 
-  const loadPending = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await workflowApi.getPendingInstances({
-        skip: (page - 1) * LIMIT,
-        limit: LIMIT,
+  const loadPending = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        return workflowApi.getPendingInstances({
+          skip: (page - 1) * LIMIT,
+          limit: LIMIT,
+        })
       })
-      setInstances(data.items)
-      setTotal(data.total)
-    } catch {
-      toast.error('Failed to load pending approvals')
-    } finally {
-      setLoading(false)
-    }
+      .then((data) => {
+        setInstances(data.items)
+        setTotal(data.total)
+      })
+      .catch(() => {
+        toast.error('Failed to load pending approvals')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [page])
 
   useEffect(() => { loadPending() }, [loadPending])
@@ -132,9 +137,8 @@ export default function PendingApprovalPage() {
       closeModal()
       loadPending()
       refreshPendingCount()
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || `Failed to ${action} document`
-      toast.error(msg, { position: 'top-center' })
+    } catch (err) {
+      toast.error(getErrorMessage(err), { position: 'top-center' })
     } finally {
       setSubmitting(false)
     }

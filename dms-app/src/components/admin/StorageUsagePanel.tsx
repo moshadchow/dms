@@ -9,17 +9,22 @@ export default function StorageUsagePanel() {
   const [capacityInput, setCapacityInput] = useState('')
   const [savingCapacity, setSavingCapacity] = useState(false)
 
-  const loadUsage = useCallback(async () => {
-    setLoading(true)
-    try {
-      const result = await storageApi.getUsage()
-      setData(result)
-      setCapacityInput(String(Math.round(result.total_capacity / (1024 ** 3))))
-    } catch {
-      toast.error('Failed to load storage usage')
-    } finally {
-      setLoading(false)
-    }
+  const loadUsage = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        return storageApi.getUsage()
+      })
+      .then((result) => {
+        setData(result)
+        setCapacityInput(String(Math.round(result.total_capacity / (1024 ** 3))))
+      })
+      .catch(() => {
+        toast.error('Failed to load storage usage')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [])
 
   useEffect(() => { loadUsage() }, [loadUsage])

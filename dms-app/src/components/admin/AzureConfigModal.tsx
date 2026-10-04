@@ -21,29 +21,34 @@ export default function AzureConfigModal({ isOpen, company, onClose, onSuccess }
   const [enabled, setEnabled] = useState(false)
   const [defaultRole, setDefaultRole] = useState('auditor')
 
+  const loadConfig = () => {
+    if (!company) return
+    Promise.resolve()
+      .then(() => {
+        setFetching(true)
+        return companiesApi.getAzureConfig(company.id)
+      })
+      .then((data) => {
+        setConfig(data)
+        setClientId(data.azure_client_id || '')
+        setTenantId(data.azure_tenant_id || '')
+        setEnabled(data.azure_enabled)
+        setDefaultRole(data.azure_default_role_name || 'auditor')
+        setClientSecret('') // Never pre-fill secret
+      })
+      .catch(() => {
+        toast.error('Failed to load Azure AD config')
+      })
+      .finally(() => {
+        setFetching(false)
+      })
+  }
+
   useEffect(() => {
     if (isOpen && company) {
       loadConfig()
     }
   }, [isOpen, company])
-
-  const loadConfig = async () => {
-    if (!company) return
-    setFetching(true)
-    try {
-      const data = await companiesApi.getAzureConfig(company.id)
-      setConfig(data)
-      setClientId(data.azure_client_id || '')
-      setTenantId(data.azure_tenant_id || '')
-      setEnabled(data.azure_enabled)
-      setDefaultRole(data.azure_default_role_name || 'auditor')
-      setClientSecret('') // Never pre-fill secret
-    } catch {
-      toast.error('Failed to load Azure AD config')
-    } finally {
-      setFetching(false)
-    }
-  }
 
   const handleSave = async () => {
     if (!company) return

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import type { Correspondence, CorrespondenceDirection, CorrespondencePriority, CorrespondenceStatus } from '@/types/correspondence.types'
+import type { Correspondence, CorrespondenceDirection, CorrespondencePriority } from '@/types/correspondence.types'
 import { formatDateTime } from '@/utils/formatters'
 
 interface Props {

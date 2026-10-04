@@ -22,21 +22,25 @@ export default function CategorySetupPanel() {
   const [deleting, setDeleting]     = useState<Category | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
-  const loadCategories = useCallback(async () => {
-    // SUPERADMIN has no access to categories
-    if (isSuperAdmin()) {
-      setCategories([])
-      setLoading(false)
-      return
-    }
-    try {
-      const data = await categoriesApi.list(isAdmin())
-      setCategories(data)
-    } catch {
-      toast.error('Failed to load categories')
-    } finally {
-      setLoading(false)
-    }
+  const loadCategories = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        // SUPERADMIN has no access to categories
+        if (isSuperAdmin()) {
+          setCategories([])
+          setLoading(false)
+          return Promise.resolve()
+        }
+        return categoriesApi.list(isAdmin()).then((data) => {
+          setCategories(data)
+        })
+      })
+      .catch(() => {
+        toast.error('Failed to load categories')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [isAdmin, isSuperAdmin])
 
   useEffect(() => { loadCategories() }, [loadCategories])

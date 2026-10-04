@@ -33,22 +33,26 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
   const [saving, setSaving] = useState(false)
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null)
 
-  const loadCategories = useCallback(async () => {
-    // SUPERADMIN has no access to categories — skip API call
-    if (isSuperAdmin) {
-      setCategories([])
-      setLoadingCategories(false)
-      return
-    }
-    setLoadingCategories(true)
-    try {
-      const data = await categoriesApi.list(true)
-      setCategories(data)
-    } catch (error) {
-      toast.error(getErrorMessage(error))
-    } finally {
-      setLoadingCategories(false)
-    }
+  const loadCategories = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        // SUPERADMIN has no access to categories — skip API call
+        if (isSuperAdmin) {
+          setCategories([])
+          setLoadingCategories(false)
+          return Promise.resolve()
+        }
+        setLoadingCategories(true)
+        return categoriesApi.list(true).then((data) => {
+          setCategories(data)
+        })
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error))
+      })
+      .finally(() => {
+        setLoadingCategories(false)
+      })
   }, [isSuperAdmin])
 
   const loadUsers = useCallback(async (search = '') => {
@@ -89,17 +93,20 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
     [selectedUserId, users]
   )
 
-  useEffect(() => {
+  // Keep the category checkboxes in sync with the selected user (adjusted
+  // during render instead of an effect)
+  const [prevSelectedUser, setPrevSelectedUser] = useState(selectedUser)
+  if (prevSelectedUser !== selectedUser) {
+    setPrevSelectedUser(selectedUser)
     if (!selectedUser) {
       setSelectedCategoryIds([])
       setOriginalCategoryIds([])
-      return
+    } else {
+      const assignedIds = selectedUser.categories.map((category) => category.id).sort((a, b) => a - b)
+      setSelectedCategoryIds(assignedIds)
+      setOriginalCategoryIds(assignedIds)
     }
-
-    const assignedIds = selectedUser.categories.map((category) => category.id).sort((a, b) => a - b)
-    setSelectedCategoryIds(assignedIds)
-    setOriginalCategoryIds(assignedIds)
-  }, [selectedUser])
+  }
 
   const isDirty = useMemo(() => {
     if (selectedCategoryIds.length !== originalCategoryIds.length) return true

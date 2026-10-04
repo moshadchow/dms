@@ -61,7 +61,6 @@ const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }>
 export default function DocumentCard({ doc, onView, onRefresh, selectable, selected, onSelect }: Props) {
   const { canUpdate, canDelete, canDownload, isAdmin } = usePermissions()
   const [menuOpen, setMenuOpen]   = useState(false)
-  const [loading, setLoading]     = useState(false)
 
   const statusStyle = STATUS_STYLE[doc.status] ?? STATUS_STYLE.active
   const fileIcon    = FILE_ICONS[doc.file_type]
@@ -69,12 +68,9 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
 
   const handleDownload = async () => {
     try {
-      setLoading(true)
       await documentsApi.download(doc.id, doc.file_name)
     } catch (err) {
       toast.error(getErrorMessage(err))
-    } finally {
-      setLoading(false)
     }
   }
 

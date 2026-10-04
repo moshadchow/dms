@@ -17,18 +17,22 @@ class CompanyBase(SQLModel):
     contact_no: Optional[str] = Field(default=None, max_length=50)
     email_address: Optional[str] = Field(default=None, max_length=255)
     is_active: bool = Field(default=True)
-    # ── Azure AD (per-company) ────────────────
-    azure_client_id: Optional[str] = Field(default=None, max_length=255)
-    azure_client_secret: Optional[str] = Field(default=None, max_length=500)
-    azure_tenant_id: Optional[str] = Field(default=None, max_length=255)
-    azure_enabled: bool = Field(default=False)
-    azure_default_role_name: Optional[str] = Field(default=None, max_length=50)
 
 
 class Company(CompanyBase, table=True):
     __tablename__ = "companies"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # ── Azure AD (per-company) ────────────────
+    # Company-scoped Entra ID configuration — the single source of truth for
+    # Microsoft sign-in. Managed exclusively through AzureConfigUpdate on the
+    # /{id}/azure-config endpoints; the secret is never part of CompanyBase
+    # so it is never accepted by CompanyCreate nor serialized by CompanyRead.
+    azure_client_id: Optional[str] = Field(default=None, max_length=255)
+    azure_client_secret: Optional[str] = Field(default=None, max_length=500)
+    azure_tenant_id: Optional[str] = Field(default=None, max_length=255)
+    azure_enabled: bool = Field(default=False)
+    azure_default_role_name: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -71,4 +75,6 @@ class CompanyRead(CompanyBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    # Badge state only — client id / tenant / role come from GET /{id}/azure-config.
+    azure_enabled: bool = False
     model_config = {"from_attributes": True}

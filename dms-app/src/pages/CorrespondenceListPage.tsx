@@ -35,32 +35,37 @@ export default function CorrespondenceListPage() {
   const [page, setPage] = useState(0)
   const limit = 20
 
-  const fetchCorrespondences = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params: CorrespondenceListParams = { skip: page * limit, limit }
-      // Tab overrides
-      if (tab === 'inbound') params.direction = 'inbound'
-      else if (tab === 'outbound') params.direction = 'outbound'
-      else if (tab === 'internal') params.direction = 'internal'
-      else if (tab === 'pending') params.status = 'pending_approval'
-      else if (tab === 'overdue') params.overdue = true
+  const fetchCorrespondences = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        const params: CorrespondenceListParams = { skip: page * limit, limit }
+        // Tab overrides
+        if (tab === 'inbound') params.direction = 'inbound'
+        else if (tab === 'outbound') params.direction = 'outbound'
+        else if (tab === 'internal') params.direction = 'internal'
+        else if (tab === 'pending') params.status = 'pending_approval'
+        else if (tab === 'overdue') params.overdue = true
 
-      // Explicit filters (take precedence over tab for direction)
-      if (direction) params.direction = direction
-      if (priority) params.priority = priority
-      if (status && tab !== 'pending') params.status = status
-      if (responseRequired !== null) params.response_required = responseRequired
-      if (search) params.search = search
+        // Explicit filters (take precedence over tab for direction)
+        if (direction) params.direction = direction
+        if (priority) params.priority = priority
+        if (status && tab !== 'pending') params.status = status
+        if (responseRequired !== null) params.response_required = responseRequired
+        if (search) params.search = search
 
-      const res = await correspondenceApi.list(params)
-      setItems(res.items)
-      setTotal(res.total)
-    } catch (err) {
-      toast.error(getErrorMessage(err))
-    } finally {
-      setLoading(false)
-    }
+        return correspondenceApi.list(params)
+      })
+      .then((res) => {
+        setItems(res.items)
+        setTotal(res.total)
+      })
+      .catch((err) => {
+        toast.error(getErrorMessage(err))
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [tab, direction, priority, status, search, responseRequired, page])
 
   useEffect(() => { fetchCorrespondences() }, [fetchCorrespondences])

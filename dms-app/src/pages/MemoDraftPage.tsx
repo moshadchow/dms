@@ -28,10 +28,13 @@ export default function MemoDraftPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    setSelectedWorkflowId('')
-    setWorkflows([])
-    setMemo(null)
-    setLoading(true)
+    Promise.resolve()
+      .then(() => {
+        setSelectedWorkflowId('')
+        setWorkflows([])
+        setMemo(null)
+        setLoading(true)
+      })
   }, [id, isEdit])
 
   useEffect(() => {

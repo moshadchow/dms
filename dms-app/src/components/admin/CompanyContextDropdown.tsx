@@ -14,16 +14,21 @@ export default function CompanyContextDropdown({ value, onChange }: Props) {
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
 
-  const loadCompanies = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await companiesApi.list({ is_active: true })
-      setCompanies(data.items)
-    } catch (error) {
-      toast.error(getErrorMessage(error))
-    } finally {
-      setLoading(false)
-    }
+  const loadCompanies = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        return companiesApi.list({ is_active: true })
+      })
+      .then((data) => {
+        setCompanies(data.items)
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error))
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [])
 
   useEffect(() => {

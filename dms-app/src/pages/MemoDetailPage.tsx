@@ -82,7 +82,7 @@ export default function MemoDetailPage() {
       setInstance(inst)
       const m = await memoApi.get(memoId)
       setMemo(m)
-    } catch (err: any) {
+    } catch (err) {
       toast.error(getErrorMessage(err), { position: 'top-center' })
     } finally {
       setActing(false)
@@ -101,9 +101,8 @@ export default function MemoDetailPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-    } catch (err: any) {
-      const message = err?.response?.data?.detail || 'Failed to download final draft'
-      toast.error(message)
+    } catch (err) {
+      toast.error(getErrorMessage(err))
     } finally {
       setDownloading(false)
     }

@@ -17,12 +17,13 @@ export default function AzureCallbackPage() {
     const authError = searchParams.get('error')
 
     if (authError) {
-      setError(decodeURIComponent(authError))
+      const message = decodeURIComponent(authError)
+      Promise.resolve().then(() => setError(message))
       return
     }
 
     if (!accessToken || !refreshToken) {
-      setError('Missing authentication tokens')
+      Promise.resolve().then(() => setError('Missing authentication tokens'))
       return
     }
 

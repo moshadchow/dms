@@ -15,7 +15,7 @@ import UploadModal from '@/components/documents/UploadModal'
 import EditDocumentModal from '@/components/documents/EditDocumentModal'
 import type { Category } from '@/types/category.types'
 import type { DirectoryNode } from '@/types/directory.types'
-import type { Document, DocumentListResponse } from '@/types/document.types'
+import type { Document, DocumentListResponse, FileType } from '@/types/document.types'
 
 export default function DocumentsPage() {
   const { directoryId } = useParams()
@@ -39,7 +39,7 @@ export default function DocumentsPage() {
   const [docData, setDocData]       = useState<DocumentListResponse | null>(null)
   const [docLoading, setDocLoading] = useState(false)
   const [search, setSearch]         = useState('')
-  const [fileTypeFilter, setFileTypeFilter] = useState('')
+  const [fileTypeFilter, setFileTypeFilter] = useState<FileType | ''>('')
   const [showArchived, setShowArchived]     = useState(false)
   const [selectedIds, setSelectedIds]       = useState<Set<number>>(new Set())
   const [bulkRestoring, setBulkRestoring]   = useState(false)
@@ -54,11 +54,6 @@ export default function DocumentsPage() {
   // ── Resolve category/directory from URL ───────────────────────
   useEffect(() => {
     if (!directoryId) return
-    setLoading(true)
-    setResolvedCategoryId(null)
-    setResolvedDirId(null)
-    setTree([])
-    setDocData(null)
 
     const run = async () => {
       try {
@@ -99,20 +94,34 @@ export default function DocumentsPage() {
         setLoading(false)
       }
     }
-    run()
+
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        setResolvedCategoryId(null)
+        setResolvedDirId(null)
+        setTree([])
+        setDocData(null)
+        return run()
+      })
   }, [directoryId, isRoot, isAdmin, canAccessCategory, navigate, setSelectedCategory, setSelectedDirectory])
 
   // ── Load directory tree ───────────────────────────────────────
-  const loadTree = useCallback(async (catId: number) => {
-    setTreeLoading(true)
-    try {
-      const data = await directoriesApi.getTree(catId)
-      setTree(data)
-    } catch {
-      toast.error('Failed to load directories')
-    } finally {
-      setTreeLoading(false)
-    }
+  const loadTree = useCallback((catId: number) => {
+    Promise.resolve()
+      .then(() => {
+        setTreeLoading(true)
+        return directoriesApi.getTree(catId)
+      })
+      .then((data) => {
+        setTree(data)
+      })
+      .catch(() => {
+        toast.error('Failed to load directories')
+      })
+      .finally(() => {
+        setTreeLoading(false)
+      })
   }, [])
 
   useEffect(() => {
@@ -127,31 +136,40 @@ export default function DocumentsPage() {
   }, [resolvedCategoryId, loadTree, refreshDirectories])
 
   // ── Load documents when directory or filters change ───────────
-  const loadDocuments = useCallback(async () => {
+  const loadDocuments = useCallback(() => {
     if (!resolvedDirId) return
-    setDocLoading(true)
-    setSelectedIds(new Set())
-    try {
-      const data = await documentsApi.list({
-        directory_id: resolvedDirId,
-        search:       search.trim() || undefined,
-        file_type:    (fileTypeFilter || undefined) as any,
-        status:       showArchived ? 'archived' : undefined,
-        skip:         (page - 1) * LIMIT,
-        limit:        LIMIT,
+    Promise.resolve()
+      .then(() => {
+        setDocLoading(true)
+        setSelectedIds(new Set())
+        return documentsApi.list({
+          directory_id: resolvedDirId,
+          search:       search.trim() || undefined,
+          file_type:    fileTypeFilter || undefined,
+          status:       showArchived ? 'archived' : undefined,
+          skip:         (page - 1) * LIMIT,
+          limit:        LIMIT,
+        })
       })
-      setDocData(data)
-    } catch {
-      toast.error('Failed to load documents')
-    } finally {
-      setDocLoading(false)
-    }
+      .then((data) => {
+        setDocData(data)
+      })
+      .catch(() => {
+        toast.error('Failed to load documents')
+      })
+      .finally(() => {
+        setDocLoading(false)
+      })
   }, [resolvedDirId, search, fileTypeFilter, showArchived, page])
 
   const handleSelectDoc = useCallback((id: number, checked: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      checked ? next.add(id) : next.delete(id)
+      if (checked) {
+        next.add(id)
+      } else {
+        next.delete(id)
+      }
       return next
     })
   }, [])
@@ -175,11 +193,16 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     if (resolvedDirId) loadDocuments()
-    else setDocData(null)
+    else Promise.resolve().then(() => setDocData(null))
   }, [resolvedDirId, loadDocuments])
 
-  // Reset page when search/filter/status changes
-  useEffect(() => { setPage(1) }, [search, fileTypeFilter, showArchived, resolvedDirId])
+  // Reset page when search/filter/status changes (adjusted during render)
+  const docFilterKey = `${search}|${fileTypeFilter}|${String(showArchived)}|${resolvedDirId ?? ''}`
+  const [prevDocFilterKey, setPrevDocFilterKey] = useState(docFilterKey)
+  if (prevDocFilterKey !== docFilterKey) {
+    setPrevDocFilterKey(docFilterKey)
+    setPage(1)
+  }
 
   if (loading) {
     return (
@@ -270,7 +293,7 @@ export default function DocumentsPage() {
                 </div>
                 <select
                   value={fileTypeFilter}
-                  onChange={(e) => setFileTypeFilter(e.target.value)}
+                  onChange={(e) => setFileTypeFilter(e.target.value as FileType | '')}
                   className="input"
                   style={{ width: '120px', fontSize: '0.82rem' }}
                 >

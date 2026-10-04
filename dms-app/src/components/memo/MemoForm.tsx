@@ -52,20 +52,26 @@ export default function MemoForm({
   }, [])
 
   useEffect(() => {
-    if (initialData.subject !== undefined) setSubject(initialData.subject || '')
-    if (initialData.body !== undefined) setBody(initialData.body || '')
-    if (initialData.directory_id !== undefined) setDirectoryId(initialData.directory_id || '')
-    if (initialData.user_level_ids !== undefined) setUserLevelIds(initialData.user_level_ids || [])
-    if (initialData.memo_date !== undefined) {
-      setMemoDate(initialData.memo_date ? initialData.memo_date.split('T')[0] : new Date().toISOString().split('T')[0])
-    }
+    Promise.resolve()
+      .then(() => {
+        if (initialData.subject !== undefined) setSubject(initialData.subject || '')
+        if (initialData.body !== undefined) setBody(initialData.body || '')
+        if (initialData.directory_id !== undefined) setDirectoryId(initialData.directory_id || '')
+        if (initialData.user_level_ids !== undefined) setUserLevelIds(initialData.user_level_ids || [])
+        if (initialData.memo_date !== undefined) {
+          setMemoDate(initialData.memo_date ? initialData.memo_date.split('T')[0] : new Date().toISOString().split('T')[0])
+        }
+      })
   }, [initialData])
 
   useEffect(() => {
-    if (initialData.directory_id && directories.length > 0) {
-      const dir = directories.find(d => d.id === initialData.directory_id)
-      if (dir) setCategoryId(dir.category_id)
-    }
+    Promise.resolve()
+      .then(() => {
+        if (initialData.directory_id && directories.length > 0) {
+          const dir = directories.find(d => d.id === initialData.directory_id)
+          if (dir) setCategoryId(dir.category_id)
+        }
+      })
   }, [initialData.directory_id, directories])
 
   const handleCategoryChange = (value: string) => {

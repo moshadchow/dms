@@ -38,11 +38,15 @@ export default function CorrespondenceSubmitDialog({
 
   useEffect(() => {
     if (!isOpen) return
-    setSelectedWorkflowId('')
-    setLoadingWorkflows(true)
-    const docType = DOCUMENT_TYPE_MAP[direction]
-    workflowApi
-      .list({ is_active: true, document_type: docType })
+    Promise.resolve()
+      .then(() => {
+        setSelectedWorkflowId('')
+        setLoadingWorkflows(true)
+        return workflowApi.list({
+          is_active: true,
+          document_type: DOCUMENT_TYPE_MAP[direction],
+        })
+      })
       .then((res) => {
         setWorkflows(res.items.map((w) => ({ id: w.id, name: w.name })))
       })

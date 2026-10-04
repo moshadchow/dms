@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { authApi } from '@/api/auth.api'
 import { apiRoot } from '@/api/base'
@@ -11,13 +11,16 @@ import type { AzureProviderCompany } from '@/types/company.types'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { setTokens, setUser, isAuthenticated } = useAuthStore()
 
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading]   = useState(false)
-  const [error, setError]       = useState('')
+  // Errors redirected here by the backend (e.g. Azure AD not configured for
+  // the selected company, callback failures) arrive as ?error=...
+  const [error, setError]       = useState(() => searchParams.get('error') ?? '')
   const [azureEnabled, setAzureEnabled] = useState(false)
   const [azureCompanies, setAzureCompanies] = useState<AzureProviderCompany[]>([])
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | ''>('')
@@ -25,11 +28,11 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated()) navigate('/dashboard', { replace: true })
-    // Check if Azure AD is enabled and get company list
+    // Check which companies offer Microsoft sign-in (company-scoped config)
     fetch(`${apiRoot}/auth/azure/config`)
       .then((r) => r.json())
       .then((data) => {
-        setAzureEnabled(data.global_enabled || data.companies?.length > 0)
+        setAzureEnabled(Boolean(data.enabled))
         setAzureCompanies(data.companies || [])
       })
       .catch(() => {})
@@ -59,15 +62,14 @@ export default function LoginPage() {
   }
 
   const handleAzureLogin = () => {
+    // Microsoft sign-in is company-scoped: a company must always be chosen
+    // before redirecting to Entra ID (no global configuration exists).
     if (azureCompanies.length === 1) {
       // Auto-select the only company
       window.location.href = `${apiRoot}/auth/azure/login?company_id=${azureCompanies[0].id}`
     } else if (azureCompanies.length > 1) {
       // Show company selector
       setShowCompanySelector(true)
-    } else if (azureEnabled) {
-      // Global Azure only (no company selector)
-      window.location.href = `${apiRoot}/auth/azure/login`
     }
   }
 

@@ -33,6 +33,7 @@ def _company_to_read(company: Company) -> CompanyRead:
         contact_no=company.contact_no,
         email_address=company.email_address,
         is_active=company.is_active,
+        azure_enabled=company.azure_enabled,
         created_at=company.created_at,
         updated_at=company.updated_at,
     )
@@ -295,8 +296,25 @@ class CompanyService:
         old_values = {}
         for field in update_data:
             if field.startswith("azure_"):
-                old_values[field] = getattr(company, field)
+                # Never write secret values into the audit trail.
+                old_values[field] = (
+                    "***" if field == "azure_client_secret" else getattr(company, field)
+                )
                 setattr(company, field, update_data[field])
+
+        # A company cannot be enabled without a complete, usable configuration.
+        if company.azure_enabled and not (
+            company.azure_client_id
+            and company.azure_client_secret
+            and company.azure_tenant_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Client ID, client secret and tenant ID are required "
+                    "to enable Azure AD"
+                ),
+            )
 
         company.updated_at = datetime.utcnow()
         self.session.add(company)
@@ -310,7 +328,11 @@ class CompanyService:
             entity_name="company",
             entity_id=str(company_id),
             old_value=old_values,
-            new_value=update_data,
+            new_value={
+                field: ("***" if field == "azure_client_secret" else value)
+                for field, value in update_data.items()
+                if field.startswith("azure_")
+            },
             description=f"Updated Azure AD config for company {company.company_id}",
             is_success=True,
         )

@@ -53,6 +53,7 @@ def test_superadmin_can_delete_azure_config(client, seeded_data, auth_headers):
         json={
             "azure_client_id": "to-delete",
             "azure_tenant_id": "to-delete",
+            "azure_client_secret": "to-delete-secret",
             "azure_enabled": True,
         },
         headers=auth_headers["superadmin"],
@@ -89,6 +90,49 @@ def test_azure_config_secret_never_returned(client, seeded_data, auth_headers):
     )
     data = resp.json()
     assert "client_secret" not in data or data.get("azure_client_secret") is None
+
+
+def test_company_secret_absent_from_company_endpoints(client, seeded_data, auth_headers):
+    """Neither the company list nor company detail ever exposes the secret."""
+    company_id = seeded_data["company_id"]
+    client[0].put(
+        f"/api/v1/companies/{company_id}/azure-config",
+        json={
+            "azure_client_id": "cid-123",
+            "azure_tenant_id": "tid-123",
+            "azure_client_secret": "super-secret-value",
+            "azure_enabled": True,
+        },
+        headers=auth_headers["superadmin"],
+    )
+
+    for url in ("/api/v1/companies", f"/api/v1/companies/{company_id}"):
+        resp = client[0].get(url, headers=auth_headers["superadmin"])
+        assert resp.status_code == 200
+        assert "super-secret-value" not in resp.text
+        assert "azure_client_secret" not in resp.text
+
+
+def test_enabling_without_secret_is_rejected(client, seeded_data, auth_headers):
+    """A company cannot be enabled with an incomplete configuration."""
+    company_id = seeded_data["company_id"]
+    resp = client[0].put(
+        f"/api/v1/companies/{company_id}/azure-config",
+        json={
+            "azure_client_id": "cid-only",
+            "azure_tenant_id": "tid-only",
+            "azure_enabled": True,
+        },
+        headers=auth_headers["superadmin"],
+    )
+    assert resp.status_code == 422
+
+    # And it never became active
+    data = client[0].get(
+        f"/api/v1/companies/{company_id}/azure-config",
+        headers=auth_headers["superadmin"],
+    ).json()
+    assert data["azure_enabled"] is False
 
 
 # ──────────────────────────────────────────────
@@ -173,6 +217,7 @@ def test_azure_config_endpoint_returns_companies(client, seeded_data, auth_heade
         json={
             "azure_client_id": "test",
             "azure_tenant_id": "test",
+            "azure_client_secret": "test-secret",
             "azure_enabled": True,
         },
         headers=auth_headers["superadmin"],
@@ -181,7 +226,9 @@ def test_azure_config_endpoint_returns_companies(client, seeded_data, auth_heade
     resp = client[0].get("/api/v1/auth/azure/config")
     assert resp.status_code == 200
     data = resp.json()
-    assert "global_enabled" in data
+    # Global .env configuration no longer exists
+    assert "global_enabled" not in data
+    assert data["enabled"] is True
     assert "companies" in data
     # Our company should be in the list
     company_ids = [c["id"] for c in data["companies"]]
@@ -193,7 +240,7 @@ def test_azure_config_endpoint_returns_companies(client, seeded_data, auth_heade
 # ──────────────────────────────────────────────
 
 def test_azure_config_change_generates_audit(client, seeded_data, auth_headers):
-    """Updating Azure config generates an audit event."""
+    """Updating Azure config generates an audit event with the secret redacted."""
     from sqlmodel import Session, select
     from audit.models import AuditLog
 
@@ -205,6 +252,7 @@ def test_azure_config_change_generates_audit(client, seeded_data, auth_headers):
         json={
             "azure_client_id": "audit-test",
             "azure_tenant_id": "audit-test",
+            "azure_client_secret": "raw-secret-should-not-be-logged",
             "azure_enabled": True,
         },
         headers=auth_headers["superadmin"],
@@ -219,3 +267,8 @@ def test_azure_config_change_generates_audit(client, seeded_data, auth_headers):
         ).all()
         # Should have at least one audit log for the update
         assert len(logs) >= 1
+        # …but never the raw secret value
+        serialized = " ".join(
+            str(log.old_value) + str(log.new_value) for log in logs
+        )
+        assert "raw-secret-should-not-be-logged" not in serialized

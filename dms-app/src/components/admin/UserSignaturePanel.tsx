@@ -25,28 +25,34 @@ export default function UserSignaturePanel({ userId, userName, isOpen, onClose }
   const previewUrlRef = useRef<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const loadSignature = useCallback(async () => {
-    setLoading(true)
-    try {
-      const sigs = await workflowApi.adminListSignaturesForUser(userId)
-      const active = sigs.length > 0 ? sigs[0] : null
-      setSignature(active)
-      if (previewUrlRef.current) {
-        URL.revokeObjectURL(previewUrlRef.current)
-        previewUrlRef.current = null
-      }
-      if (active) {
-        const url = await workflowApi.getSignatureFileUrl(active.id)
-        previewUrlRef.current = url
-        setPreviewUrl(url)
-      } else {
+  const loadSignature = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        return workflowApi.adminListSignaturesForUser(userId)
+      })
+      .then((sigs) => {
+        const active = sigs.length > 0 ? sigs[0] : null
+        setSignature(active)
+        if (previewUrlRef.current) {
+          URL.revokeObjectURL(previewUrlRef.current)
+          previewUrlRef.current = null
+        }
+        if (active) {
+          return workflowApi.getSignatureFileUrl(active.id).then((url) => {
+            previewUrlRef.current = url
+            setPreviewUrl(url)
+          })
+        }
         setPreviewUrl(null)
-      }
-    } catch {
-      toast.error('Failed to load signature')
-    } finally {
-      setLoading(false)
-    }
+        return Promise.resolve()
+      })
+      .catch(() => {
+        toast.error('Failed to load signature')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [userId])
 
   useEffect(() => {

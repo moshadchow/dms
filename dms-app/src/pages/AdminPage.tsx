@@ -28,12 +28,11 @@ export default function AdminPage() {
 
   const [activeTab, setActiveTab]   = useState<Tab>('users')
 
-  // Reset tab if SUPERADMIN somehow lands on a category tab
-  useEffect(() => {
-    if (isSuperAdmin() && (activeTab === 'category-setup' || activeTab === 'category-access')) {
-      setActiveTab('users')
-    }
-  }, [activeTab, isSuperAdmin])
+  // Reset tab during render if SUPERADMIN somehow lands on a category tab
+  if (isSuperAdmin() && (activeTab === 'category-setup' || activeTab === 'category-access')) {
+    setActiveTab('users')
+  }
+
   const [users, setUsers]           = useState<User[]>([])
   const [roles, setRoles]           = useState<Role[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
@@ -53,54 +52,76 @@ export default function AdminPage() {
   const [totalUsers, setTotalUsers] = useState(0)
   const LIMIT = 20
 
-  const loadUsers = useCallback(async () => {
-    setLoadingUsers(true)
-    try {
-      const data = await usersApi.list({
-        skip:      (userPage - 1) * LIMIT,
-        limit:     LIMIT,
-        search:    search.trim() || undefined,
-        is_active: filterActive === '' ? undefined : filterActive === 'true',
-        user_level_id: filterLevel === '' ? undefined : filterLevel === 'none' ? null : Number(filterLevel),
+  // Reset user page when search/filters change (adjusted during render)
+  const userFilterKey = `${search}|${filterActive}|${filterLevel}`
+  const [prevUserFilterKey, setPrevUserFilterKey] = useState(userFilterKey)
+  if (prevUserFilterKey !== userFilterKey) {
+    setPrevUserFilterKey(userFilterKey)
+    setUserPage(1)
+  }
+
+  const loadUsers = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoadingUsers(true)
+        return usersApi.list({
+          skip:      (userPage - 1) * LIMIT,
+          limit:     LIMIT,
+          search:    search.trim() || undefined,
+          is_active: filterActive === '' ? undefined : filterActive === 'true',
+          user_level_id: filterLevel === '' ? undefined : filterLevel === 'none' ? null : Number(filterLevel),
+        })
       })
-      setUsers(data.items)
-      setTotalUsers(data.total)
-    } catch {
-      toast.error('Failed to load users')
-    } finally {
-      setLoadingUsers(false)
-    }
+      .then((data) => {
+        setUsers(data.items)
+        setTotalUsers(data.total)
+      })
+      .catch(() => {
+        toast.error('Failed to load users')
+      })
+      .finally(() => {
+        setLoadingUsers(false)
+      })
   }, [userPage, search, filterActive, filterLevel])
 
-  const loadRoles = useCallback(async () => {
-    setLoadingRoles(true)
-    try {
-      const [r, p] = await Promise.all([usersApi.listRoles(), usersApi.listPermissions()])
-      setRoles(r)
-      setPermissions(p)
-    } catch {
-      toast.error('Failed to load roles')
-    } finally {
-      setLoadingRoles(false)
-    }
+  const loadRoles = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoadingRoles(true)
+        return Promise.all([usersApi.listRoles(), usersApi.listPermissions()])
+      })
+      .then(([r, p]) => {
+        setRoles(r)
+        setPermissions(p)
+      })
+      .catch(() => {
+        toast.error('Failed to load roles')
+      })
+      .finally(() => {
+        setLoadingRoles(false)
+      })
   }, [])
 
-  const loadLevels = useCallback(async () => {
-    setLoadingLevels(true)
-    try {
-      const levels = await usersApi.listUserLevels()
-      setUserLevels(levels)
-    } catch {
-      toast.error('Failed to load user levels')
-    } finally {
-      setLoadingLevels(false)
-    }
+  const loadLevels = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoadingLevels(true)
+        return usersApi.listUserLevels()
+      })
+      .then((levels) => {
+        setUserLevels(levels)
+      })
+      .catch(() => {
+        toast.error('Failed to load user levels')
+      })
+      .finally(() => {
+        setLoadingLevels(false)
+      })
   }, [])
 
   useEffect(() => { loadUsers() }, [loadUsers])
   useEffect(() => { loadRoles() }, [loadRoles])
   useEffect(() => { loadLevels() }, [loadLevels])
-  useEffect(() => { setUserPage(1) }, [search, filterActive, filterLevel])
 
   const totalPages = Math.ceil(totalUsers / LIMIT) || 1
 

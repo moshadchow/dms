@@ -32,18 +32,6 @@ interface ApproverForm {
   role_id: number | null
 }
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '8px 12px',
-  border: '1px solid var(--border)',
-  borderRadius: '8px',
-  fontSize: '0.85rem',
-  fontFamily: 'inherit',
-  backgroundColor: 'var(--bg)',
-  color: 'var(--text)',
-  boxSizing: 'border-box',
-}
-
 export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess }: WorkflowFormModalProps) {
   const isSuperAdmin = useAuthStore((state) => state.isSuperAdmin())
   const [name, setName] = useState('')
@@ -68,34 +56,37 @@ export default function WorkflowFormModal({ isOpen, editing, onClose, onSuccess 
 
   useEffect(() => {
     if (!isOpen) return
-    setError('')
-    if (editing) {
-      setLoadingData(true)
-      workflowApi.get(editing.id).then((detail) => {
-        setName(detail.name)
-        setDescription(detail.description || '')
-        setDocumentType(detail.document_type || '')
-        setSteps(
-          detail.steps.map((s) => ({
-            step_name: s.step_name,
-            approval_mode: s.approval_mode,
-            approvers: s.approvers.map((a) => ({
-              user_id: a.user_id,
-              role_id: a.role_id,
-            })),
-          }))
-        )
-      }).catch((err) => {
-        setError(getErrorMessage(err))
-      }).finally(() => {
-        setLoadingData(false)
+    Promise.resolve()
+      .then(() => {
+        setError('')
+        if (!editing) {
+          setName('')
+          setDescription('')
+          setDocumentType('')
+          setSteps([])
+          return
+        }
+        setLoadingData(true)
+        return workflowApi.get(editing.id).then((detail) => {
+          setName(detail.name)
+          setDescription(detail.description || '')
+          setDocumentType(detail.document_type || '')
+          setSteps(
+            detail.steps.map((s) => ({
+              step_name: s.step_name,
+              approval_mode: s.approval_mode,
+              approvers: s.approvers.map((a) => ({
+                user_id: a.user_id,
+                role_id: a.role_id,
+              })),
+            }))
+          )
+        }).catch((err) => {
+          setError(getErrorMessage(err))
+        }).finally(() => {
+          setLoadingData(false)
+        })
       })
-    } else {
-      setName('')
-      setDescription('')
-      setDocumentType('')
-      setSteps([])
-    }
   }, [editing, isOpen])
 
   const addStep = () => {

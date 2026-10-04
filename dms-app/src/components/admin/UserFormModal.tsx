@@ -54,34 +54,39 @@ export default function UserFormModal({ isOpen, onClose, onSuccess, editing, rol
 
   // Fetch active companies — for SUPERADMIN create OR when editing another ADMIN (not self-edit)
   useEffect(() => {
-    if ((isSuperAdmin || (isEditingAdmin && !isSelfEdit)) && isOpen) {
-      setLoadingCompanies(true)
-      companiesApi.list({ is_active: true, limit: 200 })
-        .then((data) => setCompanies(data.items))
-        .catch(() => toast.error('Failed to load companies'))
-        .finally(() => setLoadingCompanies(false))
-    }
+    if (!((isSuperAdmin || (isEditingAdmin && !isSelfEdit)) && isOpen)) return
+    Promise.resolve()
+      .then(() => {
+        setLoadingCompanies(true)
+        return companiesApi.list({ is_active: true, limit: 200 })
+      })
+      .then((data) => setCompanies(data.items))
+      .catch(() => toast.error('Failed to load companies'))
+      .finally(() => setLoadingCompanies(false))
   }, [isSuperAdmin, isEditingAdmin, isSelfEdit, isOpen])
 
   useEffect(() => {
-    if (editing) {
-      setFullName(editing.full_name)
-      setEmail(editing.email)
-      setIsActive(editing.is_active)
-      setSelectedRoles(editing.roles.map((r) => r.id))
-      setSelectedLevel(editing.user_level ? String(editing.user_level.id) : '')
-      setSelectedCompany(editing.company ? String(editing.company.id) : '')
-      setPassword('')
-    } else {
-      setFullName('')
-      setEmail('')
-      setPassword('')
-      setIsActive(true)
-      setSelectedRoles([])
-      setSelectedLevel('')
-      setSelectedCompany('')
-    }
-    setError('')
+    Promise.resolve()
+      .then(() => {
+        if (editing) {
+          setFullName(editing.full_name)
+          setEmail(editing.email)
+          setIsActive(editing.is_active)
+          setSelectedRoles(editing.roles.map((r) => r.id))
+          setSelectedLevel(editing.user_level ? String(editing.user_level.id) : '')
+          setSelectedCompany(editing.company ? String(editing.company.id) : '')
+          setPassword('')
+        } else {
+          setFullName('')
+          setEmail('')
+          setPassword('')
+          setIsActive(true)
+          setSelectedRoles([])
+          setSelectedLevel('')
+          setSelectedCompany('')
+        }
+        setError('')
+      })
   }, [editing, isOpen])
 
   const toggleRole = (id: number) => {

@@ -1,15 +1,14 @@
 import logging
-from base64 import urlsafe_b64decode
+import time
+from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
-from jose import JWTError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from auth.azure_service import (
     build_authorization_url,
-    decode_state,
     exchange_code_for_tokens,
     generate_nonce,
     generate_pkce_pair,
@@ -30,10 +29,27 @@ from users.models import AssignedCategoryRead, PermissionRead, RoleRead, UserRea
 
 router = APIRouter()
 
-# In-memory store for PKCE/state/nonce (production should use Redis or encrypted cookies)
+# In-memory store for PKCE/state/nonce (production should use Redis or encrypted cookies).
+# This store is the authority for the OAuth company context: the callback reads
+# company_id from here, never from client-decoded state.
 _pending_auth: dict[str, dict] = {}
 
+# Abandoned login attempts (user never reached the callback) are pruned after this.
+_PENDING_AUTH_TTL_SECONDS = 600  # 10 minutes
+
 logger = logging.getLogger("dms.auth")
+
+
+def _prune_pending_auth() -> None:
+    """Drop expired pending-auth entries so the store cannot grow unbounded."""
+    now = time.monotonic()
+    expired = [
+        state
+        for state, entry in _pending_auth.items()
+        if now - entry["created_at"] > _PENDING_AUTH_TTL_SECONDS
+    ]
+    for state in expired:
+        _pending_auth.pop(state, None)
 
 
 def _get_client_ip(request: Request) -> str:
@@ -137,6 +153,14 @@ def change_password(
 # Azure AD Authentication (company-scoped)
 # ─────────────────────────────────────────────────
 
+def _login_error_redirect(detail: str) -> RedirectResponse:
+    """Send the browser back to the login page with a user-safe error message."""
+    return RedirectResponse(
+        url=f"{settings.FRONTEND_URL}/login?error={quote(detail)}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
+
 @router.get(
     "/azure/login",
     summary="Initiate Azure AD login",
@@ -144,20 +168,25 @@ def change_password(
 )
 async def azure_login(
     request: Request,
-    company_id: int = Query(None, description="Company ID for company-scoped Azure AD"),
+    company_id: Optional[int] = Query(None, description="Company ID whose Azure AD config to use (required)"),
 ):
     """
     Redirect the browser to the Microsoft Entra ID login page.
 
-    When company_id is provided, uses that company's Azure AD config.
-    Otherwise falls back to the global .env Azure AD config.
+    The company context is established *before* redirecting: company_id is
+    validated against the database (exists, active, Azure enabled, config
+    complete) and that company's configuration alone builds the authorize
+    URL. The validated company_id is stored server-side keyed by the
+    random `state`.
 
-    Generates PKCE code_verifier + code_challenge, state (encoding nonce + company_id),
-    and redirects to Azure's authorize endpoint.
+    Any validation failure redirects back to the frontend login page with
+    a user-safe error — there is no global .env fallback.
     """
     session = next(get_session())
     try:
         azure_config = get_azure_config_for_company(session, company_id)
+    except HTTPException as exc:
+        return _login_error_redirect(str(exc.detail))
     finally:
         session.close()
 
@@ -165,11 +194,12 @@ async def azure_login(
     nonce = generate_nonce()
     state = generate_state(nonce, company_id)
 
-    # Store temporarily (keyed by state) — production should use encrypted cookie or Redis
+    _prune_pending_auth()
     _pending_auth[state] = {
         "code_verifier": code_verifier,
         "nonce": nonce,
         "company_id": company_id,
+        "created_at": time.monotonic(),
     }
 
     auth_url = build_authorization_url(state, code_challenge, nonce, azure_config)
@@ -213,7 +243,9 @@ async def azure_callback(
             status_code=status.HTTP_302_FOUND,
         )
 
-    # Validate state
+    # Validate state: the server-side pending store is the sole authority
+    # for the company context — a tampered/unknown state can never select
+    # a company, and each state is consumed exactly once (no replay).
     if not state or state not in _pending_auth:
         AuditService(session).log_event(
             action=AuditAction.FAILED_LOGIN,
@@ -237,6 +269,7 @@ async def azure_callback(
         AuditService(session).log_event(
             action=AuditAction.FAILED_LOGIN,
             module=AuditModule.AUTH,
+            company_id=company_id,
             description="Missing authorization code in callback",
             ip_address=ip_address,
             is_success=False,
@@ -248,7 +281,8 @@ async def azure_callback(
         )
 
     try:
-        # Get Azure config for this company (or global fallback)
+        # Reload the SAME company configuration the authorize request used:
+        # token exchange and id_token validation both derive from it.
         azure_config = get_azure_config_for_company(session, company_id)
 
         # Exchange code for tokens
@@ -259,6 +293,7 @@ async def azure_callback(
             AuditService(session).log_event(
                 action=AuditAction.FAILED_LOGIN,
                 module=AuditModule.AUTH,
+                company_id=company_id,
                 description="No id_token in token response",
                 ip_address=ip_address,
                 is_success=False,
@@ -302,6 +337,7 @@ async def azure_callback(
         AuditService(session).log_event(
             action=AuditAction.FAILED_LOGIN,
             module=AuditModule.AUTH,
+            company_id=company_id,
             description=f"Azure auth failed: {exc.detail}",
             ip_address=ip_address,
             is_success=False,
@@ -318,6 +354,7 @@ async def azure_callback(
         AuditService(session).log_event(
             action=AuditAction.FAILED_LOGIN,
             module=AuditModule.AUTH,
+            company_id=company_id,
             description=f"Unexpected error during Azure authentication: {exc}",
             ip_address=ip_address,
             is_success=False,
@@ -336,23 +373,26 @@ async def azure_callback(
     summary="Check if Azure AD is enabled",
 )
 def azure_config(session: Session = Depends(get_session)):
-    """Return whether Azure AD authentication is available and which companies have it enabled."""
-    global_enabled = settings.AZURE_ENABLED
+    """Return which companies can offer Microsoft sign-in.
 
-    # Find companies with Azure enabled
+    A company is listed only when it is active, has Azure AD enabled and
+    has a complete configuration (client ID + tenant ID). There is no
+    global .env configuration.
+    """
     from company_profile.models import Company
     companies = session.exec(
-        select(Company).where(Company.azure_enabled == True)  # noqa: E712
+        select(Company).where(
+            Company.is_active == True,  # noqa: E712
+            Company.azure_enabled == True,  # noqa: E712
+            Company.azure_client_id.is_not(None),  # noqa: E712
+            Company.azure_tenant_id.is_not(None),  # noqa: E712
+        )
     ).all()
 
     return {
-        "global_enabled": global_enabled,
+        "enabled": len(companies) > 0,
         "companies": [
             {"id": c.id, "name": c.full_name, "short_name": c.short_name}
             for c in companies
         ],
     }
-
-
-# Need select for azure_config
-from sqlmodel import select  # noqa: E402

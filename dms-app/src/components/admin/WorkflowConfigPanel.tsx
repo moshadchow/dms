@@ -24,32 +24,44 @@ export default function WorkflowConfigPanel() {
   const [editing, setEditing] = useState<WorkflowDefinitionDetail | null>(null)
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null)
 
-  const loadDefinitions = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params: Record<string, unknown> = {
-        skip: (page - 1) * LIMIT,
-        limit: LIMIT,
-      }
-      if (statusFilter !== '') params.is_active = statusFilter
-      if (docTypeFilter === 'null') {
-        params.document_type_is_null = true
-      } else if (docTypeFilter !== '') {
-        params.document_type = docTypeFilter
-      }
-      if (isSuperAdmin && selectedCompanyId) params.company_id = selectedCompanyId
-      const data = await workflowApi.list(params as { skip?: number; limit?: number; is_active?: boolean; company_id?: number })
-      setDefinitions(data.items)
-      setTotal(data.total)
-    } catch {
-      toast.error('Failed to load workflow definitions')
-    } finally {
-      setLoading(false)
-    }
+  const loadDefinitions = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        const params: Record<string, unknown> = {
+          skip: (page - 1) * LIMIT,
+          limit: LIMIT,
+        }
+        if (statusFilter !== '') params.is_active = statusFilter
+        if (docTypeFilter === 'null') {
+          params.document_type_is_null = true
+        } else if (docTypeFilter !== '') {
+          params.document_type = docTypeFilter
+        }
+        if (isSuperAdmin && selectedCompanyId) params.company_id = selectedCompanyId
+        return workflowApi.list(params as { skip?: number; limit?: number; is_active?: boolean; company_id?: number })
+      })
+      .then((data) => {
+        setDefinitions(data.items)
+        setTotal(data.total)
+      })
+      .catch(() => {
+        toast.error('Failed to load workflow definitions')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [page, statusFilter, docTypeFilter, isSuperAdmin, selectedCompanyId])
 
+  // Reset page when filters change (adjusted during render)
+  const filterKey = `${String(statusFilter)}|${docTypeFilter}|${String(selectedCompanyId)}`
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey)
+  if (prevFilterKey !== filterKey) {
+    setPrevFilterKey(filterKey)
+    setPage(1)
+  }
+
   useEffect(() => { loadDefinitions() }, [loadDefinitions])
-  useEffect(() => { setPage(1) }, [statusFilter, docTypeFilter, selectedCompanyId])
 
   const totalPages = Math.ceil(total / LIMIT) || 1
 

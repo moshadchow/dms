@@ -27,32 +27,45 @@ export default function AuditTrailPage() {
 
   const effectiveCompanyId = isSuperAdmin ? selectedCompanyId : userCompanyId
 
-  const loadLogs = useCallback(async () => {
-    if (isSuperAdmin && !selectedCompanyId) {
-      setLogs([])
-      setTotal(0)
-      setLoading(false)
-      return
-    }
-    setLoading(true)
-    try {
-      const data = await auditApi.list({
-        ...filters,
-        company_id: effectiveCompanyId ?? undefined,
-        skip: (page - 1) * LIMIT,
-        limit: LIMIT,
+  const loadLogs = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        if (isSuperAdmin && !selectedCompanyId) {
+          setLogs([])
+          setTotal(0)
+          setLoading(false)
+          return Promise.resolve()
+        }
+        setLoading(true)
+        return auditApi.list({
+          ...filters,
+          company_id: effectiveCompanyId ?? undefined,
+          skip: (page - 1) * LIMIT,
+          limit: LIMIT,
+        })
       })
-      setLogs(data.items)
-      setTotal(data.total)
-    } catch {
-      toast.error('Failed to load audit logs')
-    } finally {
-      setLoading(false)
-    }
+      .then((data) => {
+        if (data) {
+          setLogs(data.items)
+          setTotal(data.total)
+        }
+      })
+      .catch(() => {
+        toast.error('Failed to load audit logs')
+      })
+      .finally(() => {
+        setLoading(false)
+      })
   }, [page, filters, effectiveCompanyId, isSuperAdmin, selectedCompanyId])
 
+  // Reset page when filters or company scope change (adjusted during render)
+  const [prevResetKey, setPrevResetKey] = useState({ f: filters, c: effectiveCompanyId })
+  if (prevResetKey.f !== filters || prevResetKey.c !== effectiveCompanyId) {
+    setPrevResetKey({ f: filters, c: effectiveCompanyId })
+    setPage(1)
+  }
+
   useEffect(() => { loadLogs() }, [loadLogs])
-  useEffect(() => { setPage(1) }, [filters, effectiveCompanyId])
 
   const handleCompanyChange = (companyId: number | null) => {
     setSelectedCompanyId(companyId)

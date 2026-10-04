@@ -122,13 +122,16 @@ export default function DocumentViewer({ doc, onClose }: Props) {
 
   useEffect(() => {
     if (!doc) {
-      setWorkspace(null)
-      setBlobUrl(null)
-      setTool('select')
-      setStrokes([])
-      setUndoStack([])
-      setRedoStack([])
-      setActiveStroke(null)
+      Promise.resolve()
+        .then(() => {
+          setWorkspace(null)
+          setBlobUrl(null)
+          setTool('select')
+          setStrokes([])
+          setUndoStack([])
+          setRedoStack([])
+          setActiveStroke(null)
+        })
       strokesRef.current = []
       activeStrokeRef.current = null
       eraserSnapshotRef.current = null
@@ -137,22 +140,20 @@ export default function DocumentViewer({ doc, onClose }: Props) {
     }
 
     let alive = true
-    setLoading(true)
-    setWorkspace(null)
-    setBlobUrl(null)
-    setTool('select')
-    setStrokes([])
-    setUndoStack([])
-    setRedoStack([])
-    setActiveStroke(null)
-    strokesRef.current = []
-    activeStrokeRef.current = null
-    eraserSnapshotRef.current = null
-    eraserChangedRef.current = false
-
-    documentsApi.getWorkspace(doc.id)
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        setWorkspace(null)
+        setBlobUrl(null)
+        setTool('select')
+        setStrokes([])
+        setUndoStack([])
+        setRedoStack([])
+        setActiveStroke(null)
+        return documentsApi.getWorkspace(doc.id)
+      })
       .then((data) => {
-        if (!alive) return
+        if (!alive || !data) return
         setWorkspace(data)
         const loaded: StrokeDraft[] = []
         for (const annotation of data.annotations) {
@@ -180,6 +181,11 @@ export default function DocumentViewer({ doc, onClose }: Props) {
       .finally(() => {
         if (alive) setLoading(false)
       })
+
+    strokesRef.current = []
+    activeStrokeRef.current = null
+    eraserSnapshotRef.current = null
+    eraserChangedRef.current = false
 
     return () => {
       alive = false

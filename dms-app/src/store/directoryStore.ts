@@ -35,7 +35,11 @@ export const useDirectoryStore = create<DirectoryState>((set, get) => ({
 
   toggleExpanded: (id) => {
     const next = new Set(get().expandedIds)
-    next.has(id) ? next.delete(id) : next.add(id)
+    if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
     set({ expandedIds: next })
   },
 

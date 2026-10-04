@@ -711,6 +711,106 @@ def test_non_admin_user_update_ignores_company(client, seeded_data, auth_headers
     assert data["company"]["id"] == seeded_data["company_id"]
 
 
+def test_companyless_non_admin_user_can_be_assigned_company(client, seeded_data, auth_headers):
+    """A user with company_id = NULL (e.g. provisioned by the pre-company-scoped
+    Azure flow) can be repaired through update, even for a non-ADMIN role."""
+    _, engine, _ = client
+    with Session(engine) as session:
+        maker_role_id = _get_role_id(session, RoleName.MAKER)
+        target_company = _create_company(session, "ORPH-001", "ORPH1")
+
+    maker_id = _create_maker_via_api(client, auth_headers, maker_role_id)
+
+    # Simulate a legacy global-fallback account: company removed
+    with Session(engine) as session:
+        user = session.get(User, maker_id)
+        user.company_id = None
+        session.add(user)
+        session.commit()
+
+    # Repair: superadmin assigns the orphaned maker to a company
+    resp = client[0].patch(
+        f"/api/v1/users/{maker_id}",
+        json={"company_id": target_company.id},
+        headers=auth_headers["superadmin"],
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["company"]["id"] == target_company.id
+
+    with Session(engine) as session:
+        assert session.get(User, maker_id).company_id == target_company.id
+
+
+def test_companyless_user_repair_validates_company(client, seeded_data, auth_headers):
+    """The orphan-repair path applies the same validation as ADMIN assignment."""
+    _, engine, _ = client
+    with Session(engine) as session:
+        maker_role_id = _get_role_id(session, RoleName.MAKER)
+
+    maker_id = _create_maker_via_api(client, auth_headers, maker_role_id)
+    with Session(engine) as session:
+        user = session.get(User, maker_id)
+        user.company_id = None
+        session.add(user)
+        session.commit()
+
+    # Nonexistent company → 400
+    resp = client[0].patch(
+        f"/api/v1/users/{maker_id}",
+        json={"company_id": 999999},
+        headers=auth_headers["superadmin"],
+    )
+    assert resp.status_code == 400
+
+    # Inactive company → 400
+    with Session(engine) as session:
+        inactive_id = _create_company(session, "ORPH-INACT", "ORPHIN", is_active=False).id
+    resp = client[0].patch(
+        f"/api/v1/users/{maker_id}",
+        json={"company_id": inactive_id},
+        headers=auth_headers["superadmin"],
+    )
+    assert resp.status_code == 400
+
+    # Still unassigned
+    with Session(engine) as session:
+        assert session.get(User, maker_id).company_id is None
+
+
+def test_superadmin_user_company_cannot_be_assigned_via_repair(client, seeded_data, auth_headers):
+    """The repair path never assigns a company to a SUPERADMIN target."""
+    _, engine, _ = client
+    with Session(engine) as session:
+        target_company = _create_company(session, "ORPH-SA-1", "ORPHSA1")
+        # SUPERADMIN with no company (the seeded superadmin shape)
+        from users.models import Role
+        orphan_sa = User(
+            full_name="Orphan Superadmin",
+            email="orphan.sa@test.com",
+            hashed_password=hash_password("Admin@1234"),
+            is_active=True,
+            auth_provider="local",
+        )
+        session.add(orphan_sa)
+        session.flush()
+        sa_role = session.exec(select(Role).where(Role.name == RoleName.SUPERADMIN)).first()
+        session.add(UserRoleLink(user_id=orphan_sa.id, role_id=sa_role.id))
+        session.commit()
+        session.refresh(orphan_sa)
+        orphan_id = orphan_sa.id
+        target_company_id = target_company.id
+        assert orphan_sa.company_id is None
+
+    resp = client[0].patch(
+        f"/api/v1/users/{orphan_id}",
+        json={"company_id": target_company_id},
+        headers=auth_headers["superadmin"],
+    )
+    assert resp.status_code == 200, resp.text
+    with Session(engine) as session:
+        assert session.get(User, orphan_id).company_id is None
+
+
 def test_maker_update_unchanged(client, seeded_data, auth_headers):
     """Existing MAKER update behavior remains unchanged."""
     resp = client[0].patch(

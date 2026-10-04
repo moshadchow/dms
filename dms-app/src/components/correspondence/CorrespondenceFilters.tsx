@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { CorrespondenceDirection, CorrespondencePriority, CorrespondenceStatus } from '@/types/correspondence.types'
 import Button from '@/components/ui/Button'
 

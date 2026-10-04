@@ -7,8 +7,10 @@ Handles:
 - ID token validation (JWT, issuer, audience, nonce, expiry)
 - User resolution (JIT provisioning and account linking)
 
-Supports company-scoped Azure AD configurations. When a company_id is provided,
-the company's Azure AD config is used; otherwise falls back to global .env config.
+Azure AD configuration is company-scoped and database-driven: the
+`companies` table is the single source of truth. There is no global
+.env fallback — a company without a valid, enabled configuration simply
+cannot use Microsoft sign-in.
 """
 
 import base64
@@ -48,6 +50,14 @@ AUTHORIZE_ENDPOINT = (
     "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
 )
 
+# Default OIDC scopes (not tenant-specific, so they are a code constant —
+# deliberately NOT an environment setting).
+DEFAULT_SCOPES = ["openid", "profile", "email"]
+
+# Role assigned to JIT-provisioned users when the company does not
+# override it with `azure_default_role_name`.
+DEFAULT_JIT_ROLE_NAME = "auditor"
+
 # Cache for signing keys: {tenant_id: (keys_data, fetched_at)}
 _jwks_cache: dict[str, tuple[list[dict], float]] = {}
 _JWKS_CACHE_TTL = 3600  # 1 hour
@@ -58,43 +68,57 @@ _JWKS_CACHE_TTL = 3600  # 1 hour
 def get_azure_config_for_company(
     session: Session, company_id: Optional[int]
 ) -> dict[str, Any]:
-    """Return Azure AD config dict for the given company, or global fallback.
+    """Return Azure AD config dict for the given company.
 
-    Returns dict with keys: client_id, client_secret, tenant_id, redirect_uri,
-    scopes, default_role_name.
+    The company row in the database is the single source of truth — there
+    is no global .env fallback. Returns dict with keys: client_id,
+    client_secret, tenant_id, redirect_uri, scopes, default_role_name,
+    company_id.
 
-    Raises HTTPException 503 if no valid config found.
+    Raises HTTPException with user-safe messages (no secrets, no
+    tenant/client identifiers) when the company is missing, inactive, or
+    has no valid enabled Azure AD configuration.
     """
-    if company_id is not None:
-        from company_profile.models import Company
-        company = session.get(Company, company_id)
-        if company and company.azure_enabled and company.azure_client_id and company.azure_tenant_id:
-            return {
-                "client_id": company.azure_client_id,
-                "client_secret": company.azure_client_secret or "",
-                "tenant_id": company.azure_tenant_id,
-                "redirect_uri": settings.AZURE_REDIRECT_URI,
-                "scopes": settings.AZURE_SCOPES,
-                "default_role_name": company.azure_default_role_name or settings.AZURE_DEFAULT_ROLE_NAME,
-                "company_id": company.id,
-            }
+    if company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Company selection is required for Microsoft sign-in",
+        )
 
-    # Fallback to global config
-    if settings.AZURE_ENABLED:
-        return {
-            "client_id": settings.AZURE_CLIENT_ID,
-            "client_secret": settings.AZURE_CLIENT_SECRET,
-            "tenant_id": settings.AZURE_TENANT_ID,
-            "redirect_uri": settings.AZURE_REDIRECT_URI,
-            "scopes": settings.AZURE_SCOPES,
-            "default_role_name": settings.AZURE_DEFAULT_ROLE_NAME,
-            "company_id": None,
-        }
+    from company_profile.models import Company
+    company = session.get(Company, company_id)
+    if not company:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Selected company is not valid",
+        )
+    if not company.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Microsoft sign-in is not available for this company",
+        )
+    if not (
+        company.azure_enabled
+        and company.azure_client_id
+        and company.azure_tenant_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Microsoft Entra authentication is not configured "
+                "for the selected company"
+            ),
+        )
 
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Azure AD authentication is not configured",
-    )
+    return {
+        "client_id": company.azure_client_id,
+        "client_secret": company.azure_client_secret or "",
+        "tenant_id": company.azure_tenant_id,
+        "redirect_uri": settings.AZURE_REDIRECT_URI,
+        "scopes": DEFAULT_SCOPES,
+        "default_role_name": company.azure_default_role_name or DEFAULT_JIT_ROLE_NAME,
+        "company_id": company.id,
+    }
 
 
 # ── PKCE helpers ──────────────────────────────────
@@ -107,28 +131,19 @@ def generate_pkce_pair() -> tuple[str, str]:
     return code_verifier, code_challenge
 
 
-def generate_state(nonce: str, company_id: Optional[int] = None) -> str:
-    """Generate a state parameter encoding nonce and optional company_id.
+def generate_state(nonce: str, company_id: int) -> str:
+    """Generate a state parameter encoding nonce and the validated company_id.
 
-    The state is base64-encoded JSON: {"n":nonce,"cid":company_id_or_null}
+    The state is base64-encoded JSON: {"n":nonce,"cid":company_id}.
+
+    The callback does NOT decode this to pick a company — it looks the
+    state up in the server-side pending store, which is the authority for
+    the company context. The encoding exists so the round-tripped value
+    is deterministic and inspectable, and so a tampered state no longer
+    matches any pending entry.
     """
     payload = {"n": nonce, "cid": company_id}
     return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
-
-
-def decode_state(state: str) -> tuple[str, Optional[int]]:
-    """Decode state parameter, returning (nonce, company_id).
-
-    Raises HTTPException if state is invalid.
-    """
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(state))
-        return payload["n"], payload.get("cid")
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid state parameter",
-        )
 
 
 def generate_nonce() -> str:
@@ -267,8 +282,8 @@ async def validate_id_token(id_token: str, expected_nonce: str, azure_config: di
         public_key = cert.public_key()
     else:
         from jose.utils import base64url_decode
-        n = int.from_bytes(base64url_decode(key_data["n"]), "big")
-        e = int.from_bytes(base64url_decode(key_data["e"]), "big")
+        n = int.from_bytes(base64url_decode(key_data["n"].encode()), "big")
+        e = int.from_bytes(base64url_decode(key_data["e"].encode()), "big")
         public_key = rsa.RSAPublicNumbers(e, n).public_key()
 
     # Decode and validate
@@ -308,23 +323,43 @@ async def validate_id_token(id_token: str, expected_nonce: str, azure_config: di
 
 # ── User resolution / JIT provisioning ────────────
 
+def _ensure_company_membership(user: User, company_id: int) -> None:
+    """Reject an existing user who does not belong to the authenticating company.
+
+    Prevents cross-company account takeover: a token issued through
+    Company A's tenant can never authenticate (or get linked to) an
+    account belonging to Company B — including company-less accounts.
+    """
+    if user.company_id != company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is not associated with the selected company",
+        )
+
+
 def resolve_azure_user(
     session: Session,
     claims: dict,
+    company_id: int,
     ip_address: Optional[str] = None,
-    company_id: Optional[int] = None,
     default_role_name: Optional[str] = None,
 ) -> User:
-    """Resolve an Azure AD identity to a DMS user.
+    """Resolve an Azure AD identity to a DMS user of the authenticating company.
 
     Resolution order:
     1. Match by azure_object_id (returning Azure-linked users immediately).
     2. Match by email (link Azure identity to existing local account).
     3. No match -> JIT provision a new user.
 
-    When company_id is provided, JIT-provisioned users are assigned to that company.
+    `company_id` is the company whose Azure configuration authenticated
+    this token and is required. An existing user resolved by oid or email
+    must belong to that exact company: a mismatch (including a
+    company-less account) raises 403 — users are never silently moved or
+    linked across companies. JIT-provisioned users are created with that
+    company_id.
 
-    Raises HTTPException on unrecoverable errors (email mismatch, inactive account).
+    Raises HTTPException on unrecoverable errors (cross-company mismatch,
+    email mismatch, inactive account).
     """
     azure_oid = claims.get("oid")
     email = claims.get("email") or claims.get("preferred_username")
@@ -342,6 +377,7 @@ def resolve_azure_user(
         select(User).where(User.azure_object_id == azure_oid)
     ).first()
     if existing:
+        _ensure_company_membership(existing, company_id)
         if not existing.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -368,6 +404,7 @@ def resolve_azure_user(
         select(User).where(User.email == email)
     ).first()
     if existing:
+        _ensure_company_membership(existing, company_id)
         if not existing.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -393,7 +430,7 @@ def resolve_azure_user(
         return existing
 
     # 3. JIT provision a new user
-    role_name = default_role_name or settings.AZURE_DEFAULT_ROLE_NAME
+    role_name = default_role_name or DEFAULT_JIT_ROLE_NAME
     role = session.exec(
         select(Role).where(Role.name == role_name)
     ).first()

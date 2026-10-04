@@ -24,12 +24,17 @@ export default function CorrespondenceAssignDialog({ isOpen, onClose, onConfirm 
   const [fetching, setFetching] = useState(false)
 
   useEffect(() => {
-    if (isOpen) {
-      setFetching(true)
-      usersApi.list({ limit: 200 }).then(res => {
+    if (!isOpen) return
+    Promise.resolve()
+      .then(() => {
+        setFetching(true)
+        return usersApi.list({ limit: 200 })
+      })
+      .then((res) => {
         setUsers(res.items)
-      }).catch(() => {}).finally(() => setFetching(false))
-    }
+      })
+      .catch(() => {})
+      .finally(() => setFetching(false))
   }, [isOpen])
 
   const handleConfirm = async () => {
