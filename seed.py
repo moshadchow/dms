@@ -1,10 +1,10 @@
 """
 Seed Script
-───────────
+
 Populates the database with the default:
-  • Permissions (view, download, create, update, delete)
-  • Roles (Admin, Maker, Checker, Auditor) with correct permission sets
-  • Initial Admin user
+   Permissions (view, download, create, update, delete)
+   Roles (Admin, Maker, Checker, Auditor) with correct permission sets
+   Initial Admin user
 
 Run once after `alembic upgrade head`:
     python seed.py
@@ -36,9 +36,9 @@ from users.models import (
 from storage_usage.models import SystemSetting
 
 
-# ──────────────────────────────────────────────
+# 
 # Default permission matrix
-# ──────────────────────────────────────────────
+# 
 
 ROLE_PERMISSIONS: dict[RoleName, list[PermissionAction]] = {
     RoleName.SUPERADMIN: [PermissionAction.VIEW, PermissionAction.DOWNLOAD,
@@ -62,22 +62,16 @@ ROLE_DESCRIPTIONS: dict[RoleName, str] = {
     RoleName.AUDITOR:    "Read-only access for compliance and auditing",
 }
 
-DEFAULT_ADMIN = {
-    "full_name": "System Administrator",
-    "email":     "admin@dms.local",
-    "password":  "Admin@1234",   # ← change before production
-}
-
 DEFAULT_SUPERADMIN = {
     "full_name": "Super Administrator",
     "email":     "superadmin@dms.local",
-    "password":  "SuperAdmin@1234",   # ← change before production
+    "password":  "SuperAdmin@1234",   #  change before production
 }
 
 
 def seed() -> None:
     with Session(engine) as session:
-        # ── 1. Permissions ────────────────────
+        #  1. Permissions 
         perm_map: dict[PermissionAction, Permission] = {}
 
         for action in PermissionAction:
@@ -94,7 +88,7 @@ def seed() -> None:
                 perm_map[action] = perm
                 print(f"  [+] Permission: {action.value}")
 
-        # ── 2. Roles + Permission links ────────
+        #  2. Roles + Permission links 
         role_map: dict[RoleName, Role] = {}
 
         for role_name, actions in ROLE_PERMISSIONS.items():
@@ -124,7 +118,7 @@ def seed() -> None:
                 role_map[role_name] = role
                 print(f"  [+] Role: {role_name.value}  ({', '.join(a.value for a in actions)})")
 
-        # ── 3. Default User Levels ──────────
+        #  3. Default User Levels 
         DEFAULT_LEVELS = [
             ("High", "High-priority access level"),
             ("Medium", "Medium-priority access level"),
@@ -184,6 +178,7 @@ def seed() -> None:
             print(f"  [=] Super Admin user already exists: {DEFAULT_SUPERADMIN['email']}")
 
         # ── 5. Default storage capacity ─────
+
         cap_row = session.get(SystemSetting, "storage_capacity_gb")
         if not cap_row:
             session.add(
@@ -198,13 +193,13 @@ def seed() -> None:
             print(f"  [=] Storage capacity already set: {cap_row.value} GB")
 
         session.commit()
-        print("\n✅  Seed complete.")
+        print("\n  Seed complete.")
 
 
 if __name__ == "__main__":
-    print("🌱  Seeding database...\n")
+    print("Seeding database...\n")
     try:
         seed()
     except Exception as exc:
-        print(f"\n❌  Seed failed: {exc}", file=sys.stderr)
+        print(f"\n  Seed failed: {exc}", file=sys.stderr)
         sys.exit(1)
