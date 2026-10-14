@@ -52,7 +52,7 @@ Company-isolation regressions are the norm here; they get their own file (`test_
 
 **The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~5 min (100 tests) with PDF generation on top. A full run is ~20 min. Target a file/class while iterating, but budget a long run before declaring done.
 
-**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 587 passed, 14 errors` (the 2 + 14 are constant; passed grows with new tests). The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
+**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 589 passed, 14 errors` (the 2 + 14 are constant; passed grows with new tests). The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
 
 ## Module Convention
 `models.py` (SQLModel + read schemas) · `schemas.py` (write schemas, optional) · `service.py` (class-based, takes `Session`) · `router.py` (thin — business logic belongs in the service). Keep routers thin.
@@ -79,7 +79,7 @@ Exceptions live in `core/exceptions.py`; access guards in `core/access.py` (`ens
 
 Nav-aware read paths are exactly: `GET /directories/{id}`, `list_by_category` roots, pruned `get_tree`, and the `directory_id`/`category_id` filters in `DocumentService.list_documents` (its `access_filters` + user-level filter still scope rows, so a nav-only parent lists 0 items). Partial-category `directory_count`/`document_count` in `list_categories` are scoped to granted subtrees, never whole-category totals.
 
-Non-admin denials return **404, not 403** (oracle avoidance) — a 404 on these endpoints is the guard working, not a bug. The frontend's `isAccessDeniedError` maps 403/404 → `/forbidden`, so never "fix" a denial by suppressing 404s client-side. Tests: `tests/test_directory_navigation.py` (cross-company case lives in `test_directory_access_company.py`).
+Non-admin denials return **404, not 403** (oracle avoidance) — a 404 on these endpoints is the guard working, not a bug. The frontend's `isAccessDeniedError` maps 403/404 → `/forbidden`, so never "fix" a denial by suppressing 404s client-side. Tests: `tests/test_directory_navigation.py` (cross-company case lives in `test_directory_access_company.py`). Verify end-to-end through real `POST /auth/login` + `GET /auth/me` — minted-token replays bypass the frontend gate and once missed a real `/forbidden` bug.
 
 ## Company-Scoped Storage
 `core/storage.py` `StorageService` (module singleton `storage_service`) owns all path building. Layout: `STORAGE_ROOT/<short_name>/{uploads,memos,signatures,correspondence}/`.
@@ -141,6 +141,7 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 - Nav-only folders (`navigation_only` on `Directory`/`DirectoryNode`, see Directory Navigation Access): `DocumentsPage` hides Upload CTAs and shows a "View only" badge; `DirectoryTree` mutes the node, shows an eye icon, and suppresses the write context menu. The flag is display-only — enforcement is backend.
 - Toast placement: the global `<Toaster>` (`main.tsx`) is `top-right`. Workflow/approval error toasts pass a per-call `{ position: 'top-center' }` override (see `CorrespondenceDetailPage`, `MemoDetailPage`) — do not move the global Toaster to change one toast.
 - `store/authStore.ts` persists **only** tokens; the user object is refetched on every load by `ProtectedRoute` → `authApi.me()`.
+- `GET /auth/me` hand-builds the `UserRead` payload (`auth/router.py`) — it is what the app boots from. Any `UserRead` field the UI consumes (`directories` for `canAccessCategory`) must be added there, not just on the model; a missing field fails silently (empty default) and once sent all grant-only users to `/forbidden` with no failed request in Network.
 - `@` → `dms-app/src/`. Tailwind is used via `@tailwind` directives in `index.css` — **there is no `tailwind.config.js`**; use utilities directly.
 - Rich text is TipTap (see `dms-app/src/components/memo/`); sanitized HTML goes through `utils/sanitizeHtml.ts`.
 - Typecheck is part of `npm run build`; there is no standalone `typecheck` script.
