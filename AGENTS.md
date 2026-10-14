@@ -28,7 +28,7 @@ npm run lint     # ESLint
 Copy `.env.example` → `.env`. Never commit `.env`. There are **no** Azure AD credentials in `.env` — Entra ID config is per company, in the database.
 
 ## Spec-Driven Workflow
-Features are numbered steps. Specs live in `specs/NN-kebab-slug.md`; `/create-spec` (`.opencode/commands/create-spec.md`, mirrored in `.claude/commands/`) scaffolds the next one with a required structure (Overview / Depends on / Routes / Database changes / Files to change / Files to create / New dependencies / Rules for implementation / Definition of done). Check `specs/` for the highest number before starting new work. `plans/` holds derived implementation plans and is currently empty.
+Features are numbered steps. Specs live in `specs/NN-kebab-slug.md` (older `feature_*`/`instruction_*` files are legacy); `/create-spec` (`.opencode/commands/create-spec.md`, mirrored in `.claude/commands/`) scaffolds the next one with a required structure (Overview / Depends on / Routes / Database changes / Files to change / Files to create / New dependencies / Rules for implementation / Definition of done). Check `specs/` for the highest number before starting new work. There is no `plans/` directory — do not create one.
 
 ## Migrations
 `alembic.ini` `file_template` is `%%(year)d%%(month).2d%%(day).2d_%%(rev)s_%%(slug)s` — new revisions are **date-prefixed** (`20260921_1559_add_x.py`). `migrations/env.py` overwrites `sqlalchemy.url` from `.env`; the URL in `alembic.ini` is dead config.
@@ -52,12 +52,12 @@ Company-isolation regressions are the norm here; they get their own file (`test_
 
 **The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~5 min (100 tests) with PDF generation on top. A full run is ~20 min. Target a file/class while iterating, but budget a long run before declaring done.
 
-**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 520 passed, 14 errors` (the 2 + 14 are constant; passed grows with new tests). The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
+**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 587 passed, 14 errors` (the 2 + 14 are constant; passed grows with new tests). The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
 
 ## Module Convention
 `models.py` (SQLModel + read schemas) · `schemas.py` (write schemas, optional) · `service.py` (class-based, takes `Session`) · `router.py` (thin — business logic belongs in the service). Keep routers thin.
 
-Exceptions live in `core/exceptions.py`; access guards in `core/access.py` (`ensure_category_access`, `ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`).
+Exceptions live in `core/exceptions.py`; access guards in `core/access.py` (`ensure_category_access`, `ensure_directory_access`, `ensure_document_access`, `ensure_document_user_level_access`, plus read/navigation variants — see **Directory Navigation Access** below).
 
 `documents/` has `DocumentService` + `DocumentVariantService`; `workflow/` has three routers in `router.py` — `router` (`/api/v1/workflows`), `instance_router` (`/api/v1/workflow-instances`), `signature_router` (`/api/v1/signatures`) — with services split into `definition_service.py` / `instance_service.py` / `approval_service.py` (`service.py` is a back-compat re-export shim) and shared approver logic in `approval_policy.py`.
 
@@ -70,6 +70,16 @@ Exceptions live in `core/exceptions.py`; access guards in `core/access.py` (`ens
 - `Company.short_name` is the storage namespace and must match `[A-Za-z0-9_-]+`; it is validated on every path build.
 
 `AdminUser` is an **authorization** guard, not a visibility guard — it admits both ADMIN and SUPERADMIN. Visibility hiding is done in the service (`users/service.py` `list_users()`).
+
+## Directory Navigation Access (direct vs navigation vs content)
+`core/access.py` separates three tiers — do not collapse them:
+- **Direct access** (`ensure_directory_access`, `ensure_category_access`): category grant or grant covering self/ancestors. Required for ALL writes (upload, directory rename/delete, memo attach) and for document detail/view/download.
+- **Navigation access** (`can_navigate_directory` / `ensure_directory_read_access`): read-only traversal of a parent with ≥1 accessible descendant (recursive, recomputed per request — revoking the last covering grant removes it). The directory's category must be active and same-company. Served with `navigation_only: true` on `DirectoryRead`/`DirectoryNode`.
+- **Category metadata** (`ensure_category_read_access`, used **only** by `CategoryService.get_category`): directory-grant users may read a category holding one of their grants (page headers). Never use it for content guards — correspondence/memos keep strict `ensure_category_access`.
+
+Nav-aware read paths are exactly: `GET /directories/{id}`, `list_by_category` roots, pruned `get_tree`, and the `directory_id`/`category_id` filters in `DocumentService.list_documents` (its `access_filters` + user-level filter still scope rows, so a nav-only parent lists 0 items). Partial-category `directory_count`/`document_count` in `list_categories` are scoped to granted subtrees, never whole-category totals.
+
+Non-admin denials return **404, not 403** (oracle avoidance) — a 404 on these endpoints is the guard working, not a bug. The frontend's `isAccessDeniedError` maps 403/404 → `/forbidden`, so never "fix" a denial by suppressing 404s client-side. Tests: `tests/test_directory_navigation.py` (cross-company case lives in `test_directory_access_company.py`).
 
 ## Company-Scoped Storage
 `core/storage.py` `StorageService` (module singleton `storage_service`) owns all path building. Layout: `STORAGE_ROOT/<short_name>/{uploads,memos,signatures,correspondence}/`.
@@ -127,6 +137,8 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 ## Frontend Conventions
 - API modules import `apiClient` from `./client` (baseURL `/api/v1`; interceptors: 401-refresh + Blob error parsing) — **not** `apiRoot` from `./base`. Paths are relative: `apiClient.get('/users')`.
 - Error display uses `getErrorMessage(err)` from `@/api/client`; toasts via `react-hot-toast`. Download endpoints use `responseType: 'blob'` — the response error interceptor converts Blob error bodies to JSON in place, so `getErrorMessage(err)` and `err.response.data.detail` surface the real `detail`. Don't re-solve this per caller.
+- Backend non-admin denials are **404 by design**; `isAccessDeniedError` treats 403/404 as access-denied → `/forbidden`. Genuine denials must keep flowing there — gate UI affordances instead of catching errors.
+- Nav-only folders (`navigation_only` on `Directory`/`DirectoryNode`, see Directory Navigation Access): `DocumentsPage` hides Upload CTAs and shows a "View only" badge; `DirectoryTree` mutes the node, shows an eye icon, and suppresses the write context menu. The flag is display-only — enforcement is backend.
 - Toast placement: the global `<Toaster>` (`main.tsx`) is `top-right`. Workflow/approval error toasts pass a per-call `{ position: 'top-center' }` override (see `CorrespondenceDetailPage`, `MemoDetailPage`) — do not move the global Toaster to change one toast.
 - `store/authStore.ts` persists **only** tokens; the user object is refetched on every load by `ProtectedRoute` → `authApi.me()`.
 - `@` → `dms-app/src/`. Tailwind is used via `@tailwind` directives in `index.css` — **there is no `tailwind.config.js`**; use utilities directly.
