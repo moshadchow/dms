@@ -23,7 +23,7 @@ import type {
 
 GlobalWorkerOptions.workerSrc = `${pdfWorkerSrc}?v=pdfjs4`
 
-type ToolMode = 'pen' | 'eraser'
+type ToolMode = 'select' | 'pen' | 'eraser'
 
 interface PageMetric {
   pageNumber: number
@@ -73,7 +73,7 @@ export default function PdfAnnotationWorkspace({
   const [pdfReady, setPdfReady] = useState(false)
   const [loadingPdf, setLoadingPdf] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [tool, setTool] = useState<ToolMode>('pen')
+  const [tool, setTool] = useState<ToolMode>('select')
   const [zoom, setZoom] = useState(1)
   const [color, setColor] = useState(DEFAULT_COLORS[0])
   const [thickness, setThickness] = useState(4)
@@ -85,24 +85,26 @@ export default function PdfAnnotationWorkspace({
 
   useEffect(() => {
     // Local editor state is intentionally reset when a saved workspace reloads.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStrokes(
-      annotations
-        .filter((annotation) => annotation.annotation_type === 'stroke')
-        .map((annotation) => ({
-          localId: `saved-${annotation.id}`,
-          pageNumber: annotation.page_number ?? 1,
-          color: annotation.color,
-          thickness: annotation.thickness ?? 4,
-          points: Array.isArray(annotation.anchor_data?.points)
-            ? annotation.anchor_data.points as PdfStrokePoint[]
-            : [],
-        }))
-        .filter((annotation) => annotation.points.length >= 2)
-    )
-    setUndoStack([])
-    setRedoStack([])
-    setActiveStroke(null)
+    Promise.resolve()
+      .then(() => {
+        setStrokes(
+          annotations
+            .filter((annotation) => annotation.annotation_type === 'stroke')
+            .map((annotation) => ({
+              localId: `saved-${annotation.id}`,
+              pageNumber: annotation.page_number ?? 1,
+              color: annotation.color,
+              thickness: annotation.thickness ?? 4,
+              points: Array.isArray(annotation.anchor_data?.points)
+                ? annotation.anchor_data.points as PdfStrokePoint[]
+                : [],
+            }))
+            .filter((annotation) => annotation.points.length >= 2)
+        )
+        setUndoStack([])
+        setRedoStack([])
+        setActiveStroke(null)
+      })
     activeStrokeRef.current = null
     eraserSnapshotRef.current = null
     eraserChangedRef.current = false
@@ -114,10 +116,12 @@ export default function PdfAnnotationWorkspace({
 
   useEffect(() => {
     let cancelled = false
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoadingPdf(true)
-    setPdfReady(false)
-    setPageMetrics([])
+    Promise.resolve()
+      .then(() => {
+        setLoadingPdf(true)
+        setPdfReady(false)
+        setPageMetrics([])
+      })
     pdfDocRef.current = null
 
     const token = localStorage.getItem('access_token')
@@ -177,25 +181,32 @@ export default function PdfAnnotationWorkspace({
 
   useEffect(() => {
     if (!pdfDocRef.current || pageMetrics.length === 0) return
+
+    const tasks: { cancel: () => void }[] = []
     let cancelled = false
 
     const renderPages = async () => {
       for (const metric of pageMetrics) {
+        if (cancelled) break
         const canvas = pdfCanvasRefs.current[metric.pageNumber - 1]
         if (!canvas) continue
         const page = await pdfDocRef.current.getPage(metric.pageNumber)
+        if (cancelled) break
         const viewport = page.getViewport({ scale: zoom })
         canvas.width = viewport.width
         canvas.height = viewport.height
         const context = canvas.getContext('2d')
         if (!context || cancelled) continue
-        await page.render({ canvasContext: context, viewport }).promise
+        const task = page.render({ canvasContext: context, viewport })
+        tasks.push(task)
+        await task.promise.catch(() => {})
       }
     }
 
     void renderPages()
     return () => {
       cancelled = true
+      tasks.forEach((t) => { try { t.cancel() } catch { /* ignore */ } })
     }
   }, [pageMetrics, zoom])
 
@@ -436,6 +447,7 @@ export default function PdfAnnotationWorkspace({
 
         <div style={styles.toolbar}>
           <div style={styles.toolbarGroup}>
+            <button onClick={() => setTool('select')} style={tool === 'select' ? styles.activeToggle : styles.toggle}>Select</button>
             <button onClick={() => setTool('pen')} style={tool === 'pen' ? styles.activeToggle : styles.toggle}>Pen</button>
             <button onClick={() => setTool('eraser')} style={tool === 'eraser' ? styles.activeToggle : styles.toggle}>Eraser</button>
           </div>
@@ -531,7 +543,11 @@ export default function PdfAnnotationWorkspace({
                       ref={(node) => {
                         overlayCanvasRefs.current[index] = node
                       }}
-                      style={styles.overlayCanvas}
+                      style={{
+                        ...styles.overlayCanvas,
+                        pointerEvents: tool === 'select' ? 'none' : 'auto',
+                        cursor: tool === 'pen' ? 'crosshair' : tool === 'eraser' ? 'cell' : 'default',
+                      }}
                       onPointerDown={handlePointerDown(metric.pageNumber)}
                       onPointerMove={handlePointerMove(metric.pageNumber)}
                       onPointerUp={handlePointerUp(metric.pageNumber)}

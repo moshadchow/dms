@@ -15,6 +15,7 @@ class FileType(str, Enum):
     DOCX = "docx"
     EXCEL = "excel"
     IMAGE = "image"
+    HTML = "html"
 
 
 class DocumentStatus(str, Enum):

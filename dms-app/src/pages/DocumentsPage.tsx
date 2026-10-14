@@ -15,7 +15,7 @@ import UploadModal from '@/components/documents/UploadModal'
 import EditDocumentModal from '@/components/documents/EditDocumentModal'
 import type { Category } from '@/types/category.types'
 import type { DirectoryNode } from '@/types/directory.types'
-import type { Document, DocumentListResponse } from '@/types/document.types'
+import type { Document, DocumentListResponse, FileType } from '@/types/document.types'
 
 export default function DocumentsPage() {
   const { directoryId } = useParams()
@@ -30,6 +30,7 @@ export default function DocumentsPage() {
   // ── Page state ────────────────────────────────────────────────
   const [resolvedCategoryId, setResolvedCategoryId] = useState<number | null>(null)
   const [resolvedDirId, setResolvedDirId]           = useState<number | null>(null)
+  const [navOnly, setNavOnly]                       = useState(false)
   const [category, setCategory]     = useState<Category | null>(null)
   const [tree, setTree]             = useState<DirectoryNode[]>([])
   const [loading, setLoading]       = useState(true)
@@ -39,7 +40,7 @@ export default function DocumentsPage() {
   const [docData, setDocData]       = useState<DocumentListResponse | null>(null)
   const [docLoading, setDocLoading] = useState(false)
   const [search, setSearch]         = useState('')
-  const [fileTypeFilter, setFileTypeFilter] = useState('')
+  const [fileTypeFilter, setFileTypeFilter] = useState<FileType | ''>('')
   const [showArchived, setShowArchived]     = useState(false)
   const [selectedIds, setSelectedIds]       = useState<Set<number>>(new Set())
   const [bulkRestoring, setBulkRestoring]   = useState(false)
@@ -54,11 +55,6 @@ export default function DocumentsPage() {
   // ── Resolve category/directory from URL ───────────────────────
   useEffect(() => {
     if (!directoryId) return
-    setLoading(true)
-    setResolvedCategoryId(null)
-    setResolvedDirId(null)
-    setTree([])
-    setDocData(null)
 
     const run = async () => {
       try {
@@ -77,6 +73,7 @@ export default function DocumentsPage() {
           const cat   = await categoriesApi.get(catId)
           setCategory(cat)
           setResolvedCategoryId(catId)
+          setNavOnly(false)
           setSelectedCategory(catId)
         } else {
           const dir = await directoriesApi.get(parseInt(directoryId))
@@ -84,6 +81,7 @@ export default function DocumentsPage() {
           setCategory(cat)
           setResolvedCategoryId(dir.category_id)
           setResolvedDirId(dir.id)
+          setNavOnly(dir.navigation_only ?? false)
           setSelectedCategory(dir.category_id)
           setSelectedDirectory(dir.id)
         }
@@ -99,20 +97,35 @@ export default function DocumentsPage() {
         setLoading(false)
       }
     }
-    run()
+
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        setResolvedCategoryId(null)
+        setResolvedDirId(null)
+        setNavOnly(false)
+        setTree([])
+        setDocData(null)
+        return run()
+      })
   }, [directoryId, isRoot, isAdmin, canAccessCategory, navigate, setSelectedCategory, setSelectedDirectory])
 
   // ── Load directory tree ───────────────────────────────────────
-  const loadTree = useCallback(async (catId: number) => {
-    setTreeLoading(true)
-    try {
-      const data = await directoriesApi.getTree(catId)
-      setTree(data)
-    } catch {
-      toast.error('Failed to load directories')
-    } finally {
-      setTreeLoading(false)
-    }
+  const loadTree = useCallback((catId: number) => {
+    Promise.resolve()
+      .then(() => {
+        setTreeLoading(true)
+        return directoriesApi.getTree(catId)
+      })
+      .then((data) => {
+        setTree(data)
+      })
+      .catch(() => {
+        toast.error('Failed to load directories')
+      })
+      .finally(() => {
+        setTreeLoading(false)
+      })
   }, [])
 
   useEffect(() => {
@@ -127,31 +140,40 @@ export default function DocumentsPage() {
   }, [resolvedCategoryId, loadTree, refreshDirectories])
 
   // ── Load documents when directory or filters change ───────────
-  const loadDocuments = useCallback(async () => {
+  const loadDocuments = useCallback(() => {
     if (!resolvedDirId) return
-    setDocLoading(true)
-    setSelectedIds(new Set())
-    try {
-      const data = await documentsApi.list({
-        directory_id: resolvedDirId,
-        search:       search.trim() || undefined,
-        file_type:    (fileTypeFilter || undefined) as any,
-        status:       showArchived ? 'archived' : undefined,
-        skip:         (page - 1) * LIMIT,
-        limit:        LIMIT,
+    Promise.resolve()
+      .then(() => {
+        setDocLoading(true)
+        setSelectedIds(new Set())
+        return documentsApi.list({
+          directory_id: resolvedDirId,
+          search:       search.trim() || undefined,
+          file_type:    fileTypeFilter || undefined,
+          status:       showArchived ? 'archived' : undefined,
+          skip:         (page - 1) * LIMIT,
+          limit:        LIMIT,
+        })
       })
-      setDocData(data)
-    } catch {
-      toast.error('Failed to load documents')
-    } finally {
-      setDocLoading(false)
-    }
+      .then((data) => {
+        setDocData(data)
+      })
+      .catch(() => {
+        toast.error('Failed to load documents')
+      })
+      .finally(() => {
+        setDocLoading(false)
+      })
   }, [resolvedDirId, search, fileTypeFilter, showArchived, page])
 
   const handleSelectDoc = useCallback((id: number, checked: boolean) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      checked ? next.add(id) : next.delete(id)
+      if (checked) {
+        next.add(id)
+      } else {
+        next.delete(id)
+      }
       return next
     })
   }, [])
@@ -175,20 +197,24 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     if (resolvedDirId) loadDocuments()
-    else setDocData(null)
+    else Promise.resolve().then(() => setDocData(null))
   }, [resolvedDirId, loadDocuments])
 
-  // Reset page when search/filter/status changes
-  useEffect(() => { setPage(1) }, [search, fileTypeFilter, showArchived, resolvedDirId])
+  // Reset page when search/filter/status changes (adjusted during render)
+  const docFilterKey = `${search}|${fileTypeFilter}|${String(showArchived)}|${resolvedDirId ?? ''}`
+  const [prevDocFilterKey, setPrevDocFilterKey] = useState(docFilterKey)
+  if (prevDocFilterKey !== docFilterKey) {
+    setPrevDocFilterKey(docFilterKey)
+    setPage(1)
+  }
 
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px' }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ width: '28px', height: '28px', border: '3px solid #e2e8f0', borderTopColor: '#4f46e5', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 0.75rem' }} />
+          <div style={{ width: '28px', height: '28px', border: '3px solid var(--border-soft)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 0.75rem' }} />
           <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem', margin: 0 }}>Loading…</p>
         </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     )
   }
@@ -204,7 +230,7 @@ export default function DocumentsPage() {
           <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <div style={{ width: '28px', height: '28px', backgroundColor: 'var(--primary-soft)', borderRadius: '7px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               </div>
               <div style={{ overflow: 'hidden' }}>
                 <p style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -219,8 +245,7 @@ export default function DocumentsPage() {
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {treeLoading ? (
               <div style={{ padding: '2rem', display: 'flex', justifyContent: 'center' }}>
-                <div style={{ width: '20px', height: '20px', border: '2px solid #e2e8f0', borderTopColor: '#4f46e5', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+                <div style={{ width: '20px', height: '20px', border: '2px solid var(--border-soft)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
               </div>
             ) : resolvedCategoryId != null ? (
               <DirectoryTree
@@ -240,15 +265,22 @@ export default function DocumentsPage() {
               {/* Document panel header */}
               <div style={{ padding: '0.875rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', flexShrink: 0 }}>
                 <div>
-                  <p style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>Documents</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <p style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>Documents</p>
+                    {navOnly && (
+                      <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', backgroundColor: 'var(--surface-2)', border: '1px solid var(--border-soft)', padding: '2px 8px', borderRadius: '999px' }}>
+                        View only
+                      </span>
+                    )}
+                  </div>
                   <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>
                     {docData ? `${docData.total} file${docData.total !== 1 ? 's' : ''}` : '…'}
                   </p>
                 </div>
-                {canCreate && (
+                {canCreate && !navOnly && (
                   <button
+                    className="btn btn-primary"
                     onClick={() => setUploadOpen(true)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
                   >
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                     Upload
@@ -272,7 +304,7 @@ export default function DocumentsPage() {
                 </div>
                 <select
                   value={fileTypeFilter}
-                  onChange={(e) => setFileTypeFilter(e.target.value)}
+                  onChange={(e) => setFileTypeFilter(e.target.value as FileType | '')}
                   className="input"
                   style={{ width: '120px', fontSize: '0.82rem' }}
                 >
@@ -297,21 +329,21 @@ export default function DocumentsPage() {
 
               {/* Bulk restore action bar */}
               {showArchived && selectedIds.size > 0 && (
-                <div style={{ padding: '0.6rem 1.25rem', backgroundColor: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.82rem', color: '#1d4ed8', fontWeight: 500 }}>
+                <div style={{ padding: '0.6rem 1.25rem', backgroundColor: 'var(--info-bg)', borderBottom: '1px solid var(--info)', display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--info)', fontWeight: 500 }}>
                     {selectedIds.size} selected
                   </span>
                   <button
                     onClick={handleBulkRestore}
                     disabled={bulkRestoring}
-                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 14px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '0.82rem', fontWeight: 600, cursor: bulkRestoring ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: bulkRestoring ? 0.7 : 1 }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 14px', backgroundColor: 'var(--info)', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '0.82rem', fontWeight: 600, cursor: bulkRestoring ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: bulkRestoring ? 0.7 : 1 }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
                     {bulkRestoring ? 'Restoring…' : 'Restore Selected'}
                   </button>
                   <button
                     onClick={() => setSelectedIds(new Set())}
-                    style={{ padding: '5px 10px', backgroundColor: 'transparent', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '7px', fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}
+                    style={{ padding: '5px 10px', backgroundColor: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-soft)', borderRadius: '7px', fontSize: '0.82rem', cursor: 'pointer', fontFamily: 'inherit' }}
                   >
                     Clear
                   </button>
@@ -321,29 +353,30 @@ export default function DocumentsPage() {
               {/* Document grid */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.25rem' }}>
                 {docLoading ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.875rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.875rem' }} aria-busy="true" role="status">
+                    <span className="sr-only">Loading documents...</span>
                     {[...Array(6)].map((_, i) => (
                       <div key={i} style={{ backgroundColor: 'var(--bg)', borderRadius: '0.875rem', border: '1px solid var(--border)', padding: '1rem', animation: 'pulse 1.5s ease infinite' }}>
                         <div style={{ width: '40px', height: '40px', backgroundColor: 'var(--surface-2)', borderRadius: '10px', marginBottom: '0.75rem' }} />
                         <div style={{ height: '13px', backgroundColor: 'var(--surface-2)', borderRadius: '4px', marginBottom: '6px', width: '80%' }} />
                         <div style={{ height: '10px', backgroundColor: 'var(--bg)', borderRadius: '4px', width: '55%' }} />
-                        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
                       </div>
                     ))}
                   </div>
                 ) : !docData || docData.items.length === 0 ? (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', textAlign: 'center', padding: '2rem' }}>
-                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
+                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                     <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>
-                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter ? 'No documents match your filters' : 'No documents yet'}
+                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter ? 'No documents match your filters' : navOnly ? 'Navigation folder — open a subfolder to view its documents' : 'No documents yet'}
                     </p>
-                    {canCreate && !search && !fileTypeFilter && (
+                    {canCreate && !navOnly && !search && !fileTypeFilter && (
                       <button
+                        className="btn btn-primary"
                         onClick={() => setUploadOpen(true)}
-                        style={{ marginTop: '0.75rem', padding: '7px 16px', backgroundColor: 'var(--text)', color: 'var(--surface)', border: 'none', borderRadius: '8px', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}
+                        style={{ marginTop: '0.75rem' }}
                       >
                         Upload first document
                       </button>
@@ -380,7 +413,7 @@ export default function DocumentsPage() {
           ) : (
             /* No directory selected */
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" style={{ marginBottom: '1rem' }}>
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                 <polyline points="14 2 14 8 20 8"/>
               </svg>

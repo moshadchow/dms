@@ -3,17 +3,23 @@
 Handles:
 - PKCE code-verifier / code-challenge generation
 - Authorization URL construction
-- Authorization code → token exchange
+- Authorization code -> token exchange
 - ID token validation (JWT, issuer, audience, nonce, expiry)
 - User resolution (JIT provisioning and account linking)
+
+Azure AD configuration is company-scoped and database-driven: the
+`companies` table is the single source of truth. There is no global
+.env fallback — a company without a valid, enabled configuration simply
+cannot use Microsoft sign-in.
 """
 
 import base64
 import hashlib
+import json
 import secrets
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -22,7 +28,8 @@ from jose import JWTError, jwt
 from jose.utils import long_to_base64
 from sqlmodel import Session, select
 
-from core.audit import AuditEvent, log_audit_event
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.config import settings
 from core.security import create_token_pair
 from users.models import AuthProvider, Role, RoleName, User, UserRoleLink
@@ -43,9 +50,75 @@ AUTHORIZE_ENDPOINT = (
     "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
 )
 
-# Cache for signing keys: {kid: (keys_data, fetched_at)}
+# Default OIDC scopes (not tenant-specific, so they are a code constant —
+# deliberately NOT an environment setting).
+DEFAULT_SCOPES = ["openid", "profile", "email"]
+
+# Role assigned to JIT-provisioned users when the company does not
+# override it with `azure_default_role_name`.
+DEFAULT_JIT_ROLE_NAME = "auditor"
+
+# Cache for signing keys: {tenant_id: (keys_data, fetched_at)}
 _jwks_cache: dict[str, tuple[list[dict], float]] = {}
 _JWKS_CACHE_TTL = 3600  # 1 hour
+
+
+# ── Company-scoped Azure config resolver ──────────
+
+def get_azure_config_for_company(
+    session: Session, company_id: Optional[int]
+) -> dict[str, Any]:
+    """Return Azure AD config dict for the given company.
+
+    The company row in the database is the single source of truth — there
+    is no global .env fallback. Returns dict with keys: client_id,
+    client_secret, tenant_id, redirect_uri, scopes, default_role_name,
+    company_id.
+
+    Raises HTTPException with user-safe messages (no secrets, no
+    tenant/client identifiers) when the company is missing, inactive, or
+    has no valid enabled Azure AD configuration.
+    """
+    if company_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Company selection is required for Microsoft sign-in",
+        )
+
+    from company_profile.models import Company
+    company = session.get(Company, company_id)
+    if not company:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Selected company is not valid",
+        )
+    if not company.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Microsoft sign-in is not available for this company",
+        )
+    if not (
+        company.azure_enabled
+        and company.azure_client_id
+        and company.azure_tenant_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Microsoft Entra authentication is not configured "
+                "for the selected company"
+            ),
+        )
+
+    return {
+        "client_id": company.azure_client_id,
+        "client_secret": company.azure_client_secret or "",
+        "tenant_id": company.azure_tenant_id,
+        "redirect_uri": settings.AZURE_REDIRECT_URI,
+        "scopes": DEFAULT_SCOPES,
+        "default_role_name": company.azure_default_role_name or DEFAULT_JIT_ROLE_NAME,
+        "company_id": company.id,
+    }
 
 
 # ── PKCE helpers ──────────────────────────────────
@@ -58,9 +131,19 @@ def generate_pkce_pair() -> tuple[str, str]:
     return code_verifier, code_challenge
 
 
-def generate_state() -> str:
-    """Generate a cryptographically random state parameter for CSRF protection."""
-    return secrets.token_urlsafe(32)
+def generate_state(nonce: str, company_id: int) -> str:
+    """Generate a state parameter encoding nonce and the validated company_id.
+
+    The state is base64-encoded JSON: {"n":nonce,"cid":company_id}.
+
+    The callback does NOT decode this to pick a company — it looks the
+    state up in the server-side pending store, which is the authority for
+    the company context. The encoding exists so the round-tripped value
+    is deterministic and inspectable, and so a tampered state no longer
+    matches any pending entry.
+    """
+    payload = {"n": nonce, "cid": company_id}
+    return base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode()
 
 
 def generate_nonce() -> str:
@@ -70,49 +153,47 @@ def generate_nonce() -> str:
 
 # ── Authorization URL ─────────────────────────────
 
-def build_authorization_url(state: str, code_challenge: str, nonce: str) -> str:
+def build_authorization_url(
+    state: str, code_challenge: str, nonce: str, azure_config: dict
+) -> str:
     """Build the Microsoft authorization endpoint URL."""
     params = {
-        "client_id": settings.AZURE_CLIENT_ID,
+        "client_id": azure_config["client_id"],
         "response_type": "code",
-        "redirect_uri": settings.AZURE_REDIRECT_URI,
+        "redirect_uri": azure_config["redirect_uri"],
         "response_mode": "query",
-        "scope": " ".join(settings.AZURE_SCOPES),
+        "scope": " ".join(azure_config["scopes"]),
         "state": state,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "nonce": nonce,
     }
-    return f"{AUTHORIZE_ENDPOINT.format(tenant_id=settings.AZURE_TENANT_ID)}?{urlencode(params)}"
+    return f"{AUTHORIZE_ENDPOINT.format(tenant_id=azure_config['tenant_id'])}?{urlencode(params)}"
 
 
 # ── Token exchange ────────────────────────────────
 
 async def exchange_code_for_tokens(
-    code: str, code_verifier: str
+    code: str, code_verifier: str, azure_config: dict
 ) -> dict:
     """Exchange an authorization code for tokens at the Microsoft token endpoint."""
     data = {
-        "client_id": settings.AZURE_CLIENT_ID,
-        "client_secret": settings.AZURE_CLIENT_SECRET,
+        "client_id": azure_config["client_id"],
+        "client_secret": azure_config["client_secret"],
         "code": code,
-        "redirect_uri": settings.AZURE_REDIRECT_URI,
+        "redirect_uri": azure_config["redirect_uri"],
         "grant_type": "authorization_code",
         "code_verifier": code_verifier,
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
-            TOKEN_ENDPOINT.format(tenant_id=settings.AZURE_TENANT_ID),
+            TOKEN_ENDPOINT.format(tenant_id=azure_config["tenant_id"]),
             data=data,
         )
 
     if resp.status_code != 200:
         error_detail = resp.text
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
-            detail=f"Token exchange failed: {error_detail}",
-        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Azure AD token exchange failed: {error_detail}",
@@ -123,9 +204,9 @@ async def exchange_code_for_tokens(
 
 # ── JWKS fetching & caching ───────────────────────
 
-async def _get_signing_keys() -> list[dict]:
+async def _get_signing_keys(tenant_id: str) -> list[dict]:
     """Fetch Azure AD signing keys with caching."""
-    cache_key = settings.AZURE_TENANT_ID
+    cache_key = tenant_id
     now = time.time()
 
     if cache_key in _jwks_cache:
@@ -133,7 +214,7 @@ async def _get_signing_keys() -> list[dict]:
         if now - fetched_at < _JWKS_CACHE_TTL:
             return keys
 
-    url = JWKS_URL_TEMPLATE.format(tenant_id=settings.AZURE_TENANT_ID)
+    url = JWKS_URL_TEMPLATE.format(tenant_id=tenant_id)
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(url)
         resp.raise_for_status()
@@ -145,7 +226,7 @@ async def _get_signing_keys() -> list[dict]:
 
 # ── ID token validation ───────────────────────────
 
-async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
+async def validate_id_token(id_token: str, expected_nonce: str, azure_config: dict) -> dict:
     """Validate an Azure AD id_token and return the decoded claims.
 
     Validates:
@@ -155,6 +236,9 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
     - Expiration
     - Nonce (replay protection)
     """
+    tenant_id = azure_config["tenant_id"]
+    client_id = azure_config["client_id"]
+
     # Decode header to find kid
     try:
         header = jwt.get_unverified_header(id_token)
@@ -172,7 +256,7 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
         )
 
     # Fetch signing keys and find the matching one
-    signing_keys = await _get_signing_keys()
+    signing_keys = await _get_signing_keys(tenant_id)
     key_data = None
     for k in signing_keys:
         if k.get("kid") == kid:
@@ -198,18 +282,18 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
         public_key = cert.public_key()
     else:
         from jose.utils import base64url_decode
-        n = int.from_bytes(base64url_decode(key_data["n"]), "big")
-        e = int.from_bytes(base64url_decode(key_data["e"]), "big")
+        n = int.from_bytes(base64url_decode(key_data["n"].encode()), "big")
+        e = int.from_bytes(base64url_decode(key_data["e"].encode()), "big")
         public_key = rsa.RSAPublicNumbers(e, n).public_key()
 
     # Decode and validate
-    expected_issuer = f"https://login.microsoftonline.com/{settings.AZURE_TENANT_ID}/v2.0"
+    expected_issuer = f"https://login.microsoftonline.com/{tenant_id}/v2.0"
     try:
         claims = jwt.decode(
             id_token,
             public_key,
             algorithms=["RS256"],
-            audience=settings.AZURE_CLIENT_ID,
+            audience=client_id,
             issuer=expected_issuer,
             options={
                 "verify_exp": True,
@@ -221,10 +305,6 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
             },
         )
     except JWTError as e:
-        log_audit_event(
-            AuditEvent.AZURE_TOKEN_VALIDATION_FAILURE,
-            detail=f"Token validation failed: {e}",
-        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid id_token: {e}",
@@ -233,10 +313,6 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
     # Validate nonce
     token_nonce = claims.get("nonce")
     if token_nonce != expected_nonce:
-        log_audit_event(
-            AuditEvent.AZURE_TOKEN_VALIDATION_FAILURE,
-            detail="Nonce mismatch — possible replay attack",
-        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nonce mismatch in id_token",
@@ -247,19 +323,43 @@ async def validate_id_token(id_token: str, expected_nonce: str) -> dict:
 
 # ── User resolution / JIT provisioning ────────────
 
+def _ensure_company_membership(user: User, company_id: int) -> None:
+    """Reject an existing user who does not belong to the authenticating company.
+
+    Prevents cross-company account takeover: a token issued through
+    Company A's tenant can never authenticate (or get linked to) an
+    account belonging to Company B — including company-less accounts.
+    """
+    if user.company_id != company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is not associated with the selected company",
+        )
+
+
 def resolve_azure_user(
     session: Session,
     claims: dict,
+    company_id: int,
     ip_address: Optional[str] = None,
+    default_role_name: Optional[str] = None,
 ) -> User:
-    """Resolve an Azure AD identity to a DMS user.
+    """Resolve an Azure AD identity to a DMS user of the authenticating company.
 
     Resolution order:
     1. Match by azure_object_id (returning Azure-linked users immediately).
     2. Match by email (link Azure identity to existing local account).
-    3. No match → JIT provision a new user.
+    3. No match -> JIT provision a new user.
 
-    Raises HTTPException on unrecoverable errors (email mismatch, inactive account).
+    `company_id` is the company whose Azure configuration authenticated
+    this token and is required. An existing user resolved by oid or email
+    must belong to that exact company: a mismatch (including a
+    company-less account) raises 403 — users are never silently moved or
+    linked across companies. JIT-provisioned users are created with that
+    company_id.
+
+    Raises HTTPException on unrecoverable errors (cross-company mismatch,
+    email mismatch, inactive account).
     """
     azure_oid = claims.get("oid")
     email = claims.get("email") or claims.get("preferred_username")
@@ -277,6 +377,7 @@ def resolve_azure_user(
         select(User).where(User.azure_object_id == azure_oid)
     ).first()
     if existing:
+        _ensure_company_membership(existing, company_id)
         if not existing.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -287,12 +388,14 @@ def resolve_azure_user(
         existing.azure_display_name = display_name
         session.add(existing)
         session.commit()
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_SUCCESS,
-            user_id=existing.id,
-            email=existing.email,
-            azure_oid=azure_oid,
+        AuditService(session).log_event(
+            action=AuditAction.LOGIN,
+            module=AuditModule.AUTH,
+            company_id=existing.company_id,
+            description=f"Azure login success: {email}",
             ip_address=ip_address,
+            user=existing,
+            is_success=True,
         )
         return existing
 
@@ -301,6 +404,7 @@ def resolve_azure_user(
         select(User).where(User.email == email)
     ).first()
     if existing:
+        _ensure_company_membership(existing, company_id)
         if not existing.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -314,27 +418,21 @@ def resolve_azure_user(
         existing.auth_provider = AuthProvider.AZURE_AD.value
         session.add(existing)
         session.commit()
-        log_audit_event(
-            AuditEvent.AZURE_USER_LINKED,
-            user_id=existing.id,
-            email=existing.email,
-            azure_oid=azure_oid,
+        AuditService(session).log_event(
+            action=AuditAction.LOGIN,
+            module=AuditModule.AUTH,
+            company_id=existing.company_id,
+            description=f"Linked Azure identity to existing local account: {email}",
             ip_address=ip_address,
-            detail="Linked Azure identity to existing local account",
-        )
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_SUCCESS,
-            user_id=existing.id,
-            email=existing.email,
-            azure_oid=azure_oid,
-            ip_address=ip_address,
+            user=existing,
+            is_success=True,
         )
         return existing
 
     # 3. JIT provision a new user
-    default_role_name = settings.AZURE_DEFAULT_ROLE_NAME
+    role_name = default_role_name or DEFAULT_JIT_ROLE_NAME
     role = session.exec(
-        select(Role).where(Role.name == default_role_name)
+        select(Role).where(Role.name == role_name)
     ).first()
     if not role:
         # Fallback to auditor if configured role doesn't exist
@@ -351,6 +449,7 @@ def resolve_azure_user(
         azure_tenant_id=tenant_id,
         azure_display_name=display_name,
         azure_last_login_at=datetime.now(timezone.utc),
+        company_id=company_id,
     )
     session.add(new_user)
     session.flush()
@@ -361,20 +460,14 @@ def resolve_azure_user(
 
     session.commit()
 
-    log_audit_event(
-        AuditEvent.AZURE_JIT_PROVISIONING,
-        user_id=new_user.id,
-        email=new_user.email,
-        azure_oid=azure_oid,
+    AuditService(session).log_event(
+        action=AuditAction.CREATE_USER,
+        module=AuditModule.AUTH,
+        company_id=new_user.company_id,
+        description=f"JIT provisioned Azure user: {email} with role: {role.name.value if role else 'none'}",
         ip_address=ip_address,
-        detail=f"JIT provisioned with role: {role.name.value if role else 'none'}",
-    )
-    log_audit_event(
-        AuditEvent.AZURE_LOGIN_SUCCESS,
-        user_id=new_user.id,
-        email=new_user.email,
-        azure_oid=azure_oid,
-        ip_address=ip_address,
+        user=new_user,
+        is_success=True,
     )
 
     # Re-fetch to load relationships

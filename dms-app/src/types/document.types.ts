@@ -1,4 +1,4 @@
-export type FileType = 'pdf' | 'docx' | 'excel' | 'image'
+export type FileType = 'pdf' | 'docx' | 'excel' | 'image' | 'html'
 export type DocumentStatus = 'active' | 'archived' | 'deleted'
 export type AnnotationAnchorType = 'point' | 'text_range'
 export type DocumentAnnotationType = 'note' | 'stroke'

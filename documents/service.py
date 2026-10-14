@@ -5,11 +5,18 @@ from fastapi import HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from categories.models import Category
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.access import (
     ensure_category_access,
+    ensure_category_read_access,
     ensure_directory_access,
+    ensure_directory_read_access,
     ensure_document_access,
     ensure_document_user_level_access,
+    expand_descendant_ids,
+    get_user_category_ids,
+    get_user_directory_grant_ids,
 )
 from directories.models import Directory
 from documents.models import (
@@ -21,8 +28,10 @@ from documents.models import (
     DocumentUserLevelLink,
 )
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
-from users.models import User, UserCategoryLink
+from users.models import User
 from user_levels.models import UserLevel
+from company_profile.models import Company
+from workflow.approval_policy import is_eligible_approver_reader
 
 
 class DocumentService:
@@ -41,6 +50,24 @@ class DocumentService:
             document_id,
             include_deleted=include_deleted,
         )
+
+    def _ensure_read_level_access(self, current_user: User, doc: Document) -> None:
+        """User Level visibility for read paths, with the approver read-grant.
+
+        An eligible approver at the current step of an in-flight instance may
+        read the document (and attachments of memos/correspondences they are
+        approving) even when User Level links exclude them — mirroring
+        correspondence ``_check_view_access(approver_view=True)`` and memos
+        ``_is_eligible_approver``. Mutations keep the strict guard.
+        """
+        try:
+            ensure_document_user_level_access(self.session, current_user, doc)
+        except HTTPException as exc:
+            if (
+                exc.status_code != 403
+                or not is_eligible_approver_reader(self.session, doc.id, current_user)
+            ):
+                raise
 
     @staticmethod
     def _to_read(doc: Document) -> DocumentRead:
@@ -69,7 +96,7 @@ class DocumentService:
 
     def get_document(self, document_id: int, current_user: User) -> DocumentRead:
         doc = self._get_orm(document_id, current_user)
-        ensure_document_user_level_access(self.session, current_user, doc)
+        self._ensure_read_level_access(current_user, doc)
         return self._to_read(doc)
 
     def list_documents(
@@ -105,18 +132,40 @@ class DocumentService:
             if category_id is not None:
                 ensure_category_access(self.session, current_user, category_id)
         else:
-            query = query.join_from(Directory, Category).join(
-                UserCategoryLink,
-                UserCategoryLink.category_id == Directory.category_id,
-            ).where(
-                UserCategoryLink.user_id == current_user.id,
-                Category.is_active == True,
-            )
+            # Non-admin: category-granted categories OR granted directory
+            # subtrees (descendants included). Siblings stay excluded.
+            category_ids = get_user_category_ids(self.session, current_user.id)
+            grant_ids = get_user_directory_grant_ids(self.session, current_user.id)
+            effective_dir_ids: set = set()
+            if grant_ids:
+                all_dirs = list(self.session.exec(select(Directory)).all())
+                effective_dir_ids = expand_descendant_ids(all_dirs, set(grant_ids))
+            access_filters = []
+            if category_ids:
+                access_filters.append(Directory.category_id.in_(sorted(category_ids)))
+            if effective_dir_ids:
+                access_filters.append(Directory.id.in_(sorted(effective_dir_ids)))
+            if not access_filters:
+                # No grants at all: preserve the previous empty-result shape
+                # without emitting `IN ()` (invalid SQL on some backends).
+                query = query.where(Directory.id == -1)
+            elif len(access_filters) == 1:
+                query = query.join_from(Directory, Category).where(
+                    access_filters[0],
+                    Category.is_active == True,
+                )
+            else:
+                query = query.join_from(Directory, Category).where(
+                    (access_filters[0] | access_filters[1]),
+                    Category.is_active == True,
+                )
 
             if directory_id is not None:
-                ensure_directory_access(self.session, current_user, directory_id)
+                # Navigation through an ancestor directory is allowed; the
+                # access_filters above still scope results to authorized rows.
+                ensure_directory_read_access(self.session, current_user, directory_id)
             if category_id is not None:
-                ensure_category_access(self.session, current_user, category_id)
+                ensure_category_read_access(self.session, current_user, category_id)
 
         # User Level visibility filtering for non-admins
         if not current_user.is_admin():
@@ -174,10 +223,13 @@ class DocumentService:
 
         # Validate user level IDs
         if not user_level_ids:
-            raise HTTPException(
-                status_code=422,
-                detail="At least one user level must be selected for document visibility",
-            )
+            if current_user.user_level_id:
+                user_level_ids = [current_user.user_level_id]
+            else:
+                raise HTTPException(
+                    status_code=422,
+                    detail="At least one user level must be selected for document visibility",
+                )
 
         valid_levels = self.session.exec(
             select(UserLevel).where(
@@ -197,9 +249,17 @@ class DocumentService:
         # Validate file type
         file_type = validate_file(file)
 
+        # Get company from authenticated user
+        company: Company = current_user.company
+        if not company:
+            raise HTTPException(
+                status_code=400,
+                detail="User must belong to a company to upload documents"
+            )
+
         # Save to disk
         storage_path, file_size = await save_upload(
-            file, directory.category_id, directory_id
+            file, directory.category_id, directory_id, company
         )
 
         doc = Document(
@@ -226,22 +286,17 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.UPLOAD_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(doc.id),
-                new_value={"title": title, "file_name": file.filename},
-                description=f"Uploaded document '{title}'",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.UPLOAD_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
+            entity_name="document",
+            entity_id=str(doc.id),
+            new_value={"title": title, "file_name": file.filename},
+            description=f"Uploaded document '{title}'",
+            is_success=True,
+            user=current_user,
+        )
 
         # Convert to Pydantic BEFORE session closes
         return self._to_read(doc)
@@ -261,23 +316,18 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.UPDATE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value=old_values,
-                new_value=data.model_dump(exclude_unset=True),
-                description=f"Updated document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value=old_values,
+            new_value=data.model_dump(exclude_unset=True),
+            description=f"Updated document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return self._to_read(doc)
 
@@ -294,23 +344,18 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.ARCHIVE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value={"status": "active"},
-                new_value={"status": "archived"},
-                description=f"Archived document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.ARCHIVE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value={"status": "active"},
+            new_value={"status": "archived"},
+            description=f"Archived document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return self._to_read(doc)
 
@@ -324,23 +369,18 @@ class DocumentService:
         self.session.refresh(doc)
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.RESTORE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value={"status": old_status},
-                new_value={"status": "active"},
-                description=f"Restored document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.RESTORE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value={"status": old_status},
+            new_value={"status": "active"},
+            description=f"Restored document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
         return self._to_read(doc)
 
@@ -366,7 +406,9 @@ class DocumentService:
         doc = self._get_orm(document_id, current_user)
         old_values = {"status": doc.status.value, "title": doc.title}
         if hard:
-            delete_from_disk(doc.storage_path)
+            # Determine company from document's directory -> category -> company
+            company = doc.directory.category.company
+            delete_from_disk(doc.storage_path, company)
             self.session.delete(doc)
         else:
             doc.status = DocumentStatus.DELETED
@@ -375,23 +417,18 @@ class DocumentService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DELETE_DOCUMENT,
-                module=AuditModule.DOCUMENTS,
-                entity_name="document",
-                entity_id=str(document_id),
-                old_value=old_values,
-                new_value={"status": "deleted", "hard_delete": hard},
-                description=f"{'Hard' if hard else 'Soft'} deleted document {document_id}",
-                is_success=True,
-                user=current_user,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DELETE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value=old_values,
+            new_value={"status": "deleted", "hard_delete": hard},
+            description=f"{'Hard' if hard else 'Soft'} deleted document {document_id}",
+            is_success=True,
+            user=current_user,
+        )
 
     # ──────────────────────────────────────────
     # Download / Preview — returns ORM for streaming
@@ -403,6 +440,8 @@ class DocumentService:
         DocumentRead is used only for mime_type and file_name — no lazy attrs.
         """
         doc = self._get_orm(document_id, current_user)
-        ensure_document_user_level_access(self.session, current_user, doc)
-        abs_path = resolve_storage_path(doc.storage_path)
+        self._ensure_read_level_access(current_user, doc)
+        # Determine company from document's directory -> category -> company
+        company = doc.directory.category.company
+        abs_path = resolve_storage_path(doc.storage_path, company)
         return abs_path, self._to_read(doc)

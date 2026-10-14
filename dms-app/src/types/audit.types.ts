@@ -1,6 +1,7 @@
 export interface AuditLog {
   id: number
   timestamp: string
+  company_id: number | null
   user_id: number | null
   username: string | null
   full_name: string | null
@@ -38,6 +39,7 @@ export interface AuditLogListResponse {
 export interface AuditLogFilters {
   start_date?: string
   end_date?: string
+  company_id?: number
   user_id?: number
   module?: string
   action?: string

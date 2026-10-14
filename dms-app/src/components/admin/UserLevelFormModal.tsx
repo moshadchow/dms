@@ -19,16 +19,19 @@ export default function UserLevelFormModal({ isOpen, onClose, onSuccess, editing
   const [error, setError]           = useState('')
 
   useEffect(() => {
-    if (editing) {
-      setName(editing.name)
-      setDescription(editing.description || '')
-      setIsActive(editing.is_active)
-    } else {
-      setName('')
-      setDescription('')
-      setIsActive(true)
-    }
-    setError('')
+    Promise.resolve()
+      .then(() => {
+        if (editing) {
+          setName(editing.name)
+          setDescription(editing.description || '')
+          setIsActive(editing.is_active)
+        } else {
+          setName('')
+          setDescription('')
+          setIsActive(true)
+        }
+        setError('')
+      })
   }, [editing, isOpen])
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -7,6 +7,8 @@ export interface Directory {
   created_by: number
   created_at: string
   updated_at: string
+  /** Traversable but not manageable — ancestor of a granted subtree. */
+  navigation_only?: boolean
 }
 
 export interface DirectoryNode extends Directory {

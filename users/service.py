@@ -1,25 +1,35 @@
 from datetime import datetime
+import secrets
+import string
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from categories.models import Category
+from company_profile.models import Company, CompanyRead
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.security import hash_password
+from directories.models import Directory
 from user_levels.models import UserLevel, UserLevelRead
 from users.models import (
     AssignedCategoryRead,
+    AssignedDirectoryRead,
     Permission,
     PermissionAction,
     PermissionRead,
     Role,
     RoleCreate,
+    RoleName,
     RoleRead,
     RolePermissionLink,
     User,
     UserCategoryLink,
     UserCreate,
+    UserDirectoryLink,
     UserRead,
     UserRoleLink,
     UserUpdate,
@@ -44,12 +54,16 @@ def _user_to_read(user: User) -> UserRead:
     level_read = None
     if user.user_level:
         level_read = UserLevelRead.model_validate(user.user_level)
+    company_read = None
+    if user.company:
+        company_read = CompanyRead.model_validate(user.company)
     return UserRead(
         id=user.id,
         full_name=user.full_name,
         email=user.email,
         is_active=user.is_active,
         auth_provider=user.auth_provider,
+        must_change_password=user.must_change_password,
         created_at=user.created_at,
         updated_at=user.updated_at,
         roles=[_role_to_read(r) for r in user.roles],
@@ -62,7 +76,17 @@ def _user_to_read(user: User) -> UserRead:
             )
             for category in user.categories
         ],
+        directories=[
+            AssignedDirectoryRead(
+                id=directory.id,
+                name=directory.name,
+                category_id=directory.category_id,
+                parent_id=directory.parent_id,
+            )
+            for directory in (user.directories or [])
+        ],
         user_level=level_read,
+        company=company_read,
     )
 
 
@@ -81,12 +105,51 @@ class UserService:
         search:    Optional[str]  = None,
         is_active: Optional[bool] = None,
         user_level_id: Optional[int] = None,
+        current_user:  Optional[User] = None,
+        company_id:    Optional[int] = None,
     ) -> Tuple[List[UserRead], int]:
         query = select(User).options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
+            selectinload(User.directories),  # type: ignore[arg-type]
             selectinload(User.user_level),  # type: ignore[arg-type]
+            selectinload(User.company),  # type: ignore[arg-type]
         )
+
+        # Hide SUPERADMIN users from ADMIN list and scope to same company
+        if current_user is not None:
+            is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+            is_admin = any(r.name == RoleName.ADMIN for r in current_user.roles)
+            if is_admin and not is_superadmin:
+                superadmin_role_id = self.session.exec(
+                    select(Role.id).where(Role.name == RoleName.SUPERADMIN)
+                ).first()
+                if superadmin_role_id is not None:
+                    superadmin_user_ids = self.session.exec(
+                        select(UserRoleLink.user_id).where(
+                            UserRoleLink.role_id == superadmin_role_id
+                        )
+                    ).all()
+                    if superadmin_user_ids:
+                        query = query.where(User.id.notin_(superadmin_user_ids))
+
+                # Scope to same company
+                if current_user.company_id is not None:
+                    query = query.where(User.company_id == current_user.company_id)
+                else:
+                    return [], 0
+
+            # SUPERADMIN company filter: when company_id is provided, scope to that company
+            if is_superadmin and company_id is not None:
+                # Validate company exists
+                company = self.session.get(Company, company_id)
+                if not company:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Company {company_id} not found",
+                    )
+                query = query.where(User.company_id == company_id)
+
         if search:
             query = query.where(
                 User.full_name.ilike(f"%{search}%") | User.email.ilike(f"%{search}%")
@@ -107,7 +170,7 @@ class UserService:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
         return _user_to_read(user)
 
-    def create_user(self, data: UserCreate) -> UserRead:
+    def create_user(self, data: UserCreate, current_user: User = None) -> UserRead:
         exists = self.session.exec(
             select(User).where(User.email == data.email)
         ).first()
@@ -116,6 +179,66 @@ class UserService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Email '{data.email}' is already registered",
             )
+
+        # Enforce: SUPERADMIN can only assign ADMIN role
+        is_superadmin = False
+        if current_user is not None:
+            is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+            if is_superadmin:
+                allowed_ids = {
+                    r.id for r in self.session.exec(select(Role)).all()
+                    if r.name == RoleName.ADMIN
+                }
+                if not set(data.role_ids).issubset(allowed_ids):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Super Admin can only create Admin users",
+                    )
+
+        # Company assignment for SUPERADMIN-created ADMIN
+        company_id = None
+        if is_superadmin:
+            if not data.company_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Company is required for Admin users created by Super Admin",
+                )
+            company = self.session.get(Company, data.company_id)
+            if not company:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Company {data.company_id} not found",
+                )
+            if not company.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot assign an inactive company",
+                )
+            company_id = data.company_id
+
+        # Company assignment for ADMIN-created users (MAKER, CHECKER, AUDITOR, ADMIN)
+        # ADMIN must have a company assigned; new users inherit that company automatically
+        is_admin = False
+        if current_user is not None:
+            is_admin = any(r.name == RoleName.ADMIN for r in current_user.roles)
+            if is_admin and not is_superadmin:
+                if not current_user.company_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Admin must be assigned to a Company Profile before creating users",
+                    )
+                company = self.session.get(Company, current_user.company_id)
+                if not company:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Admin's company {current_user.company_id} not found",
+                    )
+                if not company.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot create users: Admin's company is inactive",
+                    )
+                company_id = current_user.company_id
 
         # Determine user_level_id: use provided value, or default to "Low"
         level_id = data.user_level_id
@@ -145,36 +268,32 @@ class UserService:
             hashed_password=hashed_pw,
             is_active=data.is_active,
             user_level_id=level_id,
+            company_id=company_id,
             auth_provider=auth_provider,
             azure_object_id=data.azure_object_id,
         )
         self.session.add(user)
         self.session.flush()
         self._assign_roles(user.id, data.role_ids)
-        self._assign_categories(user.id, data.category_ids)
+        self._assign_categories(user.id, data.category_ids, current_user)
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.CREATE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user.id),
-                new_value={"email": data.email, "full_name": data.full_name},
-                description=f"Created user {data.email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_USER,
+            module=AuditModule.USERS,
+            company_id=user.company_id,
+            entity_name="user",
+            entity_id=str(user.id),
+            new_value={"email": data.email, "full_name": data.full_name},
+            description=f"Created user {data.email}",
+            is_success=True,
+        )
 
         # Re-fetch with eager load so roles are in memory
         return self.get_user(user.id)
 
-    def update_user(self, user_id: int, data: UserUpdate) -> UserRead:
+    def update_user(self, user_id: int, data: UserUpdate, current_user: User = None) -> UserRead:
         user = self.session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail=f"User {user_id} not found")
@@ -202,50 +321,104 @@ class UserService:
             user.is_active = data.is_active
 
         if data.role_ids is not None:
-            for link in self.session.exec(
-                select(UserRoleLink).where(UserRoleLink.user_id == user_id)
-            ).all():
-                self.session.delete(link)
-            self.session.flush()
-            self._assign_roles(user_id, data.role_ids)
+            # SUPERADMIN cannot change roles of any user — silently skip
+            if current_user is not None:
+                is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+                if is_superadmin:
+                    pass  # ignore role_ids, allow other fields to update
+                else:
+                    for link in self.session.exec(
+                        select(UserRoleLink).where(UserRoleLink.user_id == user_id)
+                    ).all():
+                        self.session.delete(link)
+                    self.session.flush()
+                    self._assign_roles(user_id, data.role_ids)
+            else:
+                for link in self.session.exec(
+                    select(UserRoleLink).where(UserRoleLink.user_id == user_id)
+                ).all():
+                    self.session.delete(link)
+                self.session.flush()
+                self._assign_roles(user_id, data.role_ids)
 
         if data.category_ids is not None:
-            for link in self.session.exec(
-                select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
-            ).all():
-                self.session.delete(link)
-            self.session.flush()
-            self._assign_categories(user_id, data.category_ids)
+            # SUPERADMIN cannot change category assignments — silently skip
+            if current_user is not None:
+                is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+                if is_superadmin:
+                    pass  # ignore category_ids, allow other fields to update
+                else:
+                    for link in self.session.exec(
+                        select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
+                    ).all():
+                        self.session.delete(link)
+                    self.session.flush()
+                    self._assign_categories(user_id, data.category_ids, current_user)
+            else:
+                for link in self.session.exec(
+                    select(UserCategoryLink).where(UserCategoryLink.user_id == user_id)
+                ).all():
+                    self.session.delete(link)
+                self.session.flush()
+                self._assign_categories(user_id, data.category_ids, current_user)
 
         if data.user_level_id is not None or (hasattr(data, 'user_level_id') and 'user_level_id' in data.model_fields_set):
             user.user_level_id = data.user_level_id
+
+        # Company assignment — ADMIN targets can be set or cleared. Other roles
+        # are normally fixed, with one repair exception: a company-less user
+        # (e.g. provisioned by the pre-company-scoped Azure flow) can be given
+        # a company, otherwise those accounts would be unmanageable forever.
+        if 'company_id' in data.model_fields_set:
+            # Defense-in-depth: admin cannot change their own company
+            if current_user is not None and current_user.id == user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Admin cannot change their own company",
+                )
+            target_user_roles = [r.name for r in user.roles]
+            is_admin_target = RoleName.ADMIN in target_user_roles
+            is_orphan_repair = (
+                data.company_id is not None
+                and user.company_id is None
+                and RoleName.SUPERADMIN not in target_user_roles
+            )
+            if is_admin_target or is_orphan_repair:
+                if data.company_id is not None:
+                    company = self.session.get(Company, data.company_id)
+                    if not company:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Company {data.company_id} not found",
+                        )
+                    if not company.is_active:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Cannot assign an inactive company",
+                        )
+                user.company_id = data.company_id
 
         user.updated_at = datetime.utcnow()
         self.session.add(user)
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            new_values = {
-                "full_name": user.full_name,
-                "email": user.email,
-                "is_active": user.is_active,
-            }
-            svc.log_event(
-                action=AuditAction.UPDATE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user_id),
-                old_value=old_values,
-                new_value=new_values,
-                description=f"Updated user {user.email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        new_values = {
+            "full_name": user.full_name,
+            "email": user.email,
+            "is_active": user.is_active,
+        }
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_USER,
+            module=AuditModule.USERS,
+            company_id=user.company_id,
+            entity_name="user",
+            entity_id=str(user_id),
+            old_value=old_values,
+            new_value=new_values,
+            description=f"Updated user {user.email}",
+            is_success=True,
+        )
 
         return self.get_user(user_id)
 
@@ -258,21 +431,16 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DELETE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user_id),
-                old_value={"email": email},
-                description=f"Deleted user {email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DELETE_USER,
+            module=AuditModule.USERS,
+            company_id=user.company_id,
+            entity_name="user",
+            entity_id=str(user_id),
+            old_value={"email": email},
+            description=f"Deleted user {email}",
+            is_success=True,
+        )
 
     def deactivate_user(self, user_id: int) -> UserRead:
         user = self.session.get(User, user_id)
@@ -284,24 +452,67 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.DEACTIVATE_USER,
-                module=AuditModule.USERS,
-                entity_name="user",
-                entity_id=str(user_id),
-                old_value={"is_active": True},
-                new_value={"is_active": False},
-                description=f"Deactivated user {user.email}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.DEACTIVATE_USER,
+            module=AuditModule.USERS,
+            company_id=user.company_id,
+            entity_name="user",
+            entity_id=str(user_id),
+            old_value={"is_active": True},
+            new_value={"is_active": False},
+            description=f"Deactivated user {user.email}",
+            is_success=True,
+        )
 
         return self.get_user(user_id)
+
+    def reset_password(self, user_id: int, current_admin_id: int) -> str:
+        """Admin resets a user's password. Returns the plain-text temp password."""
+        from notifications.service import EmailService
+        from notifications.templates import build_password_reset_email
+
+        user = self.session.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+
+        if user.auth_provider == "azure_ad":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot reset password for Azure AD users",
+            )
+
+        if user.id == current_admin_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin cannot reset their own password",
+            )
+
+        alphabet = string.ascii_letters + string.digits
+        temp_password = "".join(secrets.choice(alphabet) for _ in range(12))
+
+        user.hashed_password = hash_password(temp_password)
+        user.must_change_password = True
+        user.updated_at = datetime.utcnow()
+        self.session.add(user)
+        self.session.commit()
+
+        AuditService(self.session).log_event(
+            action=AuditAction.PASSWORD_RESET,
+            module=AuditModule.USERS,
+            company_id=user.company_id,
+            entity_name="user",
+            entity_id=str(user.id),
+            description=f"Admin reset password for user {user.email}",
+            is_success=True,
+        )
+
+        email_service = EmailService(self.session)
+        subject, html_body, text_body = build_password_reset_email(
+            user.full_name, temp_password
+        )
+        email_service._send_smtp(user.email, subject, html_body, text_body)
+
+        return temp_password
 
     def _assign_roles(self, user_id: int, role_ids: List[int]) -> None:
         for role_id in role_ids:
@@ -310,12 +521,190 @@ class UserService:
                 raise HTTPException(status_code=404, detail=f"Role {role_id} not found")
             self.session.add(UserRoleLink(user_id=user_id, role_id=role_id))
 
-    def _assign_categories(self, user_id: int, category_ids: List[int]) -> None:
+    def _assign_categories(self, user_id: int, category_ids: List[int], current_user: User = None) -> None:
         for category_id in category_ids:
             category = self.session.get(Category, category_id)
             if not category:
                 raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+            # Admin can only assign categories from their own company — silently skip others
+            if current_user is not None and current_user.is_admin():
+                is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+                if not is_superadmin and category.company_id != current_user.company_id:
+                    continue
             self.session.add(UserCategoryLink(user_id=user_id, category_id=category_id))
+
+    # ──────────────────────────────────────────
+    # Directory access grants (subdirectory-level)
+    # ──────────────────────────────────────────
+
+    def _require_grant_write(self, current_user: User) -> None:
+        """Only company admins may mutate grants; SUPERADMIN is read-only."""
+        is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+        if is_superadmin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot modify directory access",
+            )
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin must belong to a company to manage directory access",
+            )
+
+    def _get_grant_target(self, user_id: int, current_user: User) -> User:
+        target = self.session.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+        if not is_superadmin and target.company_id != current_user.company_id:
+            # Same oracle-avoiding convention as category guards: scoped-out
+            # rows (including NULL-company) read as not found.
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        return target
+
+    def _validate_grant_directories(
+        self, directory_ids: List[int], current_user: User
+    ) -> List[Directory]:
+        """Load directories, verifying each belongs to the admin's company.
+
+        Client-supplied category/directory relationships are never trusted:
+        the company is resolved server-side via directory -> category.
+        """
+        directories = []
+        for directory_id in directory_ids:
+            directory = self.session.get(Directory, directory_id)
+            if not directory:
+                raise HTTPException(
+                    status_code=404, detail=f"Directory {directory_id} not found"
+                )
+            category = self.session.get(Category, directory.category_id)
+            if category is None or category.company_id != current_user.company_id:
+                raise HTTPException(
+                    status_code=404, detail=f"Directory {directory_id} not found"
+                )
+            directories.append(directory)
+        return directories
+
+    def _directory_access_response(self, target: User) -> "DirectoryAccessResponse":
+        from users.schemas import DirectoryAccessResponse, GrantedDirectoryResponse
+
+        links = self.session.exec(
+            select(UserDirectoryLink).where(UserDirectoryLink.user_id == target.id)
+        ).all()
+        granted = []
+        for link in links:
+            directory = self.session.get(Directory, link.directory_id)
+            if directory is None:
+                continue
+            granted.append(
+                GrantedDirectoryResponse(
+                    id=directory.id,
+                    name=directory.name,
+                    category_id=directory.category_id,
+                    parent_id=directory.parent_id,
+                )
+            )
+        category_ids = sorted(
+            link.category_id
+            for link in self.session.exec(
+                select(UserCategoryLink).where(UserCategoryLink.user_id == target.id)
+            ).all()
+        )
+        return DirectoryAccessResponse(
+            user_id=target.id,
+            category_ids=category_ids,
+            directory_ids=sorted(g.id for g in granted),
+            directories=granted,
+        )
+
+    def get_directory_access(
+        self, user_id: int, current_user: User
+    ) -> "DirectoryAccessResponse":
+        target = self._get_grant_target(user_id, current_user)
+        return self._directory_access_response(target)
+
+    def set_directory_access(
+        self, user_id: int, directory_ids: List[int], current_user: User
+    ) -> "DirectoryAccessResponse":
+        self._require_grant_write(current_user)
+        target = self._get_grant_target(user_id, current_user)
+        directories = self._validate_grant_directories(list(dict.fromkeys(directory_ids)), current_user)
+        for link in self.session.exec(
+            select(UserDirectoryLink).where(UserDirectoryLink.user_id == target.id)
+        ).all():
+            self.session.delete(link)
+        self.session.flush()
+        for directory in directories:
+            self.session.add(
+                UserDirectoryLink(user_id=target.id, directory_id=directory.id)
+            )
+        self.session.commit()
+        AuditService(self.session).log_event(
+            action=AuditAction.GRANT_DIRECTORY_ACCESS,
+            module=AuditModule.USERS,
+            company_id=target.company_id,
+            entity_name="user",
+            entity_id=str(target.id),
+            new_value={"directory_ids": sorted(d.id for d in directories)},
+            description=f"Set directory access for user {target.email}",
+            is_success=True,
+        )
+        return self._directory_access_response(target)
+
+    def add_directory_access(
+        self, user_id: int, directory_id: int, current_user: User
+    ) -> "DirectoryAccessResponse":
+        self._require_grant_write(current_user)
+        target = self._get_grant_target(user_id, current_user)
+        (directory,) = self._validate_grant_directories([directory_id], current_user)
+        existing = self.session.get(UserDirectoryLink, (target.id, directory.id))
+        if existing is None:
+            self.session.add(
+                UserDirectoryLink(user_id=target.id, directory_id=directory.id)
+            )
+            try:
+                self.session.commit()
+            except IntegrityError:
+                self.session.rollback()
+                # Race backstop: composite PK tripped, treat as idempotent add.
+                existing = self.session.get(UserDirectoryLink, (target.id, directory.id))
+                if existing is None:
+                    raise
+            AuditService(self.session).log_event(
+                action=AuditAction.GRANT_DIRECTORY_ACCESS,
+                module=AuditModule.USERS,
+                company_id=target.company_id,
+                entity_name="user",
+                entity_id=str(target.id),
+                new_value={"directory_id": directory.id},
+                description=f"Granted directory {directory.id} to user {target.email}",
+                is_success=True,
+            )
+        return self._directory_access_response(target)
+
+    def remove_directory_access(
+        self, user_id: int, directory_id: int, current_user: User
+    ) -> None:
+        self._require_grant_write(current_user)
+        target = self._get_grant_target(user_id, current_user)
+        link = self.session.get(UserDirectoryLink, (target.id, directory_id))
+        if link is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Directory grant {directory_id} not found for user {user_id}",
+            )
+        self.session.delete(link)
+        self.session.commit()
+        AuditService(self.session).log_event(
+            action=AuditAction.REVOKE_DIRECTORY_ACCESS,
+            module=AuditModule.USERS,
+            company_id=target.company_id,
+            entity_name="user",
+            entity_id=str(target.id),
+            old_value={"directory_id": directory_id},
+            description=f"Revoked directory {directory_id} from user {target.email}",
+            is_success=True,
+        )
 
     # ──────────────────────────────────────────
     # Roles
@@ -338,6 +727,12 @@ class UserService:
         return _role_to_read(role)
 
     def create_role(self, data: RoleCreate) -> RoleRead:
+        # Prevent creation of protected system roles
+        if data.name == RoleName.SUPERADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot create Super Admin role via API",
+            )
         exists = self.session.exec(
             select(Role).where(Role.name == data.name)
         ).first()
@@ -357,21 +752,16 @@ class UserService:
         self.session.commit()
 
         # Log audit event
-        try:
-            from audit.service import AuditService
-            from audit.models import AuditAction, AuditModule
-            svc = AuditService(self.session)
-            svc.log_event(
-                action=AuditAction.CREATE_ROLE,
-                module=AuditModule.USERS,
-                entity_name="role",
-                entity_id=str(role.id),
-                new_value={"name": data.name.value if hasattr(data.name, "value") else str(data.name)},
-                description=f"Created role {data.name}",
-                is_success=True,
-            )
-        except Exception:
-            pass
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_ROLE,
+            module=AuditModule.USERS,
+            company_id=None,
+            entity_name="role",
+            entity_id=str(role.id),
+            new_value={"name": data.name.value if hasattr(data.name, "value") else str(data.name)},
+            description=f"Created role {data.name}",
+            is_success=True,
+        )
 
         return self.get_role(role.id)
 

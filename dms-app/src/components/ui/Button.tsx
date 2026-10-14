@@ -1,7 +1,6 @@
 import { forwardRef } from 'react'
-import clsx from 'clsx'
 
-type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline'
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline' | 'accent'
 type Size    = 'sm' | 'md' | 'lg'
 
 interface Props extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -20,11 +19,12 @@ const base: React.CSSProperties = {
 }
 
 const variants: Record<Variant, React.CSSProperties> = {
-  primary:   { backgroundColor: '#1e293b', color: '#fff' },
-  secondary: { backgroundColor: '#f8fafc', color: '#374151', border: '1px solid #e2e8f0' },
-  danger:    { backgroundColor: '#dc2626', color: '#fff' },
-  ghost:     { backgroundColor: 'transparent', color: '#475569' },
-  outline:   { backgroundColor: 'transparent', color: '#4f46e5', border: '1.5px solid #4f46e5' },
+  primary:   { backgroundColor: 'var(--primary)', color: '#fff' },
+  secondary: { backgroundColor: 'var(--surface-2)', color: 'var(--text-secondary)', border: '1px solid var(--border-soft)' },
+  danger:    { backgroundColor: 'var(--danger)', color: '#fff' },
+  ghost:     { backgroundColor: 'transparent', color: 'var(--text-secondary)' },
+  outline:   { backgroundColor: 'transparent', color: 'var(--primary)', border: '1.5px solid var(--primary)' },
+  accent:    { backgroundColor: 'var(--accent)', color: '#fff' },
 }
 
 const sizes: Record<Size, React.CSSProperties> = {
@@ -44,6 +44,7 @@ const Button = forwardRef<HTMLButtonElement, Props>(({
     <button
       ref={ref}
       disabled={disabled || loading}
+      aria-busy={loading}
       style={{
         ...base,
         ...variants[variant],

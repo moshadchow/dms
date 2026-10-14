@@ -5,9 +5,11 @@ from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, Session, SQLModel, select
 
+from company_profile.models import CompanyRead
 from user_levels.models import UserLevelRead
 
 if TYPE_CHECKING:
+    from company_profile.models import Company
     from user_levels.models import UserLevel
 
 
@@ -16,10 +18,11 @@ if TYPE_CHECKING:
 # ──────────────────────────────────────────────
 
 class RoleName(str, Enum):
-    ADMIN   = "admin"
-    MAKER   = "maker"
-    CHECKER = "checker"
-    AUDITOR = "auditor"
+    SUPERADMIN = "superadmin"
+    ADMIN      = "admin"
+    MAKER      = "maker"
+    CHECKER    = "checker"
+    AUDITOR    = "auditor"
 
 
 class PermissionAction(str, Enum):
@@ -55,6 +58,18 @@ class UserCategoryLink(SQLModel, table=True):
     __tablename__ = "user_category_links"
     user_id: Optional[int] = Field(default=None, foreign_key="users.id", primary_key=True)
     category_id: Optional[int] = Field(default=None, foreign_key="categories.id", primary_key=True)
+
+
+class UserDirectoryLink(SQLModel, table=True):
+    """Subdirectory-level grant: access to a directory and all its descendants.
+
+    Company is resolved via directory -> category -> company_id (no company_id
+    column here, mirroring Directory itself). Composite PK prevents duplicates.
+    """
+
+    __tablename__ = "user_directory_links"
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id", primary_key=True)
+    directory_id: Optional[int] = Field(default=None, foreign_key="directories.id", primary_key=True)
 
 
 # ──────────────────────────────────────────────
@@ -136,11 +151,13 @@ class UserBase(SQLModel):
 class User(UserBase, table=True):
     __tablename__ = "users"
 
-    id:              Optional[int] = Field(default=None, primary_key=True)
-    hashed_password: Optional[str] = Field(default=None, max_length=255)
-    user_level_id:   Optional[int] = Field(default=None, foreign_key="user_levels.id")
-    created_at:      datetime      = Field(default_factory=datetime.utcnow)
-    updated_at:      datetime      = Field(default_factory=datetime.utcnow)
+    id:                    Optional[int] = Field(default=None, primary_key=True)
+    hashed_password:       Optional[str] = Field(default=None, max_length=255)
+    must_change_password:  bool          = Field(default=False)
+    user_level_id:         Optional[int] = Field(default=None, foreign_key="user_levels.id")
+    company_id:            Optional[int] = Field(default=None, foreign_key="companies.id")
+    created_at:            datetime      = Field(default_factory=datetime.utcnow)
+    updated_at:            datetime      = Field(default_factory=datetime.utcnow)
 
     # ── Azure AD fields ───────────────────────
     auth_provider:       str           = Field(default="local", max_length=20)
@@ -159,8 +176,15 @@ class User(UserBase, table=True):
         link_model=UserCategoryLink,
         sa_relationship_kwargs={"lazy": "selectin"},
     )
+    directories: List["Directory"] = Relationship(
+        link_model=UserDirectoryLink,
+        sa_relationship_kwargs={"lazy": "selectin"},
+    )
     user_level: Optional["UserLevel"] = Relationship(
         back_populates="users",
+        sa_relationship_kwargs={"lazy": "selectin"},
+    )
+    company: Optional["Company"] = Relationship(
         sa_relationship_kwargs={"lazy": "selectin"},
     )
 
@@ -172,7 +196,7 @@ class User(UserBase, table=True):
         return False
 
     def is_admin(self) -> bool:
-        return any(r.name == RoleName.ADMIN for r in self.roles)
+        return any(r.name in (RoleName.ADMIN, RoleName.SUPERADMIN) for r in self.roles)
 
 
 # ── Helper: load user with all relationships eagerly ──────────────
@@ -187,7 +211,9 @@ def get_user_with_roles(session: Session, user_id: int) -> Optional["User"]:
         .options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
+            selectinload(User.directories),  # type: ignore[arg-type]
             selectinload(User.user_level),  # type: ignore[arg-type]
+            selectinload(User.company),  # type: ignore[arg-type]
         )
     ).first()
     return result
@@ -200,6 +226,7 @@ class UserCreate(UserBase):
     role_ids: List[int] = []
     category_ids: List[int] = []
     user_level_id: Optional[int] = None
+    company_id: Optional[int] = None
     auth_provider: str = "local"
     azure_object_id: Optional[str] = None
 
@@ -211,6 +238,7 @@ class UserUpdate(SQLModel):
     role_ids:  Optional[List[int]] = None
     category_ids: Optional[List[int]] = None
     user_level_id: Optional[int]   = None
+    company_id: Optional[int]      = None
 
 
 class AssignedCategoryRead(SQLModel):
@@ -221,14 +249,25 @@ class AssignedCategoryRead(SQLModel):
     model_config = {"from_attributes": True}
 
 
+class AssignedDirectoryRead(SQLModel):
+    id: int
+    name: str
+    category_id: int
+    parent_id: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+
 class UserRead(UserBase):
-    id:            int
-    created_at:    datetime
-    updated_at:    datetime
-    auth_provider: str = "local"
-    roles:         List[RoleRead] = []
-    categories:    List[AssignedCategoryRead] = []
-    user_level:    Optional["UserLevelRead"] = None
+    id:                   int
+    created_at:           datetime
+    updated_at:           datetime
+    auth_provider:        str = "local"
+    must_change_password: bool = False
+    roles:                List[RoleRead] = []
+    categories:           List[AssignedCategoryRead] = []
+    directories:          List[AssignedDirectoryRead] = []
+    user_level:           Optional["UserLevelRead"] = None
+    company:              Optional[CompanyRead] = None
     model_config = {"from_attributes": True}
 
 

@@ -7,15 +7,19 @@ import UserTable from '@/components/admin/UserTable'
 import UserFormModal from '@/components/admin/UserFormModal'
 import PermissionMatrix from '@/components/admin/PermissionMatrix'
 import CategoryPermissionPanel from '@/components/admin/CategoryPermissionPanel'
+import CategorySetupPanel from '@/components/categories/CategorySetupPanel'
 import UserLevelTable from '@/components/admin/UserLevelTable'
 import UserLevelFormModal from '@/components/admin/UserLevelFormModal'
+import WorkflowConfigPanel from '@/components/admin/WorkflowConfigPanel'
+import StorageUsagePanel from '@/components/admin/StorageUsagePanel'
+import UserSignaturePanel from '@/components/admin/UserSignaturePanel'
 import type { User, Role, Permission, UserLevel } from '@/types/user.types'
 
-type Tab = 'users' | 'roles' | 'category-access' | 'user-levels'
+type Tab = 'users' | 'roles' | 'category-setup' | 'category-access' | 'user-levels' | 'workflows' | 'storage'
 
 export default function AdminPage() {
   const navigate    = useNavigate()
-  const { isAdmin } = useAuthStore()
+  const { isAdmin, isSuperAdmin } = useAuthStore()
 
   // Redirect non-admins
   useEffect(() => {
@@ -23,6 +27,12 @@ export default function AdminPage() {
   }, [])
 
   const [activeTab, setActiveTab]   = useState<Tab>('users')
+
+  // Reset tab during render if SUPERADMIN somehow lands on a category tab
+  if (isSuperAdmin() && (activeTab === 'category-setup' || activeTab === 'category-access')) {
+    setActiveTab('users')
+  }
+
   const [users, setUsers]           = useState<User[]>([])
   const [roles, setRoles]           = useState<Role[]>([])
   const [permissions, setPermissions] = useState<Permission[]>([])
@@ -37,58 +47,81 @@ export default function AdminPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [levelFormOpen, setLevelFormOpen] = useState(false)
   const [editingLevel, setEditingLevel] = useState<UserLevel | null>(null)
+  const [signatureUser, setSignatureUser] = useState<User | null>(null)
   const [userPage, setUserPage]     = useState(1)
   const [totalUsers, setTotalUsers] = useState(0)
   const LIMIT = 20
 
-  const loadUsers = useCallback(async () => {
-    setLoadingUsers(true)
-    try {
-      const data = await usersApi.list({
-        skip:      (userPage - 1) * LIMIT,
-        limit:     LIMIT,
-        search:    search.trim() || undefined,
-        is_active: filterActive === '' ? undefined : filterActive === 'true',
-        user_level_id: filterLevel === '' ? undefined : filterLevel === 'none' ? null : Number(filterLevel),
+  // Reset user page when search/filters change (adjusted during render)
+  const userFilterKey = `${search}|${filterActive}|${filterLevel}`
+  const [prevUserFilterKey, setPrevUserFilterKey] = useState(userFilterKey)
+  if (prevUserFilterKey !== userFilterKey) {
+    setPrevUserFilterKey(userFilterKey)
+    setUserPage(1)
+  }
+
+  const loadUsers = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoadingUsers(true)
+        return usersApi.list({
+          skip:      (userPage - 1) * LIMIT,
+          limit:     LIMIT,
+          search:    search.trim() || undefined,
+          is_active: filterActive === '' ? undefined : filterActive === 'true',
+          user_level_id: filterLevel === '' ? undefined : filterLevel === 'none' ? null : Number(filterLevel),
+        })
       })
-      setUsers(data.items)
-      setTotalUsers(data.total)
-    } catch {
-      toast.error('Failed to load users')
-    } finally {
-      setLoadingUsers(false)
-    }
+      .then((data) => {
+        setUsers(data.items)
+        setTotalUsers(data.total)
+      })
+      .catch(() => {
+        toast.error('Failed to load users')
+      })
+      .finally(() => {
+        setLoadingUsers(false)
+      })
   }, [userPage, search, filterActive, filterLevel])
 
-  const loadRoles = useCallback(async () => {
-    setLoadingRoles(true)
-    try {
-      const [r, p] = await Promise.all([usersApi.listRoles(), usersApi.listPermissions()])
-      setRoles(r)
-      setPermissions(p)
-    } catch {
-      toast.error('Failed to load roles')
-    } finally {
-      setLoadingRoles(false)
-    }
+  const loadRoles = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoadingRoles(true)
+        return Promise.all([usersApi.listRoles(), usersApi.listPermissions()])
+      })
+      .then(([r, p]) => {
+        setRoles(r)
+        setPermissions(p)
+      })
+      .catch(() => {
+        toast.error('Failed to load roles')
+      })
+      .finally(() => {
+        setLoadingRoles(false)
+      })
   }, [])
 
-  const loadLevels = useCallback(async () => {
-    setLoadingLevels(true)
-    try {
-      const levels = await usersApi.listUserLevels()
-      setUserLevels(levels)
-    } catch {
-      toast.error('Failed to load user levels')
-    } finally {
-      setLoadingLevels(false)
-    }
+  const loadLevels = useCallback(() => {
+    Promise.resolve()
+      .then(() => {
+        setLoadingLevels(true)
+        return usersApi.listUserLevels()
+      })
+      .then((levels) => {
+        setUserLevels(levels)
+      })
+      .catch(() => {
+        toast.error('Failed to load user levels')
+      })
+      .finally(() => {
+        setLoadingLevels(false)
+      })
   }, [])
 
   useEffect(() => { loadUsers() }, [loadUsers])
   useEffect(() => { loadRoles() }, [loadRoles])
   useEffect(() => { loadLevels() }, [loadLevels])
-  useEffect(() => { setUserPage(1) }, [search, filterActive, filterLevel])
 
   const totalPages = Math.ceil(totalUsers / LIMIT) || 1
 
@@ -101,13 +134,27 @@ export default function AdminPage() {
       id: 'roles', label: 'Roles & Permissions',
       icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
     },
-    {
-      id: 'category-access', label: 'Category Access',
+    // Category tabs hidden for SUPERADMIN
+    ...(!isSuperAdmin() ? [{
+      id: 'category-setup' as Tab,
+      label: 'Category Setup',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>,
+    }, {
+      id: 'category-access' as Tab,
+      label: 'Category Access',
       icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6"/><path d="M9 14h6"/></svg>,
-    },
+    }] : []),
     {
       id: 'user-levels', label: 'User Levels',
       icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>,
+    },
+    {
+      id: 'workflows', label: 'Workflows',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+    },
+    {
+      id: 'storage', label: 'Storage',
+      icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
     },
   ]
 
@@ -212,6 +259,7 @@ export default function AdminPage() {
               users={users}
               loading={loadingUsers}
               onEdit={(u) => { setEditingUser(u); setFormOpen(true) }}
+              onSignature={(u) => setSignatureUser(u)}
               onRefresh={loadUsers}
             />
 
@@ -279,6 +327,12 @@ export default function AdminPage() {
           </div>
         )}
 
+        {activeTab === 'category-setup' && (
+          <div style={{ padding: '1.25rem' }}>
+            <CategorySetupPanel />
+          </div>
+        )}
+
         {activeTab === 'category-access' && (
           <CategoryPermissionPanel onUserUpdated={loadUsers} />
         )}
@@ -291,6 +345,18 @@ export default function AdminPage() {
             onEdit={(lv) => { setEditingLevel(lv); setLevelFormOpen(true) }}
             onRefresh={loadLevels}
           />
+        )}
+
+        {/* ── Workflows tab ── */}
+        {activeTab === 'workflows' && (
+          <WorkflowConfigPanel />
+        )}
+
+        {/* ── Storage tab ── */}
+        {activeTab === 'storage' && (
+          <div style={{ padding: '1.25rem' }}>
+            <StorageUsagePanel />
+          </div>
         )}
       </div>
 
@@ -310,6 +376,14 @@ export default function AdminPage() {
         editing={editingLevel}
         onClose={() => { setLevelFormOpen(false); setEditingLevel(null) }}
         onSuccess={() => { loadLevels(); loadUsers() }}
+      />
+
+      {/* User signature panel */}
+      <UserSignaturePanel
+        userId={signatureUser?.id ?? 0}
+        userName={signatureUser?.full_name ?? ''}
+        isOpen={!!signatureUser}
+        onClose={() => setSignatureUser(null)}
       />
     </div>
   )

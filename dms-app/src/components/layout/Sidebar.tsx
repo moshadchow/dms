@@ -4,6 +4,7 @@ import { toast } from 'react-hot-toast'
 import { categoriesApi } from '@/api/categories.api'
 import { useDirectoryStore } from '@/store/directoryStore'
 import { useAuthStore } from '@/store/authStore'
+import { useWorkflowStore } from '@/store/workflowStore'
 import type { Category } from '@/types/category.types'
 
 interface Props { isOpen: boolean }
@@ -11,8 +12,9 @@ interface Props { isOpen: boolean }
 export default function Sidebar({ isOpen }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAdmin, user } = useAuthStore()
+  const { isAdmin, isSuperAdmin, user } = useAuthStore()
   const { categoriesVersion, setSelectedCategory } = useDirectoryStore()
+  const { pendingCount, refreshPendingCount } = useWorkflowStore()
 
   const [categories, setCategories]   = useState<Category[]>([])
   const [loadingCats, setLoadingCats] = useState(true)
@@ -28,13 +30,26 @@ export default function Sidebar({ isOpen }: Props) {
 
   // Load categories whenever categoriesVersion bumps
   useEffect(() => {
-    setLoadingCats(true)
-    // Match dashboard: admins see inactive categories too
-    categoriesApi.list(isAdmin())
+    // SUPERADMIN has no access to categories
+    if (isSuperAdmin()) {
+      Promise.resolve()
+        .then(() => {
+          setCategories([])
+          setLoadingCats(false)
+        })
+      return
+    }
+    Promise.resolve()
+      .then(() => {
+        setLoadingCats(true)
+        // Match dashboard: admins see inactive categories too
+        return categoriesApi.list(isAdmin())
+      })
       .then(setCategories)
       .catch(() => toast.error('Failed to load categories'))
       .finally(() => setLoadingCats(false))
-  }, [categoriesVersion, user?.id])  // re-fetch when user profile loads
+    refreshPendingCount()
+  }, [categoriesVersion, user?.id, isAdmin, isSuperAdmin])  // re-fetch when user profile loads
 
   const handleCategoryClick = (cat: Category) => {
     setSelectedCategory(cat.id)
@@ -143,6 +158,31 @@ export default function Sidebar({ isOpen }: Props) {
             icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>}
             active={location.pathname === '/dashboard'}
           />
+          <NavBtn
+            label="Memos"
+            onClick={() => navigate('/memos')}
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>}
+            active={location.pathname.startsWith('/memos')}
+          />
+          <NavBtn
+            label="Correspondence"
+            onClick={() => navigate('/correspondence')}
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>}
+            active={location.pathname.startsWith('/correspondence')}
+          />
+          <NavBtn
+            label="Pending Approvals"
+            onClick={() => navigate('/approvals/pending')}
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="10"/></svg>}
+            active={location.pathname === '/approvals/pending'}
+            badge={pendingCount > 0 ? pendingCount : undefined}
+          />
+          <NavBtn
+            label="My Submissions"
+            onClick={() => navigate('/approvals/history')}
+            icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>}
+            active={location.pathname === '/approvals/history'}
+          />
           {isAdmin() && (
             <>
               <NavBtn
@@ -157,6 +197,14 @@ export default function Sidebar({ isOpen }: Props) {
                 icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>}
                 active={location.pathname === '/admin/audit-trail'}
               />
+              {isSuperAdmin() && (
+                <NavBtn
+                  label="Company Profile"
+                  onClick={() => navigate('/admin/company-profile')}
+                  icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M9 8h1"/><path d="M9 12h1"/><path d="M9 16h1"/><path d="M14 8h1"/><path d="M14 12h1"/><path d="M14 16h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>}
+                  active={location.pathname === '/admin/company-profile'}
+                />
+              )}
             </>
           )}
         </div>
@@ -174,7 +222,7 @@ function Spin({ small }: { small?: boolean }) {
   )
 }
 
-function NavBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
+function NavBtn({ icon, label, onClick, active, badge }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; badge?: number }) {
   return (
     <button
       onClick={onClick}
@@ -190,6 +238,18 @@ function NavBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label
       }}
     >
       {icon}{label}
+      {badge != null && badge > 0 && (
+        <span style={{
+          marginLeft: 'auto',
+          minWidth: '18px', height: '18px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: '999px', fontSize: '0.68rem', fontWeight: 700,
+          backgroundColor: '#ef4444', color: '#fff',
+          padding: '0 5px',
+        }}>
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   )
 }

@@ -4,17 +4,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-from audit.router       import router as audit_router
-from auth.router        import router as auth_router
-from categories.router  import router as categories_router
-from core.config        import settings
-from core.database      import create_db_and_tables
-from directories.router import router as directories_router
-from documents.router   import router as documents_router
-from middleware.audit    import audit_middleware
-from middleware.rbac    import rbac_middleware
-from users.router       import router as users_router
-from user_levels.router import router as user_levels_router
+from audit.router        import router as audit_router
+from auth.router         import router as auth_router
+from categories.router   import router as categories_router
+from core.config         import settings
+from core.database       import create_db_and_tables
+from directories.router  import router as directories_router
+from documents.router    import router as documents_router
+from memos.router        import router as memos_router
+from middleware.audit     import audit_middleware
+from middleware.rbac     import rbac_middleware
+from users.router        import router as users_router
+from user_levels.router  import router as user_levels_router
+from workflow.router import router as workflow_router, instance_router as workflow_instance_router, signature_router as workflow_signature_router
+from storage_usage.router import router as storage_router
+from company_profile.router import router as company_profile_router
+from correspondence.router import router as correspondence_router
 
 
 @asynccontextmanager
@@ -76,6 +81,13 @@ app.include_router(directories_router, prefix=f"{API}/directories", tags=["Direc
 app.include_router(documents_router,   prefix=f"{API}/documents",   tags=["Documents"])
 app.include_router(user_levels_router, prefix=f"{API}/user-levels", tags=["User Levels"])
 app.include_router(audit_router,       prefix=f"{API}/audit-logs",  tags=["Audit Trail"])
+app.include_router(workflow_router,          prefix=f"{API}/workflows",           tags=["Workflows"])
+app.include_router(workflow_instance_router, prefix=f"{API}/workflow-instances",  tags=["Workflow Instances"])
+app.include_router(workflow_signature_router, prefix=f"{API}/signatures",         tags=["Signatures"])
+app.include_router(memos_router,             prefix=f"{API}/memos",               tags=["Memos"])
+app.include_router(storage_router,           prefix=f"{API}/storage",              tags=["Storage"])
+app.include_router(company_profile_router,   prefix=f"{API}/companies",            tags=["Companies"])
+app.include_router(correspondence_router,    prefix=f"{API}/correspondences",       tags=["Correspondence"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

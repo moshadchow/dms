@@ -18,11 +18,14 @@ export default function EditDocumentModal({ isOpen, doc, onClose, onSuccess }: P
   const [error, setError]         = useState('')
 
   useEffect(() => {
-    if (doc) {
-      setTitle(doc.title)
-      setDesc(doc.description ?? '')
-    }
-    setError('')
+    Promise.resolve()
+      .then(() => {
+        if (doc) {
+          setTitle(doc.title)
+          setDesc(doc.description ?? '')
+        }
+        setError('')
+      })
   }, [doc, isOpen])
 
   const handleSubmit = async (e: React.FormEvent) => {

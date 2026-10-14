@@ -7,6 +7,11 @@ import type {
 } from '@/types/directory.types'
 
 export const directoriesApi = {
+  list: async (): Promise<Directory[]> => {
+    const res = await apiClient.get<Directory[]>('/directories')
+    return res.data
+  },
+
   listByCategory: async (categoryId: number): Promise<Directory[]> => {
     const res = await apiClient.get<Directory[]>(`/directories/category/${categoryId}`)
     return res.data

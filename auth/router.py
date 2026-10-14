@@ -1,11 +1,11 @@
 import logging
-from base64 import urlsafe_b64decode
+import time
+from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
-from jose import JWTError
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from auth.azure_service import (
     build_authorization_url,
@@ -13,24 +13,49 @@ from auth.azure_service import (
     generate_nonce,
     generate_pkce_pair,
     generate_state,
+    get_azure_config_for_company,
     resolve_azure_user,
     validate_id_token,
 )
 from auth.schemas import LoginRequest, PasswordChangeRequest, RefreshRequest, TokenResponse
 from auth.service import AuthService
-from core.audit import AuditEvent, log_audit_event
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
 from core.config import settings
 from core.database import get_session
 from core.dependencies import CurrentUser
 from core.security import create_token_pair
-from users.models import AssignedCategoryRead, PermissionRead, RoleRead, UserRead
+from users.models import (
+    AssignedCategoryRead,
+    AssignedDirectoryRead,
+    PermissionRead,
+    RoleRead,
+    UserRead,
+)
 
 router = APIRouter()
 
-# In-memory store for PKCE/state/nonce (production should use Redis or encrypted cookies)
+# In-memory store for PKCE/state/nonce (production should use Redis or encrypted cookies).
+# This store is the authority for the OAuth company context: the callback reads
+# company_id from here, never from client-decoded state.
 _pending_auth: dict[str, dict] = {}
 
+# Abandoned login attempts (user never reached the callback) are pruned after this.
+_PENDING_AUTH_TTL_SECONDS = 600  # 10 minutes
+
 logger = logging.getLogger("dms.auth")
+
+
+def _prune_pending_auth() -> None:
+    """Drop expired pending-auth entries so the store cannot grow unbounded."""
+    now = time.monotonic()
+    expired = [
+        state
+        for state, entry in _pending_auth.items()
+        if now - entry["created_at"] > _PENDING_AUTH_TTL_SECONDS
+    ]
+    for state in expired:
+        _pending_auth.pop(state, None)
 
 
 def _get_client_ip(request: Request) -> str:
@@ -114,6 +139,17 @@ def me(current_user: CurrentUser):
             )
             for category in current_user.categories
         ],
+        # Directory grants feed the frontend's canAccessCategory gate —
+        # omitting them sends grant-only users to /forbidden client-side.
+        directories=[
+            AssignedDirectoryRead(
+                id=directory.id,
+                name=directory.name,
+                category_id=directory.category_id,
+                parent_id=directory.parent_id,
+            )
+            for directory in current_user.directories
+        ],
     )
 
 
@@ -131,38 +167,59 @@ def change_password(
 
 
 # ─────────────────────────────────────────────────
-# Azure AD Authentication
+# Azure AD Authentication (company-scoped)
 # ─────────────────────────────────────────────────
+
+def _login_error_redirect(detail: str) -> RedirectResponse:
+    """Send the browser back to the login page with a user-safe error message."""
+    return RedirectResponse(
+        url=f"{settings.FRONTEND_URL}/login?error={quote(detail)}",
+        status_code=status.HTTP_302_FOUND,
+    )
+
 
 @router.get(
     "/azure/login",
     summary="Initiate Azure AD login",
     response_class=RedirectResponse,
 )
-async def azure_login(request: Request):
+async def azure_login(
+    request: Request,
+    company_id: Optional[int] = Query(None, description="Company ID whose Azure AD config to use (required)"),
+):
     """
     Redirect the browser to the Microsoft Entra ID login page.
 
-    Generates PKCE code_verifier + code_challenge, state, and nonce,
-    stores them temporarily, and redirects to Azure's authorize endpoint.
+    The company context is established *before* redirecting: company_id is
+    validated against the database (exists, active, Azure enabled, config
+    complete) and that company's configuration alone builds the authorize
+    URL. The validated company_id is stored server-side keyed by the
+    random `state`.
+
+    Any validation failure redirects back to the frontend login page with
+    a user-safe error — there is no global .env fallback.
     """
-    if not settings.AZURE_ENABLED:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Azure AD authentication is not configured",
-        )
+    session = next(get_session())
+    try:
+        azure_config = get_azure_config_for_company(session, company_id)
+    except HTTPException as exc:
+        return _login_error_redirect(str(exc.detail))
+    finally:
+        session.close()
 
     code_verifier, code_challenge = generate_pkce_pair()
-    state = generate_state()
     nonce = generate_nonce()
+    state = generate_state(nonce, company_id)
 
-    # Store temporarily (keyed by state) — production should use encrypted cookie or Redis
+    _prune_pending_auth()
     _pending_auth[state] = {
         "code_verifier": code_verifier,
         "nonce": nonce,
+        "company_id": company_id,
+        "created_at": time.monotonic(),
     }
 
-    auth_url = build_authorization_url(state, code_challenge, nonce)
+    auth_url = build_authorization_url(state, code_challenge, nonce, azure_config)
     return RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
 
 
@@ -190,22 +247,30 @@ async def azure_callback(
 
     # Check for Azure-side errors
     if error:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description=f"Azure returned error: {error} — {error_description}",
             ip_address=ip_address,
-            detail=f"Azure returned error: {error} — {error_description}",
+            is_success=False,
+            failure_reason=f"{error}: {error_description}",
         )
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/login?error={error_description or error}",
             status_code=status.HTTP_302_FOUND,
         )
 
-    # Validate state
+    # Validate state: the server-side pending store is the sole authority
+    # for the company context — a tampered/unknown state can never select
+    # a company, and each state is consumed exactly once (no replay).
     if not state or state not in _pending_auth:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            description="Invalid or missing state parameter",
             ip_address=ip_address,
-            detail="Invalid or missing state parameter",
+            is_success=False,
+            failure_reason="Invalid or missing state parameter",
         )
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/login?error=Invalid+state+parameter",
@@ -215,12 +280,17 @@ async def azure_callback(
     pending = _pending_auth.pop(state)
     code_verifier = pending["code_verifier"]
     expected_nonce = pending["nonce"]
+    company_id = pending.get("company_id")
 
     if not code:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            company_id=company_id,
+            description="Missing authorization code in callback",
             ip_address=ip_address,
-            detail="Missing authorization code in callback",
+            is_success=False,
+            failure_reason="Missing authorization code",
         )
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/login?error=Missing+authorization+code",
@@ -228,15 +298,23 @@ async def azure_callback(
         )
 
     try:
+        # Reload the SAME company configuration the authorize request used:
+        # token exchange and id_token validation both derive from it.
+        azure_config = get_azure_config_for_company(session, company_id)
+
         # Exchange code for tokens
-        token_data = await exchange_code_for_tokens(code, code_verifier)
+        token_data = await exchange_code_for_tokens(code, code_verifier, azure_config)
         raw_id_token = token_data.get("id_token")
 
         if not raw_id_token:
-            log_audit_event(
-                AuditEvent.AZURE_LOGIN_FAILED,
+            AuditService(session).log_event(
+                action=AuditAction.FAILED_LOGIN,
+                module=AuditModule.AUTH,
+                company_id=company_id,
+                description="No id_token in token response",
                 ip_address=ip_address,
-                detail="No id_token in token response",
+                is_success=False,
+                failure_reason="No id_token in token response",
             )
             return RedirectResponse(
                 url=f"{settings.FRONTEND_URL}/login?error=No+ID+token+received",
@@ -244,10 +322,16 @@ async def azure_callback(
             )
 
         # Validate the id_token
-        claims = await validate_id_token(raw_id_token, expected_nonce)
+        claims = await validate_id_token(raw_id_token, expected_nonce, azure_config)
 
         # Resolve user (JIT provisioning)
-        user = resolve_azure_user(session, claims, ip_address=ip_address)
+        user = resolve_azure_user(
+            session,
+            claims,
+            ip_address=ip_address,
+            company_id=company_id,
+            default_role_name=azure_config.get("default_role_name"),
+        )
 
         if not user.is_active:
             return RedirectResponse(
@@ -267,10 +351,14 @@ async def azure_callback(
         return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
     except HTTPException as exc:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            company_id=company_id,
+            description=f"Azure auth failed: {exc.detail}",
             ip_address=ip_address,
-            detail=f"Azure auth failed: {exc.detail}",
+            is_success=False,
+            failure_reason=str(exc.detail),
         )
         logger.error("Azure callback HTTPException: %s", exc.detail)
         error_msg = exc.detail if settings.DEBUG else "Authentication failed"
@@ -280,10 +368,14 @@ async def azure_callback(
         )
 
     except Exception as exc:
-        log_audit_event(
-            AuditEvent.AZURE_LOGIN_FAILED,
+        AuditService(session).log_event(
+            action=AuditAction.FAILED_LOGIN,
+            module=AuditModule.AUTH,
+            company_id=company_id,
+            description=f"Unexpected error during Azure authentication: {exc}",
             ip_address=ip_address,
-            detail=f"Unexpected error during Azure authentication: {exc}",
+            is_success=False,
+            failure_reason=str(exc),
         )
         logger.exception("Unexpected error during Azure callback")
         error_msg = str(exc) if settings.DEBUG else "Authentication failed"
@@ -297,6 +389,27 @@ async def azure_callback(
     "/azure/config",
     summary="Check if Azure AD is enabled",
 )
-def azure_config():
-    """Return whether Azure AD authentication is available."""
-    return {"enabled": settings.AZURE_ENABLED}
+def azure_config(session: Session = Depends(get_session)):
+    """Return which companies can offer Microsoft sign-in.
+
+    A company is listed only when it is active, has Azure AD enabled and
+    has a complete configuration (client ID + tenant ID). There is no
+    global .env configuration.
+    """
+    from company_profile.models import Company
+    companies = session.exec(
+        select(Company).where(
+            Company.is_active == True,  # noqa: E712
+            Company.azure_enabled == True,  # noqa: E712
+            Company.azure_client_id.is_not(None),  # noqa: E712
+            Company.azure_tenant_id.is_not(None),  # noqa: E712
+        )
+    ).all()
+
+    return {
+        "enabled": len(companies) > 0,
+        "companies": [
+            {"id": c.id, "name": c.full_name, "short_name": c.short_name}
+            for c in companies
+        ],
+    }

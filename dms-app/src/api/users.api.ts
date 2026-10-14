@@ -10,6 +10,7 @@ import type {
   UserLevel,
   UserLevelCreateRequest,
   UserLevelUpdateRequest,
+  DirectoryAccess,
 } from '@/types/user.types'
 
 export const usersApi = {
@@ -20,6 +21,7 @@ export const usersApi = {
     search?: string
     is_active?: boolean
     user_level_id?: number | null
+    company_id?: number
   }): Promise<UserListResponse> => {
     const res = await apiClient.get<UserListResponse>('/users', { params })
     return res.data
@@ -47,6 +49,35 @@ export const usersApi = {
   deactivate: async (id: number): Promise<User> => {
     const res = await apiClient.post<User>(`/users/${id}/deactivate`)
     return res.data
+  },
+
+  resetPassword: async (id: number): Promise<{ message: string }> => {
+    const res = await apiClient.post<{ message: string }>(`/users/${id}/reset-password`)
+    return res.data
+  },
+
+  // ── Directory access grants (subdirectory-level) ────────────────────
+  getDirectoryAccess: async (id: number): Promise<DirectoryAccess> => {
+    const res = await apiClient.get<DirectoryAccess>(`/users/${id}/directory-access`)
+    return res.data
+  },
+
+  setDirectoryAccess: async (id: number, directoryIds: number[]): Promise<DirectoryAccess> => {
+    const res = await apiClient.put<DirectoryAccess>(`/users/${id}/directory-access`, {
+      directory_ids: directoryIds,
+    })
+    return res.data
+  },
+
+  addDirectoryAccess: async (id: number, directoryId: number): Promise<DirectoryAccess> => {
+    const res = await apiClient.post<DirectoryAccess>(`/users/${id}/directory-access`, {
+      directory_id: directoryId,
+    })
+    return res.data
+  },
+
+  removeDirectoryAccess: async (id: number, directoryId: number): Promise<void> => {
+    await apiClient.delete(`/users/${id}/directory-access/${directoryId}`)
   },
 
   // ── Roles ─────────────────────────────────────────────────────────

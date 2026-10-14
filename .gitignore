@@ -6,3 +6,6 @@ __pycache__/
 !.env.example
 storage/uploads/
 *.pyc
+node_modules/
+*.py[cod]
+.claude/settings.local.json

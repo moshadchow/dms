@@ -8,8 +8,19 @@ const LoginPage     = lazy(() => import('@/pages/LoginPage'))
 const AzureCallbackPage = lazy(() => import('@/pages/AzureCallbackPage'))
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const DocumentsPage = lazy(() => import('@/pages/DocumentsPage'))
+const MemoListPage = lazy(() => import('@/pages/MemoListPage'))
+const MemoDraftPage = lazy(() => import('@/pages/MemoDraftPage'))
+const MemoDetailPage = lazy(() => import('@/pages/MemoDetailPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
+const CompanyProfilePage = lazy(() => import('@/pages/CompanyProfilePage'))
 const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
+const PendingApprovalPage = lazy(() => import('@/pages/PendingApprovalPage'))
+const ApprovalHistoryPage = lazy(() => import('@/pages/ApprovalHistoryPage'))
+const ForceChangePasswordPage = lazy(() => import('@/pages/ForceChangePasswordPage'))
+const CorrespondenceListPage = lazy(() => import('@/pages/CorrespondenceListPage'))
+const CorrespondenceCreatePage = lazy(() => import('@/pages/CorrespondenceCreatePage'))
+const CorrespondenceDetailPage = lazy(() => import('@/pages/CorrespondenceDetailPage'))
+const CorrespondenceEditPage = lazy(() => import('@/pages/CorrespondenceEditPage'))
 const NotFoundPage  = lazy(() => import('@/pages/NotFoundPage'))
 const ForbiddenPage = lazy(() => import('@/pages/ForbiddenPage'))
 
@@ -77,9 +88,21 @@ export default function App() {
             <Route element={<AppLayout />}>
               <Route index                        element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard"            element={<DashboardPage />} />
+              <Route path="/force-change-password" element={<ForceChangePasswordPage />} />
               <Route path="/directory/:directoryId" element={<DocumentsPage />} />
               <Route path="/admin"                element={<AdminPage />} />
+              <Route path="/admin/company-profile" element={<CompanyProfilePage />} />
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
+              <Route path="/approvals/pending"    element={<PendingApprovalPage />} />
+              <Route path="/approvals/history"    element={<ApprovalHistoryPage />} />
+              <Route path="/correspondence"         element={<CorrespondenceListPage />} />
+              <Route path="/correspondence/new"      element={<CorrespondenceCreatePage />} />
+              <Route path="/correspondence/:id"      element={<CorrespondenceDetailPage />} />
+              <Route path="/correspondence/:id/edit" element={<CorrespondenceEditPage />} />
+              <Route path="/memos"           element={<MemoListPage />} />
+              <Route path="/memos/new"       element={<MemoDraftPage key="new" />} />
+              <Route path="/memos/:id"       element={<MemoDetailPage />} />
+              <Route path="/memos/:id/edit"  element={<MemoDraftPage key="edit" />} />
             </Route>
           </Route>
 

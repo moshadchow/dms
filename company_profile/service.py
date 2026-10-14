@@ -1,0 +1,387 @@
+import re
+import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+from fastapi import HTTPException, status
+from sqlmodel import Session, select
+
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
+from company_profile.models import (
+    AzureConfigRead,
+    AzureConfigUpdate,
+    Company,
+    CompanyCreate,
+    CompanyRead,
+    CompanyUpdate,
+)
+from core.storage import storage_service
+
+EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+
+
+def _company_to_read(company: Company) -> CompanyRead:
+    return CompanyRead(
+        id=company.id,
+        company_id=company.company_id,
+        full_name=company.full_name,
+        short_name=company.short_name,
+        address=company.address,
+        contact_person=company.contact_person,
+        contact_no=company.contact_no,
+        email_address=company.email_address,
+        is_active=company.is_active,
+        azure_enabled=company.azure_enabled,
+        created_at=company.created_at,
+        updated_at=company.updated_at,
+    )
+
+
+class CompanyService:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def list_companies(
+        self,
+        skip: int = 0,
+        limit: int = 50,
+        search: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> Tuple[List[CompanyRead], int]:
+        query = select(Company)
+        if search:
+            query = query.where(
+                Company.full_name.ilike(f"%{search}%")
+                | Company.short_name.ilike(f"%{search}%")
+                | Company.company_id.ilike(f"%{search}%")
+            )
+        if is_active is not None:
+            query = query.where(Company.is_active == is_active)
+
+        all_companies = self.session.exec(query).all()
+        total = len(all_companies)
+        page = self.session.exec(query.offset(skip).limit(limit)).all()
+        return [_company_to_read(c) for c in page], total
+
+    def get_company(self, company_id: int) -> CompanyRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+        return _company_to_read(company)
+
+    def create_company(self, data: CompanyCreate) -> CompanyRead:
+        # Validate email format
+        if data.email_address and not EMAIL_REGEX.match(data.email_address):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid email address format",
+            )
+
+        # Check unique company_id
+        existing = self.session.exec(
+            select(Company).where(Company.company_id == data.company_id)
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Company ID '{data.company_id}' already exists",
+            )
+
+        # Check unique short_name
+        existing_short = self.session.exec(
+            select(Company).where(Company.short_name == data.short_name)
+        ).first()
+        if existing_short:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Short name '{data.short_name}' already exists",
+            )
+
+        company = Company(
+            company_id=data.company_id,
+            full_name=data.full_name,
+            short_name=data.short_name,
+            address=data.address,
+            contact_person=data.contact_person,
+            contact_no=data.contact_no,
+            email_address=data.email_address,
+            is_active=data.is_active,
+        )
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.CREATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company.id),
+            new_value={"company_id": data.company_id, "full_name": data.full_name},
+            description=f"Created company {data.company_id}",
+            is_success=True,
+        )
+
+        return _company_to_read(company)
+
+    def update_company(self, company_id: int, data: CompanyUpdate) -> CompanyRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        # Validate email format if provided
+        if data.email_address is not None and data.email_address and not EMAIL_REGEX.match(data.email_address):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid email address format",
+            )
+
+        # Check unique company_id if changed
+        if data.company_id is not None and data.company_id != company.company_id:
+            existing = self.session.exec(
+                select(Company).where(Company.company_id == data.company_id)
+            ).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Company ID '{data.company_id}' already exists",
+                )
+
+        # Handle short_name change - move storage directory
+        old_short_name = company.short_name
+        new_short_name = data.short_name if data.short_name is not None else company.short_name
+
+        # Check unique short_name if changed
+        if new_short_name != old_short_name:
+            existing_short = self.session.exec(
+                select(Company).where(Company.short_name == new_short_name)
+            ).first()
+            if existing_short:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Short name '{new_short_name}' already exists",
+                )
+
+        old_values = {
+            "company_id": company.company_id,
+            "full_name": company.full_name,
+            "short_name": company.short_name,
+        }
+
+        update_data = data.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(company, field, value)
+
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        # Move storage directory if short_name changed
+        if new_short_name != old_short_name:
+            try:
+                old_company_root = storage_service.storage_root / old_short_name
+                new_company_root = storage_service.storage_root / new_short_name
+                
+                if old_company_root.exists():
+                    # Ensure parent exists
+                    new_company_root.parent.mkdir(parents=True, exist_ok=True)
+                    # Move the entire company storage directory
+                    shutil.move(str(old_company_root), str(new_company_root))
+            except Exception as e:
+                # Log error but don't fail the update - storage can be manually moved
+                import logging
+                logging.error(f"Failed to move storage directory for company {company_id}: {e}")
+
+        new_values = {
+            "company_id": company.company_id,
+            "full_name": company.full_name,
+            "short_name": company.short_name,
+        }
+
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value=old_values,
+            new_value=new_values,
+            description=f"Updated company {company.company_id}",
+            is_success=True,
+        )
+
+        return _company_to_read(company)
+
+    def activate_company(self, company_id: int) -> CompanyRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        if company.is_active:
+            return _company_to_read(company)
+
+        company.is_active = True
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.ACTIVATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value={"is_active": False},
+            new_value={"is_active": True},
+            description=f"Activated company {company.company_id}",
+            is_success=True,
+        )
+
+        return _company_to_read(company)
+
+    def deactivate_company(self, company_id: int) -> CompanyRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        if not company.is_active:
+            return _company_to_read(company)
+
+        company.is_active = False
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.DEACTIVATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value={"is_active": True},
+            new_value={"is_active": False},
+            description=f"Deactivated company {company.company_id}",
+            is_success=True,
+        )
+
+        return _company_to_read(company)
+
+    # ──────────────────────────────────────────
+    # Azure AD configuration (per-company)
+    # ──────────────────────────────────────────
+
+    def get_azure_config(self, company_id: int) -> AzureConfigRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+        return AzureConfigRead(
+            configured=bool(company.azure_client_id and company.azure_tenant_id),
+            azure_client_id=company.azure_client_id,
+            azure_tenant_id=company.azure_tenant_id,
+            azure_enabled=company.azure_enabled,
+            azure_default_role_name=company.azure_default_role_name,
+        )
+
+    def update_azure_config(self, company_id: int, data: AzureConfigUpdate) -> AzureConfigRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        update_data = data.model_dump(exclude_unset=True)
+        old_values = {}
+        for field in update_data:
+            if field.startswith("azure_"):
+                # Never write secret values into the audit trail.
+                old_values[field] = (
+                    "***" if field == "azure_client_secret" else getattr(company, field)
+                )
+                setattr(company, field, update_data[field])
+
+        # A company cannot be enabled without a complete, usable configuration.
+        if company.azure_enabled and not (
+            company.azure_client_id
+            and company.azure_client_secret
+            and company.azure_tenant_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Client ID, client secret and tenant ID are required "
+                    "to enable Azure AD"
+                ),
+            )
+
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value=old_values,
+            new_value={
+                field: ("***" if field == "azure_client_secret" else value)
+                for field, value in update_data.items()
+                if field.startswith("azure_")
+            },
+            description=f"Updated Azure AD config for company {company.company_id}",
+            is_success=True,
+        )
+
+        return AzureConfigRead(
+            configured=bool(company.azure_client_id and company.azure_tenant_id),
+            azure_client_id=company.azure_client_id,
+            azure_tenant_id=company.azure_tenant_id,
+            azure_enabled=company.azure_enabled,
+            azure_default_role_name=company.azure_default_role_name,
+        )
+
+    def delete_azure_config(self, company_id: int) -> AzureConfigRead:
+        company = self.session.get(Company, company_id)
+        if not company:
+            raise HTTPException(status_code=404, detail=f"Company {company_id} not found")
+
+        old_values = {
+            "azure_client_id": company.azure_client_id,
+            "azure_tenant_id": company.azure_tenant_id,
+            "azure_enabled": company.azure_enabled,
+        }
+
+        company.azure_client_id = None
+        company.azure_client_secret = None
+        company.azure_tenant_id = None
+        company.azure_enabled = False
+        company.azure_default_role_name = None
+        company.updated_at = datetime.utcnow()
+        self.session.add(company)
+        self.session.commit()
+        self.session.refresh(company)
+
+        AuditService(self.session).log_event(
+            action=AuditAction.UPDATE_COMPANY,
+            module=AuditModule.COMPANIES,
+            company_id=company.id,
+            entity_name="company",
+            entity_id=str(company_id),
+            old_value=old_values,
+            new_value={"azure_client_id": None, "azure_tenant_id": None, "azure_enabled": False},
+            description=f"Removed Azure AD config from company {company.company_id}",
+            is_success=True,
+        )
+
+        return AzureConfigRead(
+            configured=False,
+            azure_client_id=None,
+            azure_tenant_id=None,
+            azure_enabled=False,
+            azure_default_role_name=None,
+        )

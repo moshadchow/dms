@@ -1,0 +1,515 @@
+"""
+workflow/definition_service.py
+──────────────────────────────
+CRUD operations for workflow definitions (admin-configured templates).
+"""
+
+from datetime import datetime
+from typing import List, Optional
+
+from fastapi import HTTPException, status
+from sqlmodel import Session, func, select
+
+from audit.models import AuditAction, AuditModule
+from audit.service import AuditService
+from users.models import RoleName, User
+from workflow.models import (
+    WorkflowDefinition,
+    WorkflowDefinitionDetailRead,
+    WorkflowDefinitionListResponse,
+    WorkflowDefinitionRead,
+    WorkflowInstance,
+    WorkflowStatus,
+    WorkflowStep,
+    WorkflowStepApprover,
+    WorkflowStepRead,
+)
+from workflow.schemas import (
+    WorkflowDefinitionCreate,
+    WorkflowDefinitionUpdate,
+    WorkflowStepApproverCreate,
+    WorkflowStepCreate,
+)
+
+
+class WorkflowDefinitionService:
+    def __init__(self, session: Session):
+        self.session = session
+
+    # ──────────────────────────────────────────
+    # Helpers
+    # ──────────────────────────────────────────
+
+    @staticmethod
+    def _steps_unchanged(
+        current_steps: List[WorkflowStep],
+        incoming: List[WorkflowStepCreate],
+    ) -> bool:
+        """True when the payload matches the current active steps exactly.
+
+        The edit form always submits the full step list; an unchanged payload
+        must neither version step rows nor trip the in-flight guard.
+        """
+
+        def signature(order: int, name: str, mode, approvers) -> tuple:
+            mode_value = mode.value if hasattr(mode, "value") else mode
+            approver_ids = sorted((a.user_id, a.role_id) for a in approvers)
+            return (order, name, mode_value, approver_ids)
+
+        current = [
+            signature(s.step_order, s.step_name, s.approval_mode, s.approvers)
+            for s in sorted(current_steps, key=lambda s: s.step_order)
+        ]
+        incoming_sig = [
+            signature(s.step_order, s.step_name, s.approval_mode, s.approvers)
+            for s in sorted(incoming, key=lambda s: s.step_order)
+        ]
+        return current == incoming_sig
+
+    @staticmethod
+    def _validate_step_approvers(steps: List[WorkflowStepCreate]) -> None:
+        """Ensure every step has at least one approver and each approver has exactly one of user_id/role_id."""
+        for step in steps:
+            if not step.approvers:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Step '{step.step_name}' (order {step.step_order}) must have at least one approver",
+                )
+            for approver in step.approvers:
+                if bool(approver.user_id) == bool(approver.role_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Approver in step '{step.step_name}' must specify exactly one of "
+                            f"user_id or role_id"
+                        ),
+                    )
+
+    def _get_or_404(self, definition_id: int) -> WorkflowDefinition:
+        wf = self.session.get(WorkflowDefinition, definition_id)
+        if not wf:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow definition {definition_id} not found",
+            )
+        return wf
+
+    def _to_read(self, wf: WorkflowDefinition) -> WorkflowDefinitionRead:
+        return WorkflowDefinitionRead(
+            id=wf.id,
+            name=wf.name,
+            description=wf.description,
+            is_active=wf.is_active,
+            created_by=wf.created_by,
+            company_id=wf.company_id,
+            document_type=wf.document_type,
+            created_at=wf.created_at,
+            updated_at=wf.updated_at,
+        )
+
+    @staticmethod
+    def _is_superadmin(current_user: User) -> bool:
+        return any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+
+    def _check_company_access(self, definition: WorkflowDefinition, current_user: User) -> None:
+        if self._is_superadmin(current_user):
+            return
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin must be assigned to a Company",
+            )
+        if definition.company_id != current_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow definition {definition.id} not found",
+            )
+
+    def _build_steps_read(self, steps: List[WorkflowStep]) -> List[WorkflowStepRead]:
+        """Build step read schemas with approver details."""
+        result = []
+        for step in steps:
+            approvers_data = []
+            for app in step.approvers:
+                approvers_data.append(
+                    {
+                        "id": app.id,
+                        "workflow_step_id": app.workflow_step_id,
+                        "user_id": app.user_id,
+                        "role_id": app.role_id,
+                        "is_active": app.is_active,
+                        "user_name": app.user.full_name if app.user else None,
+                        "role_name": app.role.name.value if app.role else None,
+                    }
+                )
+            result.append(
+                WorkflowStepRead(
+                    id=step.id,
+                    workflow_definition_id=step.workflow_definition_id,
+                    step_order=step.step_order,
+                    step_name=step.step_name,
+                    approval_mode=step.approval_mode,
+                    is_active=step.is_active,
+                    approvers=approvers_data,
+                )
+            )
+        return result
+
+    def _log_audit(
+        self,
+        action: AuditAction,
+        definition: WorkflowDefinition,
+        description: str,
+        *,
+        old_value: Optional[dict] = None,
+        new_value: Optional[dict] = None,
+        company_id: Optional[int] = None,
+    ) -> None:
+        try:
+            svc = AuditService(self.session)
+            svc.log_event(
+                action=action,
+                module=AuditModule.WORKFLOW,
+                company_id=company_id,
+                entity_name="workflow_definition",
+                entity_id=str(definition.id),
+                old_value=old_value,
+                new_value=new_value,
+                description=description,
+                is_success=True,
+            )
+        except Exception:
+            pass
+
+    # ──────────────────────────────────────────
+    # Public API
+    # ──────────────────────────────────────────
+
+    def create_definition(
+        self,
+        data: WorkflowDefinitionCreate,
+        current_user: User,
+    ) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot create workflow definitions",
+            )
+
+        self._validate_step_approvers(data.steps)
+
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin must be assigned to a Company",
+            )
+
+        existing = self.session.exec(
+            select(WorkflowDefinition).where(WorkflowDefinition.name == data.name)
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Workflow '{data.name}' already exists",
+            )
+
+        wf = WorkflowDefinition(
+            name=data.name,
+            description=data.description,
+            document_type=data.document_type,
+            created_by=current_user.id,
+            company_id=current_user.company_id,
+        )
+        self.session.add(wf)
+        self.session.flush()
+
+        for step_data in data.steps:
+            step = WorkflowStep(
+                workflow_definition_id=wf.id,
+                step_order=step_data.step_order,
+                step_name=step_data.step_name,
+                approval_mode=step_data.approval_mode,
+            )
+            self.session.add(step)
+            self.session.flush()
+
+            for approver_data in step_data.approvers:
+                approver = WorkflowStepApprover(
+                    workflow_step_id=step.id,
+                    user_id=approver_data.user_id,
+                    role_id=approver_data.role_id,
+                )
+                self.session.add(approver)
+
+        self.session.commit()
+        self.session.refresh(wf)
+
+        wf = self.session.exec(
+            select(WorkflowDefinition)
+            .where(WorkflowDefinition.id == wf.id)
+        ).first()
+
+        self._log_audit(
+            AuditAction.CREATE_WORKFLOW,
+            wf,
+            f"Created workflow '{wf.name}' with {len(data.steps)} step(s)",
+            new_value={"name": wf.name, "steps": len(data.steps)},
+            company_id=wf.company_id,
+        )
+
+        return self._to_read(wf)
+
+    def get_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionDetailRead:
+        wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
+        return self._to_detail(wf)
+
+    def _to_detail(self, wf: WorkflowDefinition) -> WorkflowDefinitionDetailRead:
+        """Build the detail read schema without an access guard.
+
+        HTTP callers go through ``get_definition``; background tasks
+        (notifications) have no ``current_user`` and build the read schema
+        directly from a workflow they are already authorized to process.
+        """
+        wf = self.session.exec(
+            select(WorkflowDefinition)
+            .where(WorkflowDefinition.id == wf.id)
+        ).first()
+
+        steps_read = self._build_steps_read([s for s in wf.steps if s.is_active])
+
+        return WorkflowDefinitionDetailRead(
+            id=wf.id,
+            name=wf.name,
+            description=wf.description,
+            is_active=wf.is_active,
+            created_by=wf.created_by,
+            company_id=wf.company_id,
+            created_at=wf.created_at,
+            updated_at=wf.updated_at,
+            steps=steps_read,
+        )
+
+    def list_definitions(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        is_active: Optional[bool] = None,
+        company_id: Optional[int] = None,
+        document_type: Optional[str] = None,
+        document_type_is_null: Optional[bool] = None,
+        current_user: Optional[User] = None,
+    ) -> WorkflowDefinitionListResponse:
+        query = select(WorkflowDefinition)
+        count_query = select(func.count(WorkflowDefinition.id))
+
+        if is_active is not None:
+            query = query.where(WorkflowDefinition.is_active == is_active)
+            count_query = count_query.where(WorkflowDefinition.is_active == is_active)
+
+        if document_type_is_null is True:
+            query = query.where(WorkflowDefinition.document_type.is_(None))
+            count_query = count_query.where(WorkflowDefinition.document_type.is_(None))
+        elif document_type is not None:
+            query = query.where(WorkflowDefinition.document_type == document_type)
+            count_query = count_query.where(WorkflowDefinition.document_type == document_type)
+
+        if current_user is not None and not self._is_superadmin(current_user):
+            query = query.where(WorkflowDefinition.company_id == current_user.company_id)
+            count_query = count_query.where(WorkflowDefinition.company_id == current_user.company_id)
+        elif company_id is not None:
+            query = query.where(WorkflowDefinition.company_id == company_id)
+            count_query = count_query.where(WorkflowDefinition.company_id == company_id)
+
+        total = self.session.exec(count_query).one()
+
+        wfs = self.session.exec(
+            query.order_by(WorkflowDefinition.name).offset(skip).limit(limit)
+        ).all()
+
+        items = [self._to_read(wf) for wf in wfs]
+
+        return WorkflowDefinitionListResponse(
+            total=total,
+            page=(skip // limit) + 1,
+            limit=limit,
+            items=items,
+        )
+
+    def update_definition(
+        self,
+        definition_id: int,
+        data: WorkflowDefinitionUpdate,
+        current_user: User,
+    ) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot update workflow definitions",
+            )
+
+        wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
+
+        old_value = {
+            "name": wf.name,
+            "description": wf.description,
+            "is_active": wf.is_active,
+            "document_type": wf.document_type,
+        }
+
+        if data.name is not None:
+            existing = self.session.exec(
+                select(WorkflowDefinition)
+                .where(WorkflowDefinition.name == data.name, WorkflowDefinition.id != definition_id)
+            ).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Workflow '{data.name}' already exists",
+                )
+            wf.name = data.name
+
+        if data.description is not None:
+            wf.description = data.description
+
+        if data.is_active is not None:
+            wf.is_active = data.is_active
+
+        if data.document_type is not None:
+            wf.document_type = data.document_type
+
+        if data.steps is not None:
+            self._validate_step_approvers(data.steps)
+
+            active_steps = [s for s in wf.steps if s.is_active]
+            if not self._steps_unchanged(active_steps, data.steps):
+                active_statuses = (
+                    WorkflowStatus.DRAFT,
+                    WorkflowStatus.SUBMITTED,
+                    WorkflowStatus.PENDING_APPROVAL,
+                    WorkflowStatus.RETURNED,
+                )
+                active_instance = self.session.exec(
+                    select(WorkflowInstance.id)
+                    .where(
+                        WorkflowInstance.workflow_definition_id == wf.id,
+                        WorkflowInstance.status.in_(active_statuses),
+                    )
+                    .limit(1)
+                ).first()
+                if active_instance is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Cannot modify steps: this workflow still has active workflow "
+                        "instances (draft, submitted, pending approval, or returned). "
+                        "Complete, reject, or cancel them before updating steps.",
+                    )
+
+                # Supersede instead of deleting: historical instances keep
+                # their workflow snapshot because workflow_actions rows stay
+                # pointed at these step rows (audit trail must survive edits).
+                for step in active_steps:
+                    step.is_active = False
+                self.session.flush()
+
+                for step_data in data.steps:
+                    step = WorkflowStep(
+                        workflow_definition_id=wf.id,
+                        step_order=step_data.step_order,
+                        step_name=step_data.step_name,
+                        approval_mode=step_data.approval_mode,
+                    )
+                    self.session.add(step)
+                    self.session.flush()
+
+                    for approver_data in step_data.approvers:
+                        approver = WorkflowStepApprover(
+                            workflow_step_id=step.id,
+                            user_id=approver_data.user_id,
+                            role_id=approver_data.role_id,
+                        )
+                        self.session.add(approver)
+
+        wf.updated_at = datetime.utcnow()
+        self.session.commit()
+        self.session.refresh(wf)
+
+        wf = self.session.exec(
+            select(WorkflowDefinition)
+            .where(WorkflowDefinition.id == wf.id)
+        ).first()
+
+        new_value = {
+            "name": wf.name,
+            "description": wf.description,
+            "is_active": wf.is_active,
+        }
+        if data.steps is not None:
+            new_value["steps"] = len(data.steps)
+
+        self._log_audit(
+            AuditAction.UPDATE_WORKFLOW,
+            wf,
+            f"Updated workflow '{wf.name}'",
+            old_value=old_value,
+            new_value=new_value,
+            company_id=wf.company_id,
+        )
+
+        return self._to_read(wf)
+
+    def deactivate_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot deactivate workflow definitions",
+            )
+
+        wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
+
+        old_value = {"is_active": wf.is_active}
+        wf.is_active = False
+        wf.updated_at = datetime.utcnow()
+        self.session.commit()
+        self.session.refresh(wf)
+
+        self._log_audit(
+            AuditAction.DELETE_WORKFLOW,
+            wf,
+            f"Deactivated workflow '{wf.name}'",
+            old_value=old_value,
+            new_value={"is_active": False},
+            company_id=wf.company_id,
+        )
+
+        return self._to_read(wf)
+
+    def activate_definition(self, definition_id: int, current_user: User) -> WorkflowDefinitionRead:
+        if self._is_superadmin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot activate workflow definitions",
+            )
+
+        wf = self._get_or_404(definition_id)
+        self._check_company_access(wf, current_user)
+
+        old_value = {"is_active": wf.is_active}
+        wf.is_active = True
+        wf.updated_at = datetime.utcnow()
+        self.session.commit()
+        self.session.refresh(wf)
+
+        self._log_audit(
+            AuditAction.ACTIVATE_WORKFLOW,
+            wf,
+            f"Activated workflow '{wf.name}'",
+            old_value=old_value,
+            new_value={"is_active": True},
+            company_id=wf.company_id,
+        )
+
+        return self._to_read(wf)

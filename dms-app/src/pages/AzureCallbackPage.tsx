@@ -17,12 +17,13 @@ export default function AzureCallbackPage() {
     const authError = searchParams.get('error')
 
     if (authError) {
-      setError(decodeURIComponent(authError))
+      const message = decodeURIComponent(authError)
+      Promise.resolve().then(() => setError(message))
       return
     }
 
     if (!accessToken || !refreshToken) {
-      setError('Missing authentication tokens')
+      Promise.resolve().then(() => setError('Missing authentication tokens'))
       return
     }
 
@@ -32,7 +33,11 @@ export default function AzureCallbackPage() {
         const user = await authApi.me()
         setUser(user)
         toast.success(`Welcome, ${user.full_name.split(' ')[0]}!`)
-        navigate('/dashboard', { replace: true })
+        if (user.must_change_password) {
+          navigate('/force-change-password', { replace: true })
+        } else {
+          navigate('/dashboard', { replace: true })
+        }
       } catch {
         setError('Failed to load user profile')
       }

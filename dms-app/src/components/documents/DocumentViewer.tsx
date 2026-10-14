@@ -17,7 +17,7 @@ interface Props {
   onClose: () => void
 }
 
-type ToolMode = 'pen' | 'eraser'
+type ToolMode = 'select' | 'pen' | 'eraser'
 
 interface StrokeDraft {
   localId: string
@@ -105,7 +105,7 @@ export default function DocumentViewer({ doc, onClose }: Props) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [tool, setTool] = useState<ToolMode>('pen')
+  const [tool, setTool] = useState<ToolMode>('select')
   const [color, setColor] = useState(DEFAULT_COLORS[1])
   const [thickness, setThickness] = useState(4)
   const [strokes, setStrokes] = useState<StrokeDraft[]>([])
@@ -122,13 +122,16 @@ export default function DocumentViewer({ doc, onClose }: Props) {
 
   useEffect(() => {
     if (!doc) {
-      setWorkspace(null)
-      setBlobUrl(null)
-      setTool('pen')
-      setStrokes([])
-      setUndoStack([])
-      setRedoStack([])
-      setActiveStroke(null)
+      Promise.resolve()
+        .then(() => {
+          setWorkspace(null)
+          setBlobUrl(null)
+          setTool('select')
+          setStrokes([])
+          setUndoStack([])
+          setRedoStack([])
+          setActiveStroke(null)
+        })
       strokesRef.current = []
       activeStrokeRef.current = null
       eraserSnapshotRef.current = null
@@ -137,22 +140,20 @@ export default function DocumentViewer({ doc, onClose }: Props) {
     }
 
     let alive = true
-    setLoading(true)
-    setWorkspace(null)
-    setBlobUrl(null)
-    setTool('pen')
-    setStrokes([])
-    setUndoStack([])
-    setRedoStack([])
-    setActiveStroke(null)
-    strokesRef.current = []
-    activeStrokeRef.current = null
-    eraserSnapshotRef.current = null
-    eraserChangedRef.current = false
-
-    documentsApi.getWorkspace(doc.id)
+    Promise.resolve()
+      .then(() => {
+        setLoading(true)
+        setWorkspace(null)
+        setBlobUrl(null)
+        setTool('select')
+        setStrokes([])
+        setUndoStack([])
+        setRedoStack([])
+        setActiveStroke(null)
+        return documentsApi.getWorkspace(doc.id)
+      })
       .then((data) => {
-        if (!alive) return
+        if (!alive || !data) return
         setWorkspace(data)
         const loaded: StrokeDraft[] = []
         for (const annotation of data.annotations) {
@@ -180,6 +181,11 @@ export default function DocumentViewer({ doc, onClose }: Props) {
       .finally(() => {
         if (alive) setLoading(false)
       })
+
+    strokesRef.current = []
+    activeStrokeRef.current = null
+    eraserSnapshotRef.current = null
+    eraserChangedRef.current = false
 
     return () => {
       alive = false
@@ -463,6 +469,12 @@ export default function DocumentViewer({ doc, onClose }: Props) {
 
         <div style={styles.toolbar}>
           <div style={styles.toolbarGroup}>
+            <button
+              onClick={() => setTool('select')}
+              style={tool === 'select' ? styles.activeToggle : styles.toggle}
+            >
+              Select
+            </button>
             <button
               onClick={() => setTool('pen')}
               style={tool === 'pen' ? styles.activeToggle : styles.toggle}

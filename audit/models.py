@@ -27,6 +27,8 @@ class AuditAction(str, Enum):
     REMOVE_ROLE = "remove_role"
     ASSIGN_USER_LEVEL = "assign_user_level"
     REMOVE_USER_LEVEL = "remove_user_level"
+    GRANT_DIRECTORY_ACCESS = "grant_directory_access"
+    REVOKE_DIRECTORY_ACCESS = "revoke_directory_access"
 
     # Document Management
     UPLOAD_DOCUMENT = "upload_document"
@@ -58,6 +60,48 @@ class AuditAction(str, Enum):
     # Security
     UNAUTHORIZED_ACCESS = "unauthorized_access"
     PERMISSION_DENIED = "permission_denied"
+    PASSWORD_RESET = "password_reset"
+
+    # Workflow
+    CREATE_WORKFLOW = "create_workflow"
+    UPDATE_WORKFLOW = "update_workflow"
+    DELETE_WORKFLOW = "delete_workflow"
+    ACTIVATE_WORKFLOW = "activate_workflow"
+    SUBMIT_WORKFLOW = "submit_workflow"
+    APPROVE_WORKFLOW = "approve_workflow"
+    REJECT_WORKFLOW = "reject_workflow"
+    RETURN_WORKFLOW = "return_workflow"
+    CANCEL_WORKFLOW = "cancel_workflow"
+
+    # Memos
+    CREATE_MEMO = "create_memo"
+    UPDATE_MEMO = "update_memo"
+    SUBMIT_MEMO = "submit_memo"
+    DOWNLOAD_FINAL_DRAFT = "download_final_draft"
+
+    # Notifications
+    EMAIL_SENT = "email_sent"
+    EMAIL_FAILED = "email_failed"
+
+    # Company Profile
+    CREATE_COMPANY = "create_company"
+    UPDATE_COMPANY = "update_company"
+    ACTIVATE_COMPANY = "activate_company"
+    DEACTIVATE_COMPANY = "deactivate_company"
+
+    # Correspondence
+    CREATE_CORRESPONDENCE = "create_correspondence"
+    UPDATE_CORRESPONDENCE = "update_correspondence"
+    SUBMIT_CORRESPONDENCE = "submit_correspondence"
+    ASSIGN_CORRESPONDENCE = "assign_correspondence"
+    FORWARD_CORRESPONDENCE = "forward_correspondence"
+    DISPATCH_CORRESPONDENCE = "dispatch_correspondence"
+    DELIVER_CORRESPONDENCE = "deliver_correspondence"
+    ACKNOWLEDGE_CORRESPONDENCE = "acknowledge_correspondence"
+    DOWNLOAD_CORRESPONDENCE = "download_correspondence"
+    DOWNLOAD_FINAL_CORRESPONDENCE = "download_final_correspondence"
+    COMPLETE_CORRESPONDENCE = "complete_correspondence"
+    ARCHIVE_CORRESPONDENCE = "archive_correspondence"
 
 
 class AuditModule(str, Enum):
@@ -68,6 +112,9 @@ class AuditModule(str, Enum):
     CATEGORIES = "categories"
     USER_LEVELS = "user_levels"
     SECURITY = "security"
+    WORKFLOW = "workflow"
+    COMPANIES = "companies"
+    CORRESPONDENCE = "correspondence"
 
 
 # ──────────────────────────────────────────────
@@ -79,6 +126,7 @@ class AuditLog(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     timestamp: datetime = Field(default_factory=datetime.utcnow, index=True)
+    company_id: Optional[int] = Field(default=None, foreign_key="companies.id", index=True)
     user_id: Optional[int] = Field(default=None, index=True)
     username: Optional[str] = Field(default=None, max_length=255)
     full_name: Optional[str] = Field(default=None, max_length=150)
@@ -113,6 +161,7 @@ class AuditLog(SQLModel, table=True):
 class AuditLogRead(SQLModel):
     id: int
     timestamp: datetime
+    company_id: Optional[int] = None
     user_id: Optional[int] = None
     username: Optional[str] = None
     full_name: Optional[str] = None

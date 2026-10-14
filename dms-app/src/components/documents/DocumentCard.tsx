@@ -61,7 +61,6 @@ const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }>
 export default function DocumentCard({ doc, onView, onRefresh, selectable, selected, onSelect }: Props) {
   const { canUpdate, canDelete, canDownload, isAdmin } = usePermissions()
   const [menuOpen, setMenuOpen]   = useState(false)
-  const [loading, setLoading]     = useState(false)
 
   const statusStyle = STATUS_STYLE[doc.status] ?? STATUS_STYLE.active
   const fileIcon    = FILE_ICONS[doc.file_type]
@@ -69,12 +68,9 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
 
   const handleDownload = async () => {
     try {
-      setLoading(true)
       await documentsApi.download(doc.id, doc.file_name)
     } catch (err) {
       toast.error(getErrorMessage(err))
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -121,11 +117,19 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
       display: 'flex',
       flexDirection: 'column',
       gap: '0.75rem',
-      transition: 'box-shadow 150ms',
+      transition: 'box-shadow 150ms, border-color 150ms',
       position: 'relative',
+      cursor: 'pointer',
     }}
-      onMouseEnter={(e) => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
-      onMouseLeave={(e) => (e.currentTarget.style.boxShadow = 'none')}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+        e.currentTarget.style.borderColor = 'var(--border-soft)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = 'none'
+        e.currentTarget.style.borderColor = 'var(--border)'
+      }}
+      onClick={() => onView(doc)}
     >
       {/* Top row — icon + title + menu */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
@@ -160,7 +164,7 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
         {/* Actions menu */}
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
-            onClick={() => setMenuOpen(!menuOpen)}
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen) }}
             style={{ width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', border: 'none', backgroundColor: menuOpen ? 'var(--surface-2)' : 'transparent', cursor: 'pointer', color: 'var(--text-tertiary)' }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
@@ -168,8 +172,8 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
 
           {menuOpen && (
             <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setMenuOpen(false)} />
-              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', width: '170px', backgroundColor: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.1)', zIndex: 50, padding: '0.3rem', overflow: 'hidden' }}>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 40, cursor: 'default' }} onClick={(e) => { e.stopPropagation(); setMenuOpen(false) }} />
+              <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', width: '170px', backgroundColor: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)', boxShadow: '0 8px 24px rgba(0,0,0,0.1)', zIndex: 50, padding: '0.3rem', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
                 <MenuItem icon="eye"      label="Preview"  onClick={() => { setMenuOpen(false); onView(doc) }} />
                 {canDownload && <MenuItem icon="download"  label="Download" onClick={() => { setMenuOpen(false); handleDownload() }} />}
                 {canUpdate && doc.status === 'active'   && <MenuItem icon="archive"  label="Archive"  onClick={handleArchive} />}
@@ -211,7 +215,7 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
   )
 }
 
-function MenuItem({ icon, label, onClick, danger }: { icon: string; label: string; onClick: () => void; danger?: boolean }) {
+function MenuItem({ icon, label, onClick, danger, disabled }: { icon: string; label: string; onClick: () => void; danger?: boolean; disabled?: boolean }) {
   const icons: Record<string, React.ReactNode> = {
     eye:      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
     download: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
@@ -220,7 +224,7 @@ function MenuItem({ icon, label, onClick, danger }: { icon: string; label: strin
     trash:    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>,
   }
   return (
-    <button onClick={onClick} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', border: 'none', borderRadius: '7px', backgroundColor: 'transparent', cursor: 'pointer', fontSize: '0.83rem', fontWeight: 500, color: danger ? '#dc2626' : 'var(--text-secondary)', textAlign: 'left', fontFamily: 'inherit' }}>
+    <button onClick={onClick} disabled={disabled} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 8px', border: 'none', borderRadius: '7px', backgroundColor: 'transparent', cursor: disabled ? 'default' : 'pointer', fontSize: '0.83rem', fontWeight: 500, color: danger ? '#dc2626' : disabled ? 'var(--text-muted)' : 'var(--text-secondary)', textAlign: 'left', fontFamily: 'inherit', opacity: disabled ? 0.6 : 1 }}>
       {icons[icon]}{label}
     </button>
   )

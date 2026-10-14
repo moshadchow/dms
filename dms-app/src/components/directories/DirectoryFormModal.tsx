@@ -22,14 +22,17 @@ export default function DirectoryFormModal({
   const [error, setError]       = useState('')
 
   useEffect(() => {
-    if (editing) {
-      setName(editing.name)
-      setDesc(editing.description ?? '')
-    } else {
-      setName('')
-      setDesc('')
-    }
-    setError('')
+    Promise.resolve()
+      .then(() => {
+        if (editing) {
+          setName(editing.name)
+          setDesc(editing.description ?? '')
+        } else {
+          setName('')
+          setDesc('')
+        }
+        setError('')
+      })
   }, [editing, isOpen])
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -26,6 +26,8 @@ from documents.models import (
 from documents.pdf_annotations import export_annotated_pdf
 from documents.utils import build_variant_storage_path, copy_into_storage, extract_docx_preview_html, extract_xlsx_preview_html, resolve_storage_path
 from users.models import User
+from company_profile.models import Company
+from categories.models import Category
 
 
 class DocumentVariantService:
@@ -87,9 +89,11 @@ class DocumentVariantService:
         return variant
 
     def _build_preview_html(self, document: Document) -> tuple[Optional[str], Optional[str]]:
+        # Determine company from document's directory -> category -> company
+        company = document.directory.category.company
         if document.file_type == FileType.DOCX:
             try:
-                return extract_docx_preview_html(resolve_storage_path(document.storage_path)), None
+                return extract_docx_preview_html(resolve_storage_path(document.storage_path, company)), None
             except Exception as exc:
                 if isinstance(exc, HTTPException):
                     return None, str(exc.detail)
@@ -97,7 +101,7 @@ class DocumentVariantService:
 
         if document.file_type == FileType.EXCEL:
             try:
-                return extract_xlsx_preview_html(resolve_storage_path(document.storage_path)), None
+                return extract_xlsx_preview_html(resolve_storage_path(document.storage_path, company)), None
             except Exception as exc:
                 if isinstance(exc, HTTPException):
                     return None, str(exc.detail)
@@ -218,12 +222,21 @@ class DocumentVariantService:
             self.session.add(variant)
             self.session.flush()
 
+        # Get company from current user
+        company = current_user.company
+        if not company:
+            raise HTTPException(
+                status_code=400,
+                detail="User must belong to a company to create document variants"
+            )
+
         storage_path = build_variant_storage_path(
             directory.category_id,
             document.directory_id,
             current_user.id,
             variant.id,
             document.file_name,
+            company,
         )
 
         try:
@@ -266,9 +279,10 @@ class DocumentVariantService:
                 )
 
             self.session.flush()
-            source_path = resolve_storage_path(document.storage_path)
-            storage_root = Path(settings.STORAGE_ROOT).resolve()
-            variant_path = (storage_root / storage_path).resolve()
+            source_path = resolve_storage_path(document.storage_path, company)
+            # Use company-aware storage path resolution for variant
+            from core.storage import storage_service
+            variant_path = (storage_service.get_company_root(company) / storage_path).resolve()
             if document.file_type == FileType.PDF:
                 exported_size = export_annotated_pdf(
                     source_path,
@@ -278,7 +292,7 @@ class DocumentVariantService:
                     ).all(),
                 )
             else:
-                exported_size = copy_into_storage(document.storage_path, storage_path)
+                exported_size = copy_into_storage(document.storage_path, storage_path, company)
 
             variant.file_size = exported_size
             self.session.commit()
@@ -286,7 +300,7 @@ class DocumentVariantService:
         except Exception:
             self.session.rollback()
             try:
-                path = resolve_storage_path(storage_path)
+                path = resolve_storage_path(storage_path, company)
                 path.unlink(missing_ok=True)
             except Exception:
                 pass
@@ -300,5 +314,13 @@ class DocumentVariantService:
 
     def get_variant_file_path(self, variant_id: int, current_user: User):
         variant = self._get_owned_variant(variant_id, current_user)
-        abs_path = resolve_storage_path(variant.storage_path)
+        # Determine company from variant's directory -> category -> company
+        directory = self.session.get(Directory, variant.directory_id)
+        if not directory:
+            raise HTTPException(status_code=404, detail="Directory not found")
+        category = self.session.get(Category, directory.category_id)
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+        company = self.session.get(Company, category.company_id) if category.company_id else None
+        abs_path = resolve_storage_path(variant.storage_path, company)
         return abs_path, self._to_variant_read(variant)

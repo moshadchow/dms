@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080    #  7 days
 
     # ── File Storage ──────────────────────────
-    STORAGE_ROOT:      str = "storage/uploads"
+    STORAGE_ROOT:      str = "storage"
     MAX_FILE_SIZE_MB:  int = 50
     ALLOWED_MIME_TYPES: List[str] = [
         "application/pdf",
@@ -32,21 +32,21 @@ class Settings(BaseSettings):
     ]
 
     # ── Azure AD (Microsoft Entra ID) ─────────
-    AZURE_CLIENT_ID:     str = ""
-    AZURE_CLIENT_SECRET: str = ""
-    AZURE_TENANT_ID:     str = ""
+    # Tenant/client credentials are NOT configured here: Azure AD is
+    # company-scoped and stored on the `companies` table (see
+    # company_profile/, configured via /api/v1/companies/{id}/azure-config).
+    # Only this deployment's own callback URL and frontend origin remain env-configurable.
     AZURE_REDIRECT_URI:  str = "http://localhost:8000/api/v1/auth/azure/callback"
-    AZURE_SCOPES:        List[str] = ["openid", "profile", "email"]
-    AZURE_DEFAULT_ROLE_NAME: str = "auditor"  # role assigned to JIT-provisioned users
     FRONTEND_URL: str = "http://localhost:5173"
 
-    @property
-    def AZURE_AUTHORITY(self) -> str:
-        return f"https://login.microsoftonline.com/{self.AZURE_TENANT_ID}"
-
-    @property
-    def AZURE_ENABLED(self) -> bool:
-        return bool(self.AZURE_CLIENT_ID and self.AZURE_CLIENT_SECRET and self.AZURE_TENANT_ID)
+    # ── SMTP / Email ──────────────────────────
+    SMTP_HOST:       str  = ""
+    SMTP_PORT:       int  = 587
+    SMTP_USERNAME:   str  = ""
+    SMTP_PASSWORD:   str  = ""
+    SMTP_FROM_EMAIL: str  = ""
+    SMTP_USE_TLS:    bool = True
+    SMTP_FROM_NAME:  str  = "DMS"
 
     # ── CORS ──────────────────────────────────
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
@@ -55,6 +55,10 @@ class Settings(BaseSettings):
         env_file        = ".env"
         env_file_encoding = "utf-8"
         case_sensitive  = False
+        # Unknown env vars (e.g. stale Azure AD credential vars left in an
+        # existing .env after the move to company-scoped config) must be
+        # ignored, not fatal — otherwise old deployments would not boot.
+        extra           = "ignore"
 
 
 @lru_cache()
