@@ -77,6 +77,9 @@ class DirectoryRead(DirectoryBase):
     created_by:  int
     created_at:  datetime
     updated_at:  datetime
+    # True when the caller may traverse but not manage this directory
+    # (ancestor of a granted subtree, no direct grant/category access).
+    navigation_only: bool = False
 
     model_config = {"from_attributes": True}
 

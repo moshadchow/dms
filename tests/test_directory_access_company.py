@@ -193,3 +193,73 @@ def test_directory_grant_does_not_leak_across_companies(
         ).status_code
         == 404
     )
+
+
+def test_cross_company_navigation_stays_denied(client, seeded_data, auth_headers):
+    test_client, engine, _ = client
+    other_admin = auth_headers["other_admin"]
+
+    # OTHERCO: child directory under the Marketing root, granted to a maker.
+    child = test_client.post(
+        "/api/v1/directories",
+        json={
+            "name": "Campaigns",
+            "category_id": seeded_data["marketing_category_id"],
+            "parent_id": seeded_data["marketing_directory_id"],
+        },
+        headers=other_admin,
+    )
+    assert child.status_code == 201, child.text
+    child_id = child.json()["id"]
+
+    with Session(engine) as session:
+        maker_role_id = session.exec(
+            select(Role.id).where(Role.name == RoleName.MAKER)
+        ).first()
+        neighbor = User(
+            full_name="Neighbor Maker",
+            email="neighbor_maker@example.com",
+            hashed_password=hash_password("Maker@1234"),
+            is_active=True,
+            company_id=seeded_data["other_company_id"],
+        )
+        session.add(neighbor)
+        session.flush()
+        neighbor_id = neighbor.id
+        session.add(UserRoleLink(user_id=neighbor_id, role_id=maker_role_id))
+        session.commit()
+    neighbor_headers = _headers(neighbor_id)
+
+    grant = test_client.put(
+        f"/api/v1/users/{neighbor_id}/directory-access",
+        json={"directory_ids": [child_id]},
+        headers=other_admin,
+    )
+    assert grant.status_code == 200
+
+    # Control: navigating their own company's parent works (navigation only).
+    own_parent = test_client.get(
+        f"/api/v1/directories/{seeded_data['marketing_directory_id']}",
+        headers=neighbor_headers,
+    )
+    assert own_parent.status_code == 200
+    assert own_parent.json()["navigation_only"] is True
+    assert (
+        test_client.get(
+            f"/api/v1/categories/{seeded_data['marketing_category_id']}",
+            headers=neighbor_headers,
+        ).status_code
+        == 200
+    )
+
+    # TESTCO directories/categories are not navigable, even as ancestors.
+    cross_dir = test_client.get(
+        f"/api/v1/directories/{seeded_data['finance_directory_id']}",
+        headers=neighbor_headers,
+    )
+    assert cross_dir.status_code == 404
+    cross_cat = test_client.get(
+        f"/api/v1/categories/{seeded_data['finance_category_id']}",
+        headers=neighbor_headers,
+    )
+    assert cross_cat.status_code == 404

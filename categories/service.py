@@ -8,7 +8,7 @@ from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from categories.models import Category, CategoryCreate, CategoryReadWithStats, CategoryUpdate
 from core.access import (
-    ensure_category_access,
+    ensure_category_read_access,
     get_effective_directory_ids,
     get_user_category_ids,
     get_user_directory_grant_ids,
@@ -66,6 +66,14 @@ class CategoryService:
         )
         result = []
         for cat in categories:
+            access_type = "full"
+            granted_directory_ids: list = []
+            if not current_user.is_admin() and cat.id not in granted_category_ids:
+                access_type = "partial"
+                granted_directory_ids = sorted(
+                    get_effective_directory_ids(self.session, current_user, cat.id)
+                )
+
             dir_count_query = select(func.count(Directory.id)).where(Directory.category_id == cat.id)
             doc_count_query = (
                 select(func.count(Document.id))
@@ -76,15 +84,25 @@ class CategoryService:
                 )
             )
 
-            dir_count = self.session.exec(dir_count_query).one()
-            doc_count = self.session.exec(doc_count_query).one()
-            access_type = "full"
-            granted_directory_ids: list = []
-            if not current_user.is_admin() and cat.id not in granted_category_ids:
-                access_type = "partial"
-                granted_directory_ids = sorted(
-                    get_effective_directory_ids(self.session, current_user, cat.id)
-                )
+            if access_type == "partial":
+                # Never count content the user cannot open: scope stats to
+                # the granted subtrees (navigation-only ancestors excluded).
+                if not granted_directory_ids:
+                    dir_count = 0
+                    doc_count = 0
+                else:
+                    dir_count_query = dir_count_query.where(
+                        Directory.id.in_(granted_directory_ids)
+                    )
+                    doc_count_query = doc_count_query.where(
+                        Directory.id.in_(granted_directory_ids)
+                    )
+                    dir_count = self.session.exec(dir_count_query).one()
+                    doc_count = self.session.exec(doc_count_query).one()
+            else:
+                dir_count = self.session.exec(dir_count_query).one()
+                doc_count = self.session.exec(doc_count_query).one()
+
             item = CategoryReadWithStats(
                 **cat.model_dump(),
                 directory_count=dir_count,
@@ -96,7 +114,9 @@ class CategoryService:
         return result
 
     def get_category(self, category_id: int, current_user: User) -> Category:
-        return ensure_category_access(self.session, current_user, category_id)
+        # Read-only: directory-grant users may fetch metadata for a category
+        # that holds one of their granted directories (page headers).
+        return ensure_category_read_access(self.session, current_user, category_id)
 
     def create_category(self, data: CategoryCreate, current_user: User) -> Category:
         if current_user.company_id is None:

@@ -7,13 +7,21 @@ from sqlmodel import Session, select
 from core.access import (
     ensure_category_access,
     ensure_directory_access,
+    ensure_directory_read_access,
     get_effective_directory_ids,
     get_user_category_ids,
     get_user_directory_grant_ids,
+    has_directory_content_access,
 )
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
-from directories.models import Directory, DirectoryCreate, DirectoryNode, DirectoryUpdate
+from directories.models import (
+    Directory,
+    DirectoryCreate,
+    DirectoryNode,
+    DirectoryRead,
+    DirectoryUpdate,
+)
 from documents.models import Document, DocumentStatus
 from users.models import User
 
@@ -26,10 +34,17 @@ class DirectoryService:
     # Queries
     # ──────────────────────────────────────────
 
-    def get_directory(self, directory_id: int, current_user: User) -> Directory:
-        return ensure_directory_access(self.session, current_user, directory_id)
+    def get_directory(self, directory_id: int, current_user: User) -> DirectoryRead:
+        """Read access: direct, or navigation via an accessible descendant."""
+        directory = ensure_directory_read_access(self.session, current_user, directory_id)
+        return DirectoryRead(
+            **directory.model_dump(),
+            navigation_only=not has_directory_content_access(
+                self.session, current_user, directory
+            ),
+        )
 
-    def list_by_category(self, category_id: int, current_user: User) -> List[Directory]:
+    def list_by_category(self, category_id: int, current_user: User) -> List[DirectoryRead]:
         """Return root-level directories (parent_id IS NULL) for a category.
 
         Partial-access users see only granted roots (or roots that are
@@ -37,16 +52,15 @@ class DirectoryService:
         """
         try:
             ensure_category_access(self.session, current_user, category_id)
-            return list(
-                self.session.exec(
-                    select(Directory)
-                    .where(
-                        Directory.category_id == category_id,
-                        Directory.parent_id == None,  # noqa: E711
-                    )
-                    .order_by(Directory.name)
-                ).all()
-            )
+            roots = self.session.exec(
+                select(Directory)
+                .where(
+                    Directory.category_id == category_id,
+                    Directory.parent_id == None,  # noqa: E711
+                )
+                .order_by(Directory.name)
+            ).all()
+            return [DirectoryRead(**d.model_dump()) for d in roots]
         except HTTPException:
             if current_user.is_admin():
                 raise
@@ -61,7 +75,11 @@ class DirectoryService:
         visible_roots = [
             d for d in all_dirs if d.parent_id is None and self._subtree_has(d, all_dirs, effective)
         ]
-        return sorted(visible_roots, key=lambda d: d.name)
+        visible_roots = sorted(visible_roots, key=lambda d: d.name)
+        return [
+            DirectoryRead(**d.model_dump(), navigation_only=d.id not in effective)
+            for d in visible_roots
+        ]
 
     def get_tree(self, category_id: int, current_user: User) -> List[DirectoryNode]:
         """Return the nested directory tree for a category.
@@ -114,6 +132,7 @@ class DirectoryService:
             if d.parent_id == parent_id and self._subtree_has(d, all_dirs, effective):
                 node = DirectoryNode(
                     **d.model_dump(),
+                    navigation_only=d.id not in effective,
                     children=self._build_pruned_tree(all_dirs, parent_id=d.id, effective=effective),
                 )
                 nodes.append(node)
@@ -227,7 +246,7 @@ class DirectoryService:
         return directory
 
     def update_directory(self, directory_id: int, data: DirectoryUpdate, current_user: User) -> Directory:
-        directory = self.get_directory(directory_id, current_user)
+        directory = ensure_directory_access(self.session, current_user, directory_id)
         old_values = {"name": directory.name}
         updates = data.model_dump(exclude_unset=True)
         for field, value in updates.items():
@@ -254,7 +273,7 @@ class DirectoryService:
         return directory
 
     def delete_directory(self, directory_id: int, current_user: User) -> None:
-        directory = self.get_directory(directory_id, current_user)
+        directory = ensure_directory_access(self.session, current_user, directory_id)
 
         # Block delete if subdirectories exist
         children = self.session.exec(

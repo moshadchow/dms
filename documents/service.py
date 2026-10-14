@@ -9,7 +9,9 @@ from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from core.access import (
     ensure_category_access,
+    ensure_category_read_access,
     ensure_directory_access,
+    ensure_directory_read_access,
     ensure_document_access,
     ensure_document_user_level_access,
     expand_descendant_ids,
@@ -159,9 +161,11 @@ class DocumentService:
                 )
 
             if directory_id is not None:
-                ensure_directory_access(self.session, current_user, directory_id)
+                # Navigation through an ancestor directory is allowed; the
+                # access_filters above still scope results to authorized rows.
+                ensure_directory_read_access(self.session, current_user, directory_id)
             if category_id is not None:
-                ensure_category_access(self.session, current_user, category_id)
+                ensure_category_read_access(self.session, current_user, category_id)
 
         # User Level visibility filtering for non-admins
         if not current_user.is_admin():

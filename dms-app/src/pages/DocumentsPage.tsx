@@ -30,6 +30,7 @@ export default function DocumentsPage() {
   // ── Page state ────────────────────────────────────────────────
   const [resolvedCategoryId, setResolvedCategoryId] = useState<number | null>(null)
   const [resolvedDirId, setResolvedDirId]           = useState<number | null>(null)
+  const [navOnly, setNavOnly]                       = useState(false)
   const [category, setCategory]     = useState<Category | null>(null)
   const [tree, setTree]             = useState<DirectoryNode[]>([])
   const [loading, setLoading]       = useState(true)
@@ -72,6 +73,7 @@ export default function DocumentsPage() {
           const cat   = await categoriesApi.get(catId)
           setCategory(cat)
           setResolvedCategoryId(catId)
+          setNavOnly(false)
           setSelectedCategory(catId)
         } else {
           const dir = await directoriesApi.get(parseInt(directoryId))
@@ -79,6 +81,7 @@ export default function DocumentsPage() {
           setCategory(cat)
           setResolvedCategoryId(dir.category_id)
           setResolvedDirId(dir.id)
+          setNavOnly(dir.navigation_only ?? false)
           setSelectedCategory(dir.category_id)
           setSelectedDirectory(dir.id)
         }
@@ -100,6 +103,7 @@ export default function DocumentsPage() {
         setLoading(true)
         setResolvedCategoryId(null)
         setResolvedDirId(null)
+        setNavOnly(false)
         setTree([])
         setDocData(null)
         return run()
@@ -261,12 +265,19 @@ export default function DocumentsPage() {
               {/* Document panel header */}
               <div style={{ padding: '0.875rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', flexShrink: 0 }}>
                 <div>
-                  <p style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>Documents</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <p style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', margin: 0 }}>Documents</p>
+                    {navOnly && (
+                      <span style={{ fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-tertiary)', backgroundColor: 'var(--surface-2)', border: '1px solid var(--border-soft)', padding: '2px 8px', borderRadius: '999px' }}>
+                        View only
+                      </span>
+                    )}
+                  </div>
                   <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>
                     {docData ? `${docData.total} file${docData.total !== 1 ? 's' : ''}` : '…'}
                   </p>
                 </div>
-                {canCreate && (
+                {canCreate && !navOnly && (
                   <button
                     className="btn btn-primary"
                     onClick={() => setUploadOpen(true)}
@@ -359,9 +370,9 @@ export default function DocumentsPage() {
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                     <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>
-                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter ? 'No documents match your filters' : 'No documents yet'}
+                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter ? 'No documents match your filters' : navOnly ? 'Navigation folder — open a subfolder to view its documents' : 'No documents yet'}
                     </p>
-                    {canCreate && !search && !fileTypeFilter && (
+                    {canCreate && !navOnly && !search && !fileTypeFilter && (
                       <button
                         className="btn btn-primary"
                         onClick={() => setUploadOpen(true)}
