@@ -25,7 +25,13 @@ from core.config import settings
 from core.database import get_session
 from core.dependencies import CurrentUser
 from core.security import create_token_pair
-from users.models import AssignedCategoryRead, PermissionRead, RoleRead, UserRead
+from users.models import (
+    AssignedCategoryRead,
+    AssignedDirectoryRead,
+    PermissionRead,
+    RoleRead,
+    UserRead,
+)
 
 router = APIRouter()
 
@@ -132,6 +138,17 @@ def me(current_user: CurrentUser):
                 is_active=category.is_active,
             )
             for category in current_user.categories
+        ],
+        # Directory grants feed the frontend's canAccessCategory gate —
+        # omitting them sends grant-only users to /forbidden client-side.
+        directories=[
+            AssignedDirectoryRead(
+                id=directory.id,
+                name=directory.name,
+                category_id=directory.category_id,
+                parent_id=directory.parent_id,
+            )
+            for directory in current_user.directories
         ],
     )
 

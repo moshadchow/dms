@@ -357,3 +357,36 @@ def test_partial_category_counts_scoped_to_granted_subtree(
     # the seeded Finance Root doc stay out of the stats.
     assert finance["directory_count"] == 1
     assert finance["document_count"] == 1
+
+
+def test_auth_me_includes_directory_grants_for_frontend_gate(
+    client, seeded_data, auth_headers
+):
+    """GET /auth/me must carry directory grants.
+
+    The frontend's canAccessCategory gate reads user.directories; omitting
+    them sent grant-only users to /forbidden before any API call.
+    """
+    test_client, _, _ = client
+    medium = seeded_data["medium_level_id"]
+    t = _scenario(client, seeded_data, auth_headers, medium)
+
+    me = test_client.get("/api/v1/auth/me", headers=t["user_headers"])
+    assert me.status_code == 200
+    granted = {d["id"]: d for d in me.json()["directories"]}
+    assert t["assigned"] in granted
+    assert granted[t["assigned"]]["category_id"] == seeded_data["finance_category_id"]
+    # Sibling/parent are not grants — only the granted directory is listed.
+    assert t["sibling"] not in granted
+    assert t["parent"] not in granted
+
+
+def test_auth_me_directories_empty_without_grants(client, seeded_data, auth_headers):
+    test_client, engine, _ = client
+    admin = auth_headers["admin"]
+    medium = seeded_data["medium_level_id"]
+    _, uh = _create_user(client[0], engine, admin, "nograntme@example.com", medium)
+
+    me = test_client.get("/api/v1/auth/me", headers=uh)
+    assert me.status_code == 200
+    assert me.json()["directories"] == []
