@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckSquare, FolderLock, Search, ShieldCheck, Users } from 'lucide-react'
+import { CheckSquare, ChevronDown, ChevronRight, FolderLock, Search, ShieldCheck, Users } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import { categoriesApi } from '@/api/categories.api'
 import { getErrorMessage } from '@/api/client'
+import { directoriesApi } from '@/api/directories.api'
 import { usersApi } from '@/api/users.api'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -11,7 +12,21 @@ import Spinner from '@/components/ui/Spinner'
 import CompanyContextDropdown from '@/components/admin/CompanyContextDropdown'
 import { useAuthStore } from '@/store/authStore'
 import type { Category } from '@/types/category.types'
+import type { DirectoryNode } from '@/types/directory.types'
 import type { RoleName, User } from '@/types/user.types'
+
+function collectDescendantIds(nodes: DirectoryNode[], selected: Set<number>): Set<number> {
+  const inherited = new Set<number>()
+  const walk = (items: DirectoryNode[], ancestorSelected: boolean) => {
+    for (const node of items) {
+      const covered = ancestorSelected || selected.has(node.id)
+      if (ancestorSelected && !selected.has(node.id)) inherited.add(node.id)
+      walk(node.children ?? [], covered)
+    }
+  }
+  walk(nodes, false)
+  return inherited
+}
 
 interface Props {
   onUserUpdated?: () => void
@@ -28,6 +43,11 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([])
   const [originalCategoryIds, setOriginalCategoryIds] = useState<number[]>([])
+  const [selectedDirectoryIds, setSelectedDirectoryIds] = useState<number[]>([])
+  const [originalDirectoryIds, setOriginalDirectoryIds] = useState<number[]>([])
+  const [expandedCategoryIds, setExpandedCategoryIds] = useState<number[]>([])
+  const [trees, setTrees] = useState<Record<number, DirectoryNode[]>>({})
+  const [loadingTrees, setLoadingTrees] = useState<Record<number, boolean>>({})
   const [loadingUsers, setLoadingUsers] = useState(true)
   const [loadingCategories, setLoadingCategories] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -93,25 +113,76 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
     [selectedUserId, users]
   )
 
-  // Keep the category checkboxes in sync with the selected user (adjusted
-  // during render instead of an effect)
+  // Keep the category + directory checkboxes in sync with the selected user
+  // (adjusted during render instead of an effect)
   const [prevSelectedUser, setPrevSelectedUser] = useState(selectedUser)
   if (prevSelectedUser !== selectedUser) {
     setPrevSelectedUser(selectedUser)
     if (!selectedUser) {
       setSelectedCategoryIds([])
       setOriginalCategoryIds([])
+      setSelectedDirectoryIds([])
+      setOriginalDirectoryIds([])
     } else {
       const assignedIds = selectedUser.categories.map((category) => category.id).sort((a, b) => a - b)
       setSelectedCategoryIds(assignedIds)
       setOriginalCategoryIds(assignedIds)
+      const assignedDirIds = (selectedUser.directories ?? []).map((dir) => dir.id).sort((a, b) => a - b)
+      setSelectedDirectoryIds(assignedDirIds)
+      setOriginalDirectoryIds(assignedDirIds)
     }
   }
 
+  const loadTree = useCallback((categoryId: number) => {
+    setLoadingTrees((current) => ({ ...current, [categoryId]: true }))
+    Promise.resolve()
+      .then(() => directoriesApi.getTree(categoryId))
+      .then((nodes) => {
+        setTrees((current) => ({ ...current, [categoryId]: nodes }))
+      })
+      .catch((error) => {
+        toast.error(getErrorMessage(error))
+      })
+      .finally(() => {
+        setLoadingTrees((current) => ({ ...current, [categoryId]: false }))
+      })
+  }, [])
+
+  const toggleExpanded = (categoryId: number) => {
+    setExpandedCategoryIds((current) => {
+      const expanded = current.includes(categoryId)
+      if (!expanded && trees[categoryId] === undefined && !loadingTrees[categoryId]) {
+        loadTree(categoryId)
+      }
+      return expanded ? current.filter((id) => id !== categoryId) : [...current, categoryId]
+    })
+  }
+
+  const toggleDirectory = (directoryId: number) => {
+    setSelectedDirectoryIds((current) => {
+      const next = current.includes(directoryId)
+        ? current.filter((id) => id !== directoryId)
+        : [...current, directoryId]
+      return next.sort((a, b) => a - b)
+    })
+  }
+
+  const inheritedDirIds = useMemo(() => {
+    const all = new Set<number>()
+    for (const nodes of Object.values(trees)) {
+      for (const id of collectDescendantIds(nodes, new Set(selectedDirectoryIds))) {
+        all.add(id)
+      }
+    }
+    return all
+  }, [selectedDirectoryIds, trees])
+
   const isDirty = useMemo(() => {
     if (selectedCategoryIds.length !== originalCategoryIds.length) return true
-    return selectedCategoryIds.some((id, index) => id !== originalCategoryIds[index])
-  }, [originalCategoryIds, selectedCategoryIds])
+    if (selectedCategoryIds.some((id, index) => id !== originalCategoryIds[index])) return true
+    if (selectedDirectoryIds.length !== originalDirectoryIds.length) return true
+    return selectedDirectoryIds.some((id, index) => id !== originalDirectoryIds[index])
+  }, [originalCategoryIds, selectedCategoryIds, originalDirectoryIds, selectedDirectoryIds])
 
   const toggleCategory = (categoryId: number) => {
     setSelectedCategoryIds((current) => {
@@ -131,20 +202,26 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
       const updatedUser = await usersApi.update(selectedUser.id, {
         category_ids: selectedCategoryIds,
       })
+      await usersApi.setDirectoryAccess(selectedUser.id, selectedDirectoryIds)
+      // Re-read so the panel shows exactly what persisted.
+      const freshUser = await usersApi.get(selectedUser.id)
 
       setUsers((current) =>
-        current.map((user) => (user.id === updatedUser.id ? updatedUser : user))
+        current.map((user) => (user.id === freshUser.id ? freshUser : user))
       )
       const updatedIds = updatedUser.categories.map((category) => category.id).sort((a, b) => a - b)
       setSelectedCategoryIds(updatedIds)
       setOriginalCategoryIds(updatedIds)
+      const updatedDirIds = (freshUser.directories ?? []).map((dir) => dir.id).sort((a, b) => a - b)
+      setSelectedDirectoryIds(updatedDirIds)
+      setOriginalDirectoryIds(updatedDirIds)
 
-      if (authUser?.id === updatedUser.id) {
-        setAuthUser(updatedUser)
+      if (authUser?.id === freshUser.id) {
+        setAuthUser(freshUser)
       }
 
       onUserUpdated?.()
-      toast.success('Category permissions saved')
+      toast.success('Access permissions saved')
     } catch (error) {
       toast.error(getErrorMessage(error))
     } finally {
@@ -152,7 +229,50 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
     }
   }
 
+  const renderDirectoryNodes = (nodes: DirectoryNode[], depth: number) => (
+    <div>
+      {nodes.map((node) => {
+        const explicit = selectedDirectoryIds.includes(node.id)
+        const inherited = !explicit && inheritedDirIds.has(node.id)
+        return (
+          <div key={node.id}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.35rem 0.5rem',
+                paddingLeft: `${0.5 + depth * 1.1}rem`,
+                borderRadius: '0.5rem',
+                cursor: isSuperAdmin || inherited ? 'default' : 'pointer',
+                opacity: inherited ? 0.75 : 1,
+                fontSize: '0.78rem',
+                color: 'var(--text)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={explicit || inherited}
+                disabled={isSuperAdmin || inherited}
+                onChange={() => toggleDirectory(node.id)}
+              />
+              <span style={{ fontWeight: explicit ? 700 : 400 }}>{node.name}</span>
+              {inherited && (
+                <span style={{ ...metaPillStyle, backgroundColor: '#eef2ff', color: '#4338ca' }}>
+                  Inherited
+                </span>
+              )}
+            </label>
+            {(node.children ?? []).length > 0 &&
+              renderDirectoryNodes(node.children ?? [], depth + 1)}
+          </div>
+        )
+      })}
+    </div>
+  )
+
   const assignedCount = selectedCategoryIds.length
+  const assignedDirCount = selectedDirectoryIds.length
 
   const showEmptyState = isSuperAdmin && !selectedCompanyId
 
@@ -165,7 +285,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
               Category-wise user access
             </h3>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: '0.3rem 0 0' }}>
-              Select a user, assign the categories they can see, then save the full access map.
+              Select a user, assign whole categories or individual subdirectories, then save the full access map.
             </p>
           </div>
           {isSuperAdmin && (
@@ -266,7 +386,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginTop: '0.65rem', flexWrap: 'wrap' }}>
                       {primaryRole && <Badge variant="role" role={primaryRole} />}
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', fontWeight: 600 }}>
-                        {user.categories.length} categories assigned
+                        {user.categories.length} categories · {(user.directories ?? []).length} subdirs assigned
                       </span>
                     </div>
                   </button>
@@ -288,7 +408,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                     {selectedUser ? selectedUser.full_name : 'Choose a user'}
                   </p>
                   <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '0.15rem 0 0' }}>
-                    {selectedUser ? `${assignedCount} categories assigned` : 'Category assignment will appear here'}
+                    {selectedUser ? `${assignedCount} categories, ${assignedDirCount} subdirectories assigned` : 'Category assignment will appear here'}
                   </p>
                 </div>
               </div>
@@ -307,8 +427,8 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                   <Button
                     variant="secondary"
                     size="sm"
-                    disabled={!selectedUser || selectedCategoryIds.length === 0 || saving}
-                    onClick={() => setSelectedCategoryIds([])}
+                    disabled={!selectedUser || (selectedCategoryIds.length === 0 && selectedDirectoryIds.length === 0) || saving}
+                    onClick={() => { setSelectedCategoryIds([]); setSelectedDirectoryIds([]) }}
                   >
                     Clear all
                   </Button>
@@ -348,17 +468,28 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem' }}>
                   {categories.map((category) => {
                     const checked = selectedCategoryIds.includes(category.id)
+                    const expanded = expandedCategoryIds.includes(category.id)
+                    const tree = trees[category.id]
+                    const loadingTree = loadingTrees[category.id] ?? false
                     return (
-                      <button
+                      <div
                         key={category.id}
-                        type="button"
-                        onClick={() => !isSuperAdmin && toggleCategory(category.id)}
                         style={{
-                          textAlign: 'left',
-                          padding: '0.9rem',
                           borderRadius: '0.85rem',
                           border: `1.5px solid ${checked ? '#6366f1' : 'var(--border)'}`,
                           backgroundColor: checked ? 'var(--primary-soft)' : 'var(--surface)',
+                          overflow: 'hidden',
+                        }}
+                      >
+                      <button
+                        type="button"
+                        onClick={() => !isSuperAdmin && toggleCategory(category.id)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '0.9rem',
+                          border: 'none',
+                          backgroundColor: 'transparent',
                           cursor: isSuperAdmin ? 'default' : 'pointer',
                           fontFamily: 'inherit',
                         }}
@@ -403,6 +534,55 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                           )}
                         </div>
                       </button>
+                      <div style={{ borderTop: '1px solid var(--border)' }}>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(category.id)}
+                          style={{
+                            width: '100%',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem',
+                            padding: '0.55rem 0.9rem',
+                            border: 'none',
+                            backgroundColor: 'transparent',
+                            cursor: 'pointer',
+                            fontFamily: 'inherit',
+                            fontSize: '0.74rem',
+                            fontWeight: 600,
+                            color: 'var(--text-secondary)',
+                          }}
+                        >
+                          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          {checked
+                            ? 'Full access via category grant'
+                            : expanded ? 'Hide subdirectories' : 'Grant subdirectories'}
+                        </button>
+                        {expanded && (
+                          <div style={{ padding: '0 0.5rem 0.75rem' }}>
+                            {checked ? (
+                              <p style={{ margin: 0, padding: '0.35rem 0.5rem', fontSize: '0.74rem', color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
+                                This user already has the whole category tree, including every subdirectory below.
+                              </p>
+                            ) : loadingTree ? (
+                              <div style={{ display: 'flex', justifyContent: 'center', padding: '1rem 0' }}>
+                                <Spinner />
+                              </div>
+                            ) : tree === undefined ? (
+                              <p style={{ margin: 0, padding: '0.35rem 0.5rem', fontSize: '0.74rem', color: 'var(--text-tertiary)' }}>
+                                Loading…
+                              </p>
+                            ) : tree.length === 0 ? (
+                              <p style={{ margin: 0, padding: '0.35rem 0.5rem', fontSize: '0.74rem', color: 'var(--text-tertiary)' }}>
+                                No subdirectories yet.
+                              </p>
+                            ) : (
+                              renderDirectoryNodes(tree, 0)
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      </div>
                     )
                   })}
                 </div>
@@ -411,7 +591,7 @@ export default function CategoryPermissionPanel({ onUserUpdated }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                     <FolderLock size={15} color="#64748b" />
                     <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                      Only categories selected here should appear in the user dashboard and sidebar. Unassigned categories stay hidden and direct navigation should resolve to access denied.
+                      Only selected categories and granted subdirectories appear in the user dashboard and sidebar. A subdirectory grant covers that directory and everything below it — never sibling directories. Unassigned content stays hidden and direct navigation should resolve to access denied.
                     </p>
                   </div>
                 </div>

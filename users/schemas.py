@@ -193,6 +193,42 @@ class AssignRolesRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════
+# User — Directory Access Grants
+# ══════════════════════════════════════════════
+
+class GrantedDirectoryResponse(BaseModel):
+    """One explicit subdirectory grant held by a user."""
+
+    id:          int
+    name:        str
+    category_id: int
+    parent_id:   Optional[int] = None
+
+    model_config = {"from_attributes": True}
+
+
+class DirectoryAccessResponse(BaseModel):
+    """A user's effective access grants: whole-category + subdirectory grants."""
+
+    user_id:       int
+    category_ids:  List[int] = Field(default_factory=list)
+    directory_ids: List[int] = Field(default_factory=list)
+    directories:   List[GrantedDirectoryResponse] = Field(default_factory=list)
+
+
+class DirectoryAccessSetRequest(BaseModel):
+    """Body for PUT /users/{user_id}/directory-access — replaces all grants."""
+
+    directory_ids: List[int] = Field(default_factory=list)
+
+
+class DirectoryAccessAddRequest(BaseModel):
+    """Body for POST /users/{user_id}/directory-access — idempotent single add."""
+
+    directory_id: int
+
+
+# ══════════════════════════════════════════════
 # User — Admin Password Reset
 # ══════════════════════════════════════════════
 

@@ -64,7 +64,9 @@ export const useAuthStore = create<AuthState>()(
         const { user } = get()
         if (!user) return false
         if (user.roles.some((r) => r.name === 'admin' || r.name === 'superadmin')) return true
-        return user.categories.some((category) => category.id === categoryId)
+        if (user.categories.some((category) => category.id === categoryId)) return true
+        // Partial access: a directory grant makes the parent category visible.
+        return (user.directories ?? []).some((dir) => dir.category_id === categoryId)
       },
     }),
     {

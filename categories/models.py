@@ -69,3 +69,7 @@ class CategoryReadWithStats(CategoryRead):
     """Category with directory and document counts."""
     directory_count: int = 0
     document_count:  int = 0
+    # Subdirectory-level access: "full" = whole-tree category grant,
+    # "partial" = only specific directory subtrees granted.
+    access_type: str = "full"
+    granted_directory_ids: List[int] = []

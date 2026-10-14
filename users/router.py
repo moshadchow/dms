@@ -13,7 +13,12 @@ from users.models import (
     UserRead,
     UserUpdate,
 )
-from users.schemas import AdminPasswordResetRequest
+from users.schemas import (
+    AdminPasswordResetRequest,
+    DirectoryAccessAddRequest,
+    DirectoryAccessResponse,
+    DirectoryAccessSetRequest,
+)
 from users.service import UserService
 
 router = APIRouter()
@@ -125,6 +130,69 @@ def reset_password(
     """Generate a random password, hash it, email it to the user, and flag for change."""
     UserService(session).reset_password(user_id, current_admin_id=current_user.id)
     return {"message": "Password has been reset and sent to the user's email"}
+
+
+# ──────────────────────────────────────────────
+# Directory access grants (subdirectory-level)
+# ──────────────────────────────────────────────
+
+@router.get(
+    "/{user_id}/directory-access",
+    response_model=DirectoryAccessResponse,
+    summary="Get a user's category + directory access grants (Admin only)",
+)
+def get_directory_access(
+    user_id: int,
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return UserService(session).get_directory_access(user_id, current_user)
+
+
+@router.put(
+    "/{user_id}/directory-access",
+    response_model=DirectoryAccessResponse,
+    summary="Replace a user's directory access grants (Admin only)",
+)
+def set_directory_access(
+    user_id: int,
+    payload: DirectoryAccessSetRequest,
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return UserService(session).set_directory_access(
+        user_id, payload.directory_ids, current_user
+    )
+
+
+@router.post(
+    "/{user_id}/directory-access",
+    response_model=DirectoryAccessResponse,
+    summary="Grant one directory to a user, idempotent (Admin only)",
+)
+def add_directory_access(
+    user_id: int,
+    payload: DirectoryAccessAddRequest,
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    return UserService(session).add_directory_access(
+        user_id, payload.directory_id, current_user
+    )
+
+
+@router.delete(
+    "/{user_id}/directory-access/{directory_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Revoke one directory grant from a user (Admin only)",
+)
+def remove_directory_access(
+    user_id: int,
+    directory_id: int,
+    current_user: AdminUser = None,
+    session: Session = Depends(get_session),
+):
+    UserService(session).remove_directory_access(user_id, directory_id, current_user)
 
 
 # ──────────────────────────────────────────────

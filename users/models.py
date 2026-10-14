@@ -60,6 +60,18 @@ class UserCategoryLink(SQLModel, table=True):
     category_id: Optional[int] = Field(default=None, foreign_key="categories.id", primary_key=True)
 
 
+class UserDirectoryLink(SQLModel, table=True):
+    """Subdirectory-level grant: access to a directory and all its descendants.
+
+    Company is resolved via directory -> category -> company_id (no company_id
+    column here, mirroring Directory itself). Composite PK prevents duplicates.
+    """
+
+    __tablename__ = "user_directory_links"
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id", primary_key=True)
+    directory_id: Optional[int] = Field(default=None, foreign_key="directories.id", primary_key=True)
+
+
 # ──────────────────────────────────────────────
 # Permission
 # ──────────────────────────────────────────────
@@ -164,6 +176,10 @@ class User(UserBase, table=True):
         link_model=UserCategoryLink,
         sa_relationship_kwargs={"lazy": "selectin"},
     )
+    directories: List["Directory"] = Relationship(
+        link_model=UserDirectoryLink,
+        sa_relationship_kwargs={"lazy": "selectin"},
+    )
     user_level: Optional["UserLevel"] = Relationship(
         back_populates="users",
         sa_relationship_kwargs={"lazy": "selectin"},
@@ -195,6 +211,7 @@ def get_user_with_roles(session: Session, user_id: int) -> Optional["User"]:
         .options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
+            selectinload(User.directories),  # type: ignore[arg-type]
             selectinload(User.user_level),  # type: ignore[arg-type]
             selectinload(User.company),  # type: ignore[arg-type]
         )
@@ -232,6 +249,14 @@ class AssignedCategoryRead(SQLModel):
     model_config = {"from_attributes": True}
 
 
+class AssignedDirectoryRead(SQLModel):
+    id: int
+    name: str
+    category_id: int
+    parent_id: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+
 class UserRead(UserBase):
     id:                   int
     created_at:           datetime
@@ -240,6 +265,7 @@ class UserRead(UserBase):
     must_change_password: bool = False
     roles:                List[RoleRead] = []
     categories:           List[AssignedCategoryRead] = []
+    directories:          List[AssignedDirectoryRead] = []
     user_level:           Optional["UserLevelRead"] = None
     company:              Optional[CompanyRead] = None
     model_config = {"from_attributes": True}

@@ -12,6 +12,9 @@ from core.access import (
     ensure_directory_access,
     ensure_document_access,
     ensure_document_user_level_access,
+    expand_descendant_ids,
+    get_user_category_ids,
+    get_user_directory_grant_ids,
 )
 from directories.models import Directory
 from documents.models import (
@@ -23,7 +26,7 @@ from documents.models import (
     DocumentUserLevelLink,
 )
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
-from users.models import User, UserCategoryLink
+from users.models import User
 from user_levels.models import UserLevel
 from company_profile.models import Company
 from workflow.approval_policy import is_eligible_approver_reader
@@ -127,13 +130,33 @@ class DocumentService:
             if category_id is not None:
                 ensure_category_access(self.session, current_user, category_id)
         else:
-            query = query.join_from(Directory, Category).join(
-                UserCategoryLink,
-                UserCategoryLink.category_id == Directory.category_id,
-            ).where(
-                UserCategoryLink.user_id == current_user.id,
-                Category.is_active == True,
-            )
+            # Non-admin: category-granted categories OR granted directory
+            # subtrees (descendants included). Siblings stay excluded.
+            category_ids = get_user_category_ids(self.session, current_user.id)
+            grant_ids = get_user_directory_grant_ids(self.session, current_user.id)
+            effective_dir_ids: set = set()
+            if grant_ids:
+                all_dirs = list(self.session.exec(select(Directory)).all())
+                effective_dir_ids = expand_descendant_ids(all_dirs, set(grant_ids))
+            access_filters = []
+            if category_ids:
+                access_filters.append(Directory.category_id.in_(sorted(category_ids)))
+            if effective_dir_ids:
+                access_filters.append(Directory.id.in_(sorted(effective_dir_ids)))
+            if not access_filters:
+                # No grants at all: preserve the previous empty-result shape
+                # without emitting `IN ()` (invalid SQL on some backends).
+                query = query.where(Directory.id == -1)
+            elif len(access_filters) == 1:
+                query = query.join_from(Directory, Category).where(
+                    access_filters[0],
+                    Category.is_active == True,
+                )
+            else:
+                query = query.join_from(Directory, Category).where(
+                    (access_filters[0] | access_filters[1]),
+                    Category.is_active == True,
+                )
 
             if directory_id is not None:
                 ensure_directory_access(self.session, current_user, directory_id)

@@ -22,6 +22,20 @@ export interface AssignedCategory {
   is_active: boolean
 }
 
+export interface AssignedDirectory {
+  id: number
+  name: string
+  category_id: number
+  parent_id: number | null
+}
+
+export interface DirectoryAccess {
+  user_id: number
+  category_ids: number[]
+  directory_ids: number[]
+  directories: AssignedDirectory[]
+}
+
 export interface UserLevel {
   id: number
   name: string
@@ -56,6 +70,7 @@ export interface User {
   updated_at: string
   roles: Role[]
   categories: AssignedCategory[]
+  directories: AssignedDirectory[]
   user_level: UserLevel | null
   company: CompanySummary | null
 }

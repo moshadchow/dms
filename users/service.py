@@ -4,6 +4,7 @@ import string
 from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -12,9 +13,11 @@ from company_profile.models import Company, CompanyRead
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from core.security import hash_password
+from directories.models import Directory
 from user_levels.models import UserLevel, UserLevelRead
 from users.models import (
     AssignedCategoryRead,
+    AssignedDirectoryRead,
     Permission,
     PermissionAction,
     PermissionRead,
@@ -26,6 +29,7 @@ from users.models import (
     User,
     UserCategoryLink,
     UserCreate,
+    UserDirectoryLink,
     UserRead,
     UserRoleLink,
     UserUpdate,
@@ -72,6 +76,15 @@ def _user_to_read(user: User) -> UserRead:
             )
             for category in user.categories
         ],
+        directories=[
+            AssignedDirectoryRead(
+                id=directory.id,
+                name=directory.name,
+                category_id=directory.category_id,
+                parent_id=directory.parent_id,
+            )
+            for directory in (user.directories or [])
+        ],
         user_level=level_read,
         company=company_read,
     )
@@ -98,6 +111,7 @@ class UserService:
         query = select(User).options(
             selectinload(User.roles).selectinload(Role.permissions),  # type: ignore[arg-type]
             selectinload(User.categories),  # type: ignore[arg-type]
+            selectinload(User.directories),  # type: ignore[arg-type]
             selectinload(User.user_level),  # type: ignore[arg-type]
             selectinload(User.company),  # type: ignore[arg-type]
         )
@@ -518,6 +532,179 @@ class UserService:
                 if not is_superadmin and category.company_id != current_user.company_id:
                     continue
             self.session.add(UserCategoryLink(user_id=user_id, category_id=category_id))
+
+    # ──────────────────────────────────────────
+    # Directory access grants (subdirectory-level)
+    # ──────────────────────────────────────────
+
+    def _require_grant_write(self, current_user: User) -> None:
+        """Only company admins may mutate grants; SUPERADMIN is read-only."""
+        is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+        if is_superadmin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot modify directory access",
+            )
+        if current_user.company_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin must belong to a company to manage directory access",
+            )
+
+    def _get_grant_target(self, user_id: int, current_user: User) -> User:
+        target = self.session.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+        if not is_superadmin and target.company_id != current_user.company_id:
+            # Same oracle-avoiding convention as category guards: scoped-out
+            # rows (including NULL-company) read as not found.
+            raise HTTPException(status_code=404, detail=f"User {user_id} not found")
+        return target
+
+    def _validate_grant_directories(
+        self, directory_ids: List[int], current_user: User
+    ) -> List[Directory]:
+        """Load directories, verifying each belongs to the admin's company.
+
+        Client-supplied category/directory relationships are never trusted:
+        the company is resolved server-side via directory -> category.
+        """
+        directories = []
+        for directory_id in directory_ids:
+            directory = self.session.get(Directory, directory_id)
+            if not directory:
+                raise HTTPException(
+                    status_code=404, detail=f"Directory {directory_id} not found"
+                )
+            category = self.session.get(Category, directory.category_id)
+            if category is None or category.company_id != current_user.company_id:
+                raise HTTPException(
+                    status_code=404, detail=f"Directory {directory_id} not found"
+                )
+            directories.append(directory)
+        return directories
+
+    def _directory_access_response(self, target: User) -> "DirectoryAccessResponse":
+        from users.schemas import DirectoryAccessResponse, GrantedDirectoryResponse
+
+        links = self.session.exec(
+            select(UserDirectoryLink).where(UserDirectoryLink.user_id == target.id)
+        ).all()
+        granted = []
+        for link in links:
+            directory = self.session.get(Directory, link.directory_id)
+            if directory is None:
+                continue
+            granted.append(
+                GrantedDirectoryResponse(
+                    id=directory.id,
+                    name=directory.name,
+                    category_id=directory.category_id,
+                    parent_id=directory.parent_id,
+                )
+            )
+        category_ids = sorted(
+            link.category_id
+            for link in self.session.exec(
+                select(UserCategoryLink).where(UserCategoryLink.user_id == target.id)
+            ).all()
+        )
+        return DirectoryAccessResponse(
+            user_id=target.id,
+            category_ids=category_ids,
+            directory_ids=sorted(g.id for g in granted),
+            directories=granted,
+        )
+
+    def get_directory_access(
+        self, user_id: int, current_user: User
+    ) -> "DirectoryAccessResponse":
+        target = self._get_grant_target(user_id, current_user)
+        return self._directory_access_response(target)
+
+    def set_directory_access(
+        self, user_id: int, directory_ids: List[int], current_user: User
+    ) -> "DirectoryAccessResponse":
+        self._require_grant_write(current_user)
+        target = self._get_grant_target(user_id, current_user)
+        directories = self._validate_grant_directories(list(dict.fromkeys(directory_ids)), current_user)
+        for link in self.session.exec(
+            select(UserDirectoryLink).where(UserDirectoryLink.user_id == target.id)
+        ).all():
+            self.session.delete(link)
+        self.session.flush()
+        for directory in directories:
+            self.session.add(
+                UserDirectoryLink(user_id=target.id, directory_id=directory.id)
+            )
+        self.session.commit()
+        AuditService(self.session).log_event(
+            action=AuditAction.GRANT_DIRECTORY_ACCESS,
+            module=AuditModule.USERS,
+            company_id=target.company_id,
+            entity_name="user",
+            entity_id=str(target.id),
+            new_value={"directory_ids": sorted(d.id for d in directories)},
+            description=f"Set directory access for user {target.email}",
+            is_success=True,
+        )
+        return self._directory_access_response(target)
+
+    def add_directory_access(
+        self, user_id: int, directory_id: int, current_user: User
+    ) -> "DirectoryAccessResponse":
+        self._require_grant_write(current_user)
+        target = self._get_grant_target(user_id, current_user)
+        (directory,) = self._validate_grant_directories([directory_id], current_user)
+        existing = self.session.get(UserDirectoryLink, (target.id, directory.id))
+        if existing is None:
+            self.session.add(
+                UserDirectoryLink(user_id=target.id, directory_id=directory.id)
+            )
+            try:
+                self.session.commit()
+            except IntegrityError:
+                self.session.rollback()
+                # Race backstop: composite PK tripped, treat as idempotent add.
+                existing = self.session.get(UserDirectoryLink, (target.id, directory.id))
+                if existing is None:
+                    raise
+            AuditService(self.session).log_event(
+                action=AuditAction.GRANT_DIRECTORY_ACCESS,
+                module=AuditModule.USERS,
+                company_id=target.company_id,
+                entity_name="user",
+                entity_id=str(target.id),
+                new_value={"directory_id": directory.id},
+                description=f"Granted directory {directory.id} to user {target.email}",
+                is_success=True,
+            )
+        return self._directory_access_response(target)
+
+    def remove_directory_access(
+        self, user_id: int, directory_id: int, current_user: User
+    ) -> None:
+        self._require_grant_write(current_user)
+        target = self._get_grant_target(user_id, current_user)
+        link = self.session.get(UserDirectoryLink, (target.id, directory_id))
+        if link is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Directory grant {directory_id} not found for user {user_id}",
+            )
+        self.session.delete(link)
+        self.session.commit()
+        AuditService(self.session).log_event(
+            action=AuditAction.REVOKE_DIRECTORY_ACCESS,
+            module=AuditModule.USERS,
+            company_id=target.company_id,
+            entity_name="user",
+            entity_id=str(target.id),
+            old_value={"directory_id": directory_id},
+            description=f"Revoked directory {directory_id} from user {target.email}",
+            is_success=True,
+        )
 
     # ──────────────────────────────────────────
     # Roles

@@ -27,6 +27,8 @@ class AuditAction(str, Enum):
     REMOVE_ROLE = "remove_role"
     ASSIGN_USER_LEVEL = "assign_user_level"
     REMOVE_USER_LEVEL = "remove_user_level"
+    GRANT_DIRECTORY_ACCESS = "grant_directory_access"
+    REVOKE_DIRECTORY_ACCESS = "revoke_directory_access"
 
     # Document Management
     UPLOAD_DOCUMENT = "upload_document"

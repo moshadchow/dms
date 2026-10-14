@@ -9,6 +9,8 @@ export interface Category {
   updated_at: string
   directory_count: number
   document_count: number
+  access_type?: 'full' | 'partial'
+  granted_directory_ids?: number[]
 }
 
 export interface CategoryCreateRequest {

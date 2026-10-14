@@ -7,10 +7,15 @@ from sqlmodel import Session, func, select
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from categories.models import Category, CategoryCreate, CategoryReadWithStats, CategoryUpdate
-from core.access import ensure_category_access
+from core.access import (
+    ensure_category_access,
+    get_effective_directory_ids,
+    get_user_category_ids,
+    get_user_directory_grant_ids,
+)
 from directories.models import Directory
 from documents.models import Document, DocumentStatus
-from users.models import RoleName, User, UserCategoryLink
+from users.models import RoleName, User
 
 
 class CategoryService:
@@ -34,16 +39,31 @@ class CategoryService:
             if not include_inactive:
                 query = query.where(Category.is_active == True)
         else:
-            query = (
-                query.join(UserCategoryLink, UserCategoryLink.category_id == Category.id)
-                .where(
-                    UserCategoryLink.user_id == current_user.id,
-                    Category.is_active == True,
-                    Category.company_id == current_user.company_id,
-                )
+            # Non-admin: categories with a full category grant OR with at
+            # least one directory grant inside (visible as a container).
+            category_ids = get_user_category_ids(self.session, current_user.id)
+            grant_dir_ids = get_user_directory_grant_ids(self.session, current_user.id)
+            partial_category_ids: set = set()
+            if grant_dir_ids:
+                grant_dirs = self.session.exec(
+                    select(Directory).where(Directory.id.in_(grant_dir_ids))
+                ).all()
+                partial_category_ids = {d.category_id for d in grant_dirs}
+            visible_ids = set(category_ids) | partial_category_ids
+            if not visible_ids:
+                return []
+            query = query.where(
+                Category.id.in_(visible_ids),
+                Category.is_active == True,
+                Category.company_id == current_user.company_id,
             )
 
         categories = self.session.exec(query.order_by(Category.name)).all()
+        granted_category_ids = (
+            get_user_category_ids(self.session, current_user.id)
+            if not current_user.is_admin()
+            else {c.id for c in categories}
+        )
         result = []
         for cat in categories:
             dir_count_query = select(func.count(Directory.id)).where(Directory.category_id == cat.id)
@@ -58,10 +78,19 @@ class CategoryService:
 
             dir_count = self.session.exec(dir_count_query).one()
             doc_count = self.session.exec(doc_count_query).one()
+            access_type = "full"
+            granted_directory_ids: list = []
+            if not current_user.is_admin() and cat.id not in granted_category_ids:
+                access_type = "partial"
+                granted_directory_ids = sorted(
+                    get_effective_directory_ids(self.session, current_user, cat.id)
+                )
             item = CategoryReadWithStats(
                 **cat.model_dump(),
                 directory_count=dir_count,
                 document_count=doc_count,
+                access_type=access_type,
+                granted_directory_ids=granted_directory_ids,
             )
             result.append(item)
         return result

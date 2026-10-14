@@ -4,12 +4,18 @@ from typing import List, Optional
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
-from core.access import ensure_category_access, ensure_directory_access
+from core.access import (
+    ensure_category_access,
+    ensure_directory_access,
+    get_effective_directory_ids,
+    get_user_category_ids,
+    get_user_directory_grant_ids,
+)
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
 from directories.models import Directory, DirectoryCreate, DirectoryNode, DirectoryUpdate
 from documents.models import Document, DocumentStatus
-from users.models import User, UserCategoryLink
+from users.models import User
 
 
 class DirectoryService:
@@ -24,45 +30,123 @@ class DirectoryService:
         return ensure_directory_access(self.session, current_user, directory_id)
 
     def list_by_category(self, category_id: int, current_user: User) -> List[Directory]:
-        """Return root-level directories (parent_id IS NULL) for a category."""
-        ensure_category_access(self.session, current_user, category_id)
-        return list(
+        """Return root-level directories (parent_id IS NULL) for a category.
+
+        Partial-access users see only granted roots (or roots that are
+        ancestors of a granted subtree).
+        """
+        try:
+            ensure_category_access(self.session, current_user, category_id)
+            return list(
+                self.session.exec(
+                    select(Directory)
+                    .where(
+                        Directory.category_id == category_id,
+                        Directory.parent_id == None,  # noqa: E711
+                    )
+                    .order_by(Directory.name)
+                ).all()
+            )
+        except HTTPException:
+            if current_user.is_admin():
+                raise
+        effective = get_effective_directory_ids(self.session, current_user, category_id)
+        if not effective:
+            raise HTTPException(status_code=404, detail="Category not found")
+        all_dirs = list(
             self.session.exec(
-                select(Directory)
-                .where(
-                    Directory.category_id == category_id,
-                    Directory.parent_id == None,  # noqa: E711
-                )
-                .order_by(Directory.name)
+                select(Directory).where(Directory.category_id == category_id)
             ).all()
         )
+        visible_roots = [
+            d for d in all_dirs if d.parent_id is None and self._subtree_has(d, all_dirs, effective)
+        ]
+        return sorted(visible_roots, key=lambda d: d.name)
 
     def get_tree(self, category_id: int, current_user: User) -> List[DirectoryNode]:
-        """Return the full nested directory tree for a category."""
-        ensure_category_access(self.session, current_user, category_id)
+        """Return the nested directory tree for a category.
+
+        Full-tree for category-granted users; pruned to granted subtrees
+        (keeping ancestor path nodes) for directory-only grants.
+        """
+        try:
+            ensure_category_access(self.session, current_user, category_id)
+            all_dirs = self.session.exec(
+                select(Directory).where(Directory.category_id == category_id)
+            ).all()
+            return self._build_tree(all_dirs, parent_id=None)
+        except HTTPException:
+            if current_user.is_admin():
+                raise
+        effective = get_effective_directory_ids(self.session, current_user, category_id)
+        if not effective:
+            raise HTTPException(status_code=404, detail="Category not found")
         all_dirs = self.session.exec(
             select(Directory).where(Directory.category_id == category_id)
         ).all()
-        return self._build_tree(all_dirs, parent_id=None)
+        return self._build_pruned_tree(all_dirs, parent_id=None, effective=effective)
+
+    def _subtree_has(self, root: Directory, all_dirs: List[Directory], effective: set) -> bool:
+        if root.id in effective:
+            return True
+        return any(
+            d.id in effective
+            for d in all_dirs
+            if self._is_descendant(d, root.id, {x.id: x.parent_id for x in all_dirs})
+        )
+
+    @staticmethod
+    def _is_descendant(node: Directory, ancestor_id: int, parent_of: dict) -> bool:
+        current = node.parent_id
+        seen = set()
+        while current is not None and current not in seen:
+            if current == ancestor_id:
+                return True
+            seen.add(current)
+            current = parent_of.get(current)
+        return False
+
+    def _build_pruned_tree(
+        self, all_dirs: List[Directory], parent_id: Optional[int], effective: set
+    ) -> List[DirectoryNode]:
+        nodes = []
+        for d in all_dirs:
+            if d.parent_id == parent_id and self._subtree_has(d, all_dirs, effective):
+                node = DirectoryNode(
+                    **d.model_dump(),
+                    children=self._build_pruned_tree(all_dirs, parent_id=d.id, effective=effective),
+                )
+                nodes.append(node)
+        return sorted(nodes, key=lambda n: n.name)
 
     def list_all(self, current_user: User) -> List[Directory]:
-        """Return all directories the user has category access to."""
+        """Return all directories the user has category or directory access to."""
         if current_user.is_admin():
             dirs = list(self.session.exec(
                 select(Directory).order_by(Directory.name)
             ).all())
         else:
-            accessible_cat_ids = [
-                link.category_id
-                for link in self.session.exec(
-                    select(UserCategoryLink).where(UserCategoryLink.user_id == current_user.id)
-                ).all()
-            ]
-            dirs = list(self.session.exec(
-                select(Directory)
-                .where(Directory.category_id.in_(accessible_cat_ids))
-                .order_by(Directory.name)
-            ).all())
+            accessible_cat_ids = list(get_user_category_ids(self.session, current_user.id))
+            grant_ids = get_user_directory_grant_ids(self.session, current_user.id)
+            conditions = []
+            if accessible_cat_ids:
+                conditions.append(Directory.category_id.in_(accessible_cat_ids))
+            effective: set = set()
+            if grant_ids:
+                all_dirs = list(self.session.exec(select(Directory)).all())
+                from core.access import expand_descendant_ids
+
+                effective = expand_descendant_ids(all_dirs, set(grant_ids))
+            if effective:
+                conditions.append(Directory.id.in_(sorted(effective)))
+            if not conditions:
+                return []
+            query = select(Directory).order_by(Directory.name)
+            if len(conditions) == 1:
+                query = query.where(conditions[0])
+            else:
+                query = query.where(conditions[0] | conditions[1])
+            dirs = list(self.session.exec(query).all())
         return dirs
 
     def _build_tree(
