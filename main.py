@@ -12,7 +12,8 @@ from core.database       import create_db_and_tables
 from directories.router  import router as directories_router
 from documents.router    import router as documents_router
 from memos.router        import router as memos_router
-from middleware.audit     import audit_middleware
+from middleware.audit    import audit_middleware
+from middleware.https    import https_enforcement_middleware
 from middleware.rbac     import rbac_middleware
 from users.router        import router as users_router
 from user_levels.router  import router as user_levels_router
@@ -71,6 +72,13 @@ app.middleware("http")(rbac_middleware)
 
 # ── Audit middleware ─────────────────────────
 app.middleware("http")(audit_middleware)
+
+# ── HTTPS enforcement ────────────────────────
+# Registered last so it is outermost: plain-HTTP arrivals (per nginx's
+# X-Forwarded-Proto) get a 308 redirect before RBAC/audit/CORS run.
+# No-op unless FORCE_HTTPS=true; requests without the forwarded header
+# (internal health checks, direct uvicorn access) pass through.
+app.middleware("http")(https_enforcement_middleware)
 
 # ── Routers ───────────────────────────────────
 API = "/api/v1"
