@@ -134,6 +134,15 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 
 **JWK parsing:** `python-jose`'s `jwk.construct()` fails on Azure keys carrying `x5c`. `auth/azure_service.py` builds RSA keys from the X.509 chain with `cryptography`. Do not revert.
 
+## Rate Limiting (spec 31)
+`middleware/ratelimit.py` — in-process token buckets per `(rule, client_ip)` (no Redis; single uvicorn worker). Rules: `auth` = `RATE_LIMIT_AUTH_REQUESTS` (10)/window on `/api/v1/auth/login`, `default` = `RATE_LIMIT_REQUESTS` (600)/window on `/api/v1`; skips `OPTIONS`, anything outside `/api/v1` (`/health`, `/docs` live there), and everything when `RATE_LIMIT_ENABLED=false`. Rejection = **429 + `Retry-After` + JSON `detail`**, logged with the `dms.ratelimit` logger **only** — never `AuditService` (no DB writes during a flood; audit runs *inside* the limiter, so 429s are not audited).
+
+**Client IP for throttling:** `X-Real-IP` → **last** `X-Forwarded-For` value → `client.host`. Do NOT reuse the audit helper's first-value rule — nginx's `$proxy_add_x_forwarded_for` appends to a client-supplied header, so the *first* entry is attacker-controlled and would make throttling bypassable; `X-Real-IP` is overwritten by nginx and is authoritative. Memory: `RATE_LIMIT_MAX_KEYS` (10000) prunes fully-refilled buckets and **fails open** (clears the store) if still at cap.
+
+**`main.py` registration order is rbac → audit → rate limit → https → CORS (last = outermost):** CORS outermost is what lets browsers read middleware-generated bodies (308/429/RBAC's 401/403) — do not move it; rate limiting sits outside audit/rbac so floods are rejected before any DB work. Settings are `RATE_LIMIT_*` in `core/config.py`, read at request time (tests monkeypatch them, like `FORCE_HTTPS`).
+
+`tests/conftest.py` disables it (`RATE_LIMIT_ENABLED=False`, same pattern as `SMTP_HOST=""`) because the suite bursts from one TestClient IP; `tests/test_rate_limiting.py` re-enables per-test with tiny limits, a fake clock (monkeypatch `middleware.ratelimit._now`), and `limiter.reset()`. nginx edge: `limit_req_zone` (http context — top of `dms.conf`) + `limit_req ... limit_req_status 429` on `location /api/`; not locally testable, validate with `sudo nginx -t` on deploy.
+
 ## Frontend Conventions
 - API modules import `apiClient` from `./client` (baseURL `/api/v1`; interceptors: 401-refresh + Blob error parsing) — **not** `apiRoot` from `./base`. Paths are relative: `apiClient.get('/users')`.
 - Error display uses `getErrorMessage(err)` from `@/api/client`; toasts via `react-hot-toast`. Download endpoints use `responseType: 'blob'` — the response error interceptor converts Blob error bodies to JSON in place, so `getErrorMessage(err)` and `err.response.data.detail` surface the real `detail`. Don't re-solve this per caller.

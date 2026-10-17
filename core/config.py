@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     # direct uvicorn access) are never redirected.
     FORCE_HTTPS: bool = False
 
+    # ── Rate Limiting ─────────────────────────
+    # Per-IP token buckets in middleware/ratelimit.py (spec 31). Limits are
+    # requests per client IP per window; AUTH applies to /api/v1/auth/login,
+    # REQUESTS to everything else under /api/v1. MAX_KEYS caps how many client
+    # IPs are tracked (memory guard — expired buckets are pruned, and the
+    # store fails open under pressure). nginx adds an edge limit_req on /api/
+    # (see dms.conf) as the outer filter.
+    RATE_LIMIT_ENABLED:       bool = True
+    RATE_LIMIT_REQUESTS:      int  = 600       # default rule, per IP
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+    RATE_LIMIT_AUTH_REQUESTS: int  = 10        # POST /api/v1/auth/login, per IP
+    RATE_LIMIT_MAX_KEYS:      int  = 10000
+
     class Config:
         env_file        = ".env"
         env_file_encoding = "utf-8"
