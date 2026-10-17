@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # ── Transport ─────────────────────────────
+    # Production sits behind nginx TLS termination (see dms.conf). When true,
+    # requests that arrive with X-Forwarded-Proto: http are 308-redirected to
+    # https. Requests without the forwarded header (internal /health checks,
+    # direct uvicorn access) are never redirected.
+    FORCE_HTTPS: bool = False
+
     class Config:
         env_file        = ".env"
         env_file_encoding = "utf-8"

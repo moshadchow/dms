@@ -6,21 +6,14 @@ After=network.target postgresql.service
 User=mchowdhury
 WorkingDirectory=/var/www/dms
 Environment="DATABASE_URL=postgresql+psycopg2://dmsuser:dmspass2026@127.0.0.1:5432/dmsdb"
-Environment="CORS_ORIGINS=[\"http://192.168.101.34\"]"
-ExecStart=/var/www/dms/venv/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
+Environment="DEBUG=false"
+Environment="FORCE_HTTPS=true"
+Environment="FRONTEND_URL=https://dms.xpertfintech.com"
+Environment="AZURE_REDIRECT_URI=https://dms.xpertfintech.com/api/v1/auth/azure/callback"
+Environment="CORS_ORIGINS=[\"https://dms.xpertfintech.com\"]"
+ExecStart=/var/www/dms/venv/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --proxy-headers
 Restart=always
 RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-
-
-
-
-
-
-
-
-
-
-

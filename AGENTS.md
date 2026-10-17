@@ -158,6 +158,8 @@ Status flow: `draft → submitted → pending_approval → (returned | rejected 
 ## Deploy
 Production is **not** Docker: `dms-backend.service` (systemd unit, uvicorn on 127.0.0.1:8000) + `dms.conf` (nginx TLS terminating, serves `dms-app/dist`, proxies `/api` and `/health`, SPA fallback to `index.html`). `docker-compose.yml` is stale — it builds `./backend` and `./frontend`, which do not exist; the root `Dockerfile` is current.
 
+**TLS (spec 30):** certificates are Let's Encrypt via certbot — bootstrap with `sudo scripts/tls/install_tls.sh` (webroot = `dms-app/dist`, ACME challenge served by the port-80 exception in `dms.conf`); renewals reload nginx through `scripts/tls/certbot_deploy_hook.sh` (installed to `/etc/letsencrypt/renewal-hooks/deploy/`, runs `nginx -t` first). nginx terminates TLS and MUST send `X-Forwarded-Proto` (it does, per location). uvicorn runs with `--proxy-headers` (trusts 127.0.0.1 — the nginx hop only). `FORCE_HTTPS=true` in the systemd unit activates `middleware/https.py` (registered **outermost** in `main.py`, last `app.middleware` call): a request with `X-Forwarded-Proto: http` gets `308` to `https://{Host}{path?query}`; requests **without** the header (internal `/health`, localhost) never redirect. Production sets `FRONTEND_URL` / `AZURE_REDIRECT_URI` / `CORS_ORIGINS` to the https origin in the unit file — Azure login redirects are exact-match, so a scheme mismatch there breaks the OAuth flow silently. Tests: `tests/test_https_enforcement.py`.
+
 Treat `storage/uploads/` as runtime data. `__pycache__`/`*.pyc`/`venv/`/`node_modules/` are already gitignored.
 
 ## Commits
