@@ -51,6 +51,11 @@ def client(tmp_path, monkeypatch):
     # Never open real network connections from tests (tasks send email once
     # they can run to completion); _send_smtp skips when SMTP_HOST is empty.
     monkeypatch.setattr(core.database.settings, "SMTP_HOST", "")
+    # Rate limiting (spec 31) is per-IP and the whole suite bursts from one
+    # TestClient IP — disable it globally like SMTP; tests that exercise
+    # throttling re-enable it per-test (tests/test_rate_limiting.py).
+    # core.database.settings and core.config.settings are the same singleton.
+    monkeypatch.setattr(core.database.settings, "RATE_LIMIT_ENABLED", False)
 
     def override_get_session():
         with Session(engine) as session:

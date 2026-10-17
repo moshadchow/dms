@@ -14,6 +14,7 @@ from documents.router    import router as documents_router
 from memos.router        import router as memos_router
 from middleware.audit    import audit_middleware
 from middleware.https    import https_enforcement_middleware
+from middleware.ratelimit import rate_limit_middleware
 from middleware.rbac     import rbac_middleware
 from users.router        import router as users_router
 from user_levels.router  import router as user_levels_router
@@ -58,14 +59,10 @@ JWT-authenticated, role-driven document management.
     lifespan=lifespan,
 )
 
-# ── CORS ─────────────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── Middleware stack ──────────────────────────
+# Starlette add_middleware inserts each entry at the FRONT of its internal
+# list, so the LAST registration below is the OUTERMOST layer. Request flow:
+#   CORS → HTTPS → rate limit → audit → RBAC → router
 
 # ── RBAC middleware ───────────────────────────
 app.middleware("http")(rbac_middleware)
@@ -73,12 +70,31 @@ app.middleware("http")(rbac_middleware)
 # ── Audit middleware ─────────────────────────
 app.middleware("http")(audit_middleware)
 
+# ── Rate limiting (spec 31) ──────────────────
+# Outside audit/RBAC: floods are rejected (429 + Retry-After) before token
+# parsing, DB sessions, or audit rows — a flood generates zero DB load, and
+# the 429s are never audited.
+app.middleware("http")(rate_limit_middleware)
+
 # ── HTTPS enforcement ────────────────────────
-# Registered last so it is outermost: plain-HTTP arrivals (per nginx's
-# X-Forwarded-Proto) get a 308 redirect before RBAC/audit/CORS run.
+# Outside the rate limiter: plain-HTTP arrivals (per nginx's
+# X-Forwarded-Proto) get a 308 redirect without consuming rate-limit budget.
 # No-op unless FORCE_HTTPS=true; requests without the forwarded header
 # (internal health checks, direct uvicorn access) pass through.
 app.middleware("http")(https_enforcement_middleware)
+
+# ── CORS ─────────────────────────────────────
+# Registered LAST so it is outermost: browser preflights short-circuit
+# immediately, and every middleware-generated response below (308 redirects,
+# rate-limit 429s, RBAC 401/403s) carries Access-Control-Allow-Origin —
+# without this the browser cannot read those error bodies cross-origin.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Routers ───────────────────────────────────
 API = "/api/v1"

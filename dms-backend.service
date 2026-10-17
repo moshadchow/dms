@@ -11,6 +11,9 @@ Environment="FORCE_HTTPS=true"
 Environment="FRONTEND_URL=https://dms.xpertfintech.com"
 Environment="AZURE_REDIRECT_URI=https://dms.xpertfintech.com/api/v1/auth/azure/callback"
 Environment="CORS_ORIGINS=[\"https://dms.xpertfintech.com\"]"
+# Rate limiting (spec 31) uses core/config.py defaults (600/min per IP,
+# 10/min on login); override here with Environment="RATE_LIMIT_*=..." if
+# needed. nginx additionally applies edge limit_req on /api/ (dms.conf).
 ExecStart=/var/www/dms/venv/bin/python3 -m uvicorn main:app --host 127.0.0.1 --port 8000 --proxy-headers
 Restart=always
 RestartSec=3
