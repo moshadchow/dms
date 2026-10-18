@@ -114,13 +114,22 @@ class DocumentService:
     def list_documents(
         self,
         current_user: User,
-        directory_id: Optional[int] = None,
-        category_id:  Optional[int] = None,
-        file_type:    Optional[str]  = None,
-        search:       Optional[str]  = None,
-        status:       Optional[DocumentStatus] = None,
-        skip:         int = 0,
-        limit:        int = 50,
+        directory_id:    Optional[int] = None,
+        category_id:     Optional[int] = None,
+        file_type:       Optional[str]  = None,
+        search:          Optional[str]  = None,
+        status:          Optional[DocumentStatus] = None,
+        # Sorting
+        sort_by:         Optional[str]  = None,
+        sort_order:      Optional[str]  = None,
+        # Additional filters
+        uploaded_by:     Optional[int]  = None,
+        created_from:    Optional[datetime] = None,
+        created_to:      Optional[datetime] = None,
+        updated_from:    Optional[datetime] = None,
+        updated_to:      Optional[datetime] = None,
+        skip:            int = 0,
+        limit:           int = 50,
     ) -> DocumentListResponse:
         if status is not None and status != DocumentStatus.ACTIVE and not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Only admins can filter by non-active status")
@@ -191,6 +200,7 @@ class DocumentService:
             ]
             query = query.where(Document.id.in_(permitted_doc_ids))
 
+        # Apply filters
         if directory_id is not None:
             query = query.where(Document.directory_id == directory_id)
         if category_id is not None:
@@ -202,11 +212,42 @@ class DocumentService:
                 Document.title.ilike(f"%{search}%")
                 | Document.file_name.ilike(f"%{search}%")
             )
+        # Uploaded by filter
+        if uploaded_by is not None:
+            query = query.where(Document.uploaded_by == uploaded_by)
+        # Date range filters
+        if created_from is not None:
+            query = query.where(Document.created_at >= created_from)
+        if created_to is not None:
+            query = query.where(Document.created_at <= created_to)
+        if updated_from is not None:
+            query = query.where(Document.updated_at >= updated_from)
+        if updated_to is not None:
+            query = query.where(Document.updated_at <= updated_to)
+
+        # Apply sorting
+        sort_field_map = {
+            "title":       Document.title,
+            "file_name":   Document.file_name,
+            "file_size":   Document.file_size,
+            "created_at":  Document.created_at,
+            "updated_at":  Document.updated_at,
+        }
+        sort_field = sort_field_map.get(sort_by, Document.created_at)
+        is_desc = sort_order == "desc"
+        # Default sort order: desc for dates, asc for text/size
+        if sort_order is None:
+            is_desc = sort_by in ("created_at", "updated_at")
+
+        query = query.order_by(
+            sort_field.desc() if is_desc else sort_field.asc(),
+            Document.id.asc(),  # Secondary sort for stable pagination
+        )
 
         all_docs = self.session.exec(query).all()
         total    = len(all_docs)
         page_docs = self.session.exec(
-            query.order_by(Document.created_at.desc()).offset(skip).limit(limit)
+            query.offset(skip).limit(limit)
         ).all()
 
         return DocumentListResponse(

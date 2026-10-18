@@ -96,12 +96,24 @@ export interface DocumentUpdateRequest {
   status?: DocumentStatus
 }
 
+export type SortField = 'title' | 'file_name' | 'file_size' | 'created_at' | 'updated_at'
+export type SortOrder = 'asc' | 'desc'
+
 export interface DocumentListParams {
   directory_id?: number
   category_id?: number
   file_type?: FileType
   search?: string
   status?: DocumentStatus
+  // Sorting
+  sort_by?: SortField
+  sort_order?: SortOrder
+  // Additional filters
+  uploaded_by?: number
+  created_from?: string  // ISO 8601 date string
+  created_to?: string    // ISO 8601 date string
+  updated_from?: string  // ISO 8601 date string
+  updated_to?: string    // ISO 8601 date string
   skip?: number
   limit?: number
 }

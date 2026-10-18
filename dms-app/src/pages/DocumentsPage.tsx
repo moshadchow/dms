@@ -5,6 +5,7 @@ import { isAccessDeniedError } from '@/api/client'
 import { directoriesApi } from '@/api/directories.api'
 import { categoriesApi } from '@/api/categories.api'
 import { documentsApi } from '@/api/documents.api'
+import { usersApi } from '@/api/users.api'
 import { useCategoryAccess } from '@/hooks/useCategoryAccess'
 import { useDirectoryStore } from '@/store/directoryStore'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -15,7 +16,7 @@ import UploadModal from '@/components/documents/UploadModal'
 import EditDocumentModal from '@/components/documents/EditDocumentModal'
 import type { Category } from '@/types/category.types'
 import type { DirectoryNode } from '@/types/directory.types'
-import type { Document, DocumentListResponse, FileType } from '@/types/document.types'
+import type { Document, DocumentListResponse, FileType, SortField, SortOrder, User } from '@/types/document.types'
 
 export default function DocumentsPage() {
   const { directoryId } = useParams()
@@ -27,7 +28,7 @@ export default function DocumentsPage() {
 
   const { setSelectedCategory, setSelectedDirectory, refreshDirectories } = useDirectoryStore()
 
-  // ── Page state ────────────────────────────────────────────────
+  // Page state
   const [resolvedCategoryId, setResolvedCategoryId] = useState<number | null>(null)
   const [resolvedDirId, setResolvedDirId]           = useState<number | null>(null)
   const [navOnly, setNavOnly]                       = useState(false)
@@ -36,7 +37,7 @@ export default function DocumentsPage() {
   const [loading, setLoading]       = useState(true)
   const [treeLoading, setTreeLoading] = useState(false)
 
-  // ── Document state ────────────────────────────────────────────
+  // Document state
   const [docData, setDocData]       = useState<DocumentListResponse | null>(null)
   const [docLoading, setDocLoading] = useState(false)
   const [search, setSearch]         = useState('')
@@ -47,12 +48,35 @@ export default function DocumentsPage() {
   const [page, setPage]             = useState(1)
   const LIMIT = 20
 
-  // ── Modal state ───────────────────────────────────────────────
+  // Sorting & Advanced Filtering state
+  const [sortBy, setSortBy]         = useState<SortField>('created_at')
+  const [sortOrder, setSortOrder]   = useState<SortOrder>('desc')
+  const [uploadedBy, setUploadedBy] = useState<number | ''>('')
+  const [createdFrom, setCreatedFrom] = useState('')
+  const [createdTo, setCreatedTo]     = useState('')
+  const [updatedFrom, setUpdatedFrom] = useState('')
+  const [updatedTo, setUpdatedTo]     = useState('')
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
+  const [users, setUsers]           = useState<User[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+
+  // Fetch users for "uploaded by" filter
+  useEffect(() => {
+    if (isAdmin) {
+      Promise.resolve().then(() => setUsersLoading(true))
+      usersApi.list({ limit: 500 })
+        .then((data) => setUsers(data.items))
+        .catch(() => toast.error('Failed to load users'))
+        .finally(() => setUsersLoading(false))
+    }
+  }, [isAdmin])
+
+  // Modal state
   const [viewingDoc, setViewingDoc]   = useState<Document | null>(null)
   const [editingDoc, setEditingDoc]   = useState<Document | null>(null)
   const [uploadOpen, setUploadOpen]   = useState(false)
 
-  // ── Resolve category/directory from URL ───────────────────────
+  // Resolve category/directory from URL
   useEffect(() => {
     if (!directoryId) return
 
@@ -110,7 +134,7 @@ export default function DocumentsPage() {
       })
   }, [directoryId, isRoot, isAdmin, canAccessCategory, navigate, setSelectedCategory, setSelectedDirectory])
 
-  // ── Load directory tree ───────────────────────────────────────
+  // Load directory tree
   const loadTree = useCallback((catId: number) => {
     Promise.resolve()
       .then(() => {
@@ -139,7 +163,7 @@ export default function DocumentsPage() {
     }
   }, [resolvedCategoryId, loadTree, refreshDirectories])
 
-  // ── Load documents when directory or filters change ───────────
+  // Load documents when directory or filters change
   const loadDocuments = useCallback(() => {
     if (!resolvedDirId) return
     Promise.resolve()
@@ -151,6 +175,13 @@ export default function DocumentsPage() {
           search:       search.trim() || undefined,
           file_type:    fileTypeFilter || undefined,
           status:       showArchived ? 'archived' : undefined,
+          sort_by:      sortBy,
+          sort_order:   sortOrder,
+          uploaded_by:  uploadedBy || undefined,
+          created_from: createdFrom || undefined,
+          created_to:   createdTo || undefined,
+          updated_from: updatedFrom || undefined,
+          updated_to:   updatedTo || undefined,
           skip:         (page - 1) * LIMIT,
           limit:        LIMIT,
         })
@@ -164,7 +195,7 @@ export default function DocumentsPage() {
       .finally(() => {
         setDocLoading(false)
       })
-  }, [resolvedDirId, search, fileTypeFilter, showArchived, page])
+  }, [resolvedDirId, search, fileTypeFilter, showArchived, sortBy, sortOrder, uploadedBy, createdFrom, createdTo, updatedFrom, updatedTo, page])
 
   const handleSelectDoc = useCallback((id: number, checked: boolean) => {
     setSelectedIds((prev) => {
@@ -184,9 +215,9 @@ export default function DocumentsPage() {
     try {
       const result = await documentsApi.bulkRestore([...selectedIds])
       if (result.restored.length > 0)
-        toast.success(`Restored ${result.restored.length} document${result.restored.length > 1 ? 's' : ''}`)
+        toast.success('Restored ' + result.restored.length + ' document' + (result.restored.length > 1 ? 's' : ''))
       if (result.failed.length > 0)
-        toast.error(`${result.failed.length} document${result.failed.length > 1 ? 's' : ''} could not be restored`)
+        toast.error(result.failed.length + ' document' + (result.failed.length > 1 ? 's' : '') + ' could not be restored')
       loadDocuments()
     } catch {
       toast.error('Bulk restore failed')
@@ -201,7 +232,7 @@ export default function DocumentsPage() {
   }, [resolvedDirId, loadDocuments])
 
   // Reset page when search/filter/status changes (adjusted during render)
-  const docFilterKey = `${search}|${fileTypeFilter}|${String(showArchived)}|${resolvedDirId ?? ''}`
+  const docFilterKey = search + '|' + fileTypeFilter + '|' + String(showArchived) + '|' + sortBy + '|' + sortOrder + '|' + uploadedBy + '|' + createdFrom + '|' + createdTo + '|' + updatedFrom + '|' + updatedTo + '|' + (resolvedDirId ?? '')
   const [prevDocFilterKey, setPrevDocFilterKey] = useState(docFilterKey)
   if (prevDocFilterKey !== docFilterKey) {
     setPrevDocFilterKey(docFilterKey)
@@ -213,7 +244,7 @@ export default function DocumentsPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '300px' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ width: '28px', height: '28px', border: '3px solid var(--border-soft)', borderTopColor: 'var(--primary)', borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto 0.75rem' }} />
-          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem', margin: 0 }}>Loading…</p>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem', margin: 0 }}>Loading...</p>
         </div>
       </div>
     )
@@ -221,11 +252,20 @@ export default function DocumentsPage() {
 
   const totalPages = docData ? Math.ceil(docData.total / LIMIT) : 1
 
+  // Sort options
+  const sortFields = [
+    { value: 'created_at' as SortField, label: 'Created date' },
+    { value: 'updated_at' as SortField, label: 'Updated date' },
+    { value: 'title' as SortField, label: 'Title' },
+    { value: 'file_name' as SortField, label: 'File name' },
+    { value: 'file_size' as SortField, label: 'File size' },
+  ]
+
   return (
     <>
       <div style={{ display: 'flex', gap: '1.25rem', height: '100%', minHeight: 0 }}>
 
-        {/* ── Left: directory tree ── */}
+        {/* Left: directory tree */}
         <div style={{ width: '250px', flexShrink: 0, backgroundColor: 'var(--surface)', borderRadius: '1rem', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -234,10 +274,10 @@ export default function DocumentsPage() {
               </div>
               <div style={{ overflow: 'hidden' }}>
                 <p style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {category?.name ?? '…'}
+                  {category?.name ?? '...'}
                 </p>
                 <p style={{ fontSize: '0.68rem', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>
-                  {treeLoading ? 'Loading…' : `${tree.length} ${tree.length === 1 ? 'dir' : 'dirs'}`}
+                  {treeLoading ? 'Loading...' : tree.length + ' ' + (tree.length === 1 ? 'dir' : 'dirs')}
                 </p>
               </div>
             </div>
@@ -257,7 +297,7 @@ export default function DocumentsPage() {
           </div>
         </div>
 
-        {/* ── Right: document panel ── */}
+        {/* Right: document panel */}
         <div style={{ flex: 1, backgroundColor: 'var(--surface)', borderRadius: '1rem', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
           {resolvedDirId ? (
@@ -274,7 +314,7 @@ export default function DocumentsPage() {
                     )}
                   </div>
                   <p style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>
-                    {docData ? `${docData.total} file${docData.total !== 1 ? 's' : ''}` : '…'}
+                    {docData ? docData.total + ' file' + (docData.total !== 1 ? 's' : '') : '...'}
                   </p>
                 </div>
                 {canCreate && !navOnly && (
@@ -296,7 +336,7 @@ export default function DocumentsPage() {
                   </svg>
                   <input
                     className="input"
-                    placeholder="Search documents…"
+                    placeholder="Search documents..."
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     style={{ paddingLeft: '32px', fontSize: '0.82rem' }}
@@ -314,6 +354,43 @@ export default function DocumentsPage() {
                   <option value="excel">Excel</option>
                   <option value="image">Image</option>
                 </select>
+
+                {/* Sort dropdown */}
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as SortField)}
+                    className="input"
+                    style={{ width: '140px', fontSize: '0.82rem' }}
+                  >
+                    {sortFields.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={sortOrder}
+                    onChange={(e) => setSortOrder(e.target.value as SortOrder)}
+                    className="input"
+                    style={{ width: '80px', fontSize: '0.82rem' }}
+                  >
+                    <option value="asc">Ascending</option>
+                    <option value="desc">Descending</option>
+                  </select>
+                </div>
+
+                {/* Advanced filters toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '0.82rem', padding: '5px 12px' }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}>
+                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                  </svg>
+                  Filters
+                </button>
+
                 {isAdmin && (
                   <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap', userSelect: 'none' }}>
                     <input
@@ -327,6 +404,60 @@ export default function DocumentsPage() {
                 )}
               </div>
 
+              {/* Advanced filters panel */}
+              {showAdvancedFilters && (
+                <div style={{ padding: '0.75rem 1.25rem', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)', display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  {/* Uploaded by */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Uploaded by</label>
+                    <select
+                      value={uploadedBy}
+                      onChange={(e) => setUploadedBy(e.target.value ? parseInt(e.target.value) : '')}
+                      className="input"
+                      style={{ width: '180px', fontSize: '0.82rem' }}
+                      disabled={usersLoading}
+                    >
+                      <option value="">All users</option>
+                      {users.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Created date range */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Created</label>
+                    <input type="date" value={createdFrom} onChange={(e) => setCreatedFrom(e.target.value)} className="input" style={{ width: '140px', fontSize: '0.82rem' }} />
+                    <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>to</span>
+                    <input type="date" value={createdTo} onChange={(e) => setCreatedTo(e.target.value)} className="input" style={{ width: '140px', fontSize: '0.82rem' }} />
+                  </div>
+
+                  {/* Updated date range */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Updated</label>
+                    <input type="date" value={updatedFrom} onChange={(e) => setUpdatedFrom(e.target.value)} className="input" style={{ width: '140px', fontSize: '0.82rem' }} />
+                    <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>to</span>
+                    <input type="date" value={updatedTo} onChange={(e) => setUpdatedTo(e.target.value)} className="input" style={{ width: '140px', fontSize: '0.82rem' }} />
+                  </div>
+
+                  {/* Clear filters button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUploadedBy('')
+                      setCreatedFrom('')
+                      setCreatedTo('')
+                      setUpdatedFrom('')
+                      setUpdatedTo('')
+                    }}
+                    className="btn btn-ghost"
+                    style={{ fontSize: '0.82rem', marginLeft: 'auto', padding: '5px 12px' }}
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+
               {/* Bulk restore action bar */}
               {showArchived && selectedIds.size > 0 && (
                 <div style={{ padding: '0.6rem 1.25rem', backgroundColor: 'var(--info-bg)', borderBottom: '1px solid var(--info)', display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
@@ -339,7 +470,7 @@ export default function DocumentsPage() {
                     style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 14px', backgroundColor: 'var(--info)', color: '#fff', border: 'none', borderRadius: '7px', fontSize: '0.82rem', fontWeight: 600, cursor: bulkRestoring ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: bulkRestoring ? 0.7 : 1 }}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>
-                    {bulkRestoring ? 'Restoring…' : 'Restore Selected'}
+                    {bulkRestoring ? 'Restoring...' : 'Restore Selected'}
                   </button>
                   <button
                     onClick={() => setSelectedIds(new Set())}
@@ -370,7 +501,7 @@ export default function DocumentsPage() {
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                     <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>
-                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter ? 'No documents match your filters' : navOnly ? 'Navigation folder — open a subfolder to view its documents' : 'No documents yet'}
+                      {showArchived ? 'No archived documents in this directory' : search || fileTypeFilter || uploadedBy || createdFrom || createdTo || updatedFrom || updatedTo ? 'No documents match your filters' : navOnly ? 'Navigation folder - open a subfolder to view its documents' : 'No documents yet'}
                     </p>
                     {canCreate && !navOnly && !search && !fileTypeFilter && (
                       <button
@@ -401,9 +532,9 @@ export default function DocumentsPage() {
                     {/* Pagination */}
                     {totalPages > 1 && (
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
-                        <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} style={pageBtn}>←</button>
+                        <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} style={pageBtn}>&larr;</button>
                         <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>Page {page} of {totalPages}</span>
-                        <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pageBtn}>→</button>
+                        <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pageBtn}>&rarr;</button>
                       </div>
                     )}
                   </>
@@ -426,7 +557,7 @@ export default function DocumentsPage() {
         </div>
       </div>
 
-      {/* ── Modals ── */}
+      {/* Modals */}
       <DocumentViewer doc={viewingDoc} onClose={() => setViewingDoc(null)} />
 
       <UploadModal
@@ -446,7 +577,7 @@ export default function DocumentsPage() {
   )
 }
 
-const pageBtn: React.CSSProperties = {
+const pageBtn = {
   padding: '5px 12px', borderRadius: '7px', border: '1px solid var(--border-soft)',
   backgroundColor: 'var(--surface)', color: 'var(--text-secondary)', fontSize: '0.82rem',
   cursor: 'pointer', fontFamily: 'inherit',
