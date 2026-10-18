@@ -71,6 +71,19 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH_REQUESTS: int  = 10        # POST /api/v1/auth/login, per IP
     RATE_LIMIT_MAX_KEYS:      int  = 10000
 
+    # ── Antivirus / Malware Scanning ───────────
+    # Enable/disable AV scanning on uploads
+    AV_ENABLED:           bool = True
+    # Engine: "clamav" (requires clamd daemon + pip install clamd) or "dummy" (dev only)
+    AV_ENGINE:            str  = "dummy"
+    # ClamAV daemon connection (used when AV_ENGINE=clamav)
+    CLAMD_HOST:           str  = "localhost"
+    CLAMD_PORT:           int  = 3310
+    # Scan timeout in seconds
+    AV_SCAN_TIMEOUT:      int  = 30
+    # Deduplication TTL in hours - reuse recent clean scan for same file hash
+    AV_DEDUP_TTL_HOURS:   int  = 24
+
     class Config:
         env_file        = ".env"
         env_file_encoding = "utf-8"

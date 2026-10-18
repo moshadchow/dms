@@ -18,6 +18,7 @@ from core.access import (
     ensure_document_access,
     ensure_document_user_level_access,
 )
+from core.config import settings
 from core.storage import storage_service
 from correspondence.models import (
     AttachmentType,
@@ -47,6 +48,14 @@ from notifications.tasks import send_notification_task
 from users.models import RoleName, User, UserCategoryLink
 from workflow.approval_policy import is_eligible_current_approver
 from workflow.models import WorkflowInstance, WorkflowStatus
+
+# Antivirus import (conditional)
+try:
+    from antivirus.service import AntivirusService
+    from antivirus.engine import ScanStatus as EngineScanStatus
+except ImportError:
+    AntivirusService = None
+    EngineScanStatus = None
 
 # Reuse memo sanitization config
 ALLOWED_TAGS = [
@@ -1365,7 +1374,7 @@ class CorrespondenceService:
     # Attachments
     # ──────────────────────────────────────────
 
-    def add_attachment(
+    async def add_attachment(
         self,
         correspondence_id: int,
         file: "UploadFile",
@@ -1407,6 +1416,82 @@ class CorrespondenceService:
         storage_path = str(dest_path.relative_to(storage_service.get_company_root(company)))
         file_size = len(content)
 
+        # Antivirus scanning (if enabled)
+        av_scan = None
+        if settings.AV_ENABLED and AntivirusService:
+            try:
+                from antivirus.engine import ScanStatus as EngineScanStatus
+                
+                # Resolve absolute path for scanning
+                abs_path = storage_service.resolve_path_with_fallback(storage_path, company)
+                
+                av_svc = AntivirusService(self.session)
+                av_scan = await av_svc.scan_file(abs_path, storage_path, company)
+                
+                # Handle scan results
+                if av_scan.scan_status == EngineScanStatus.INFECTED:
+                    # File quarantined by scan_file
+                    self._log_audit(
+                        AuditAction.CREATE_CORRESPONDENCE,
+                        corr,
+                        f"Attachment upload rejected: infected file '{file.filename}' ({av_scan.threat_name})",
+                        current_user,
+                        new_value={"file_name": file.filename, "threat": av_scan.threat_name},
+                        company_id=corr.company_id,
+                    )
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"File rejected: malware detected ({av_scan.threat_name})",
+                    )
+                elif av_scan.scan_status == EngineScanStatus.TIMEOUT:
+                    # Clean up file
+                    delete_from_disk(storage_path, company)
+                    self._log_audit(
+                        AuditAction.CREATE_CORRESPONDENCE,
+                        corr,
+                        f"Attachment upload failed: scan timeout for '{file.filename}'",
+                        current_user,
+                        new_value={"file_name": file.filename},
+                        company_id=corr.company_id,
+                    )
+                    raise HTTPException(
+                        status_code=504,
+                        detail="Antivirus scan timeout",
+                    )
+                elif av_scan.scan_status == EngineScanStatus.ERROR:
+                    # Clean up file
+                    delete_from_disk(storage_path, company)
+                    self._log_audit(
+                        AuditAction.CREATE_CORRESPONDENCE,
+                        corr,
+                        f"Attachment upload failed: scan error for '{file.filename}'",
+                        current_user,
+                        new_value={"file_name": file.filename},
+                        company_id=corr.company_id,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Antivirus scan failed",
+                    )
+                # If clean, continue with document creation
+            except HTTPException:
+                raise
+            except Exception as e:
+                # Unexpected error during scanning - clean up and fail
+                delete_from_disk(storage_path, company)
+                self._log_audit(
+                    AuditAction.CREATE_CORRESPONDENCE,
+                    corr,
+                    f"Attachment upload failed: scan exception for '{file.filename}'",
+                    current_user,
+                    new_value={"file_name": file.filename},
+                    company_id=corr.company_id,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Antivirus scan failed",
+                )
+
         doc = Document(
             title=file.filename or "attachment",
             description=f"Attachment for {corr.reference_number}",
@@ -1418,6 +1503,7 @@ class CorrespondenceService:
             file_size=file_size,
             storage_path=storage_path,
             status=DocumentStatus.ACTIVE,
+            av_scan_id=av_scan.id if av_scan else None,
         )
         self.session.add(doc)
         self.session.flush()
@@ -1450,7 +1536,7 @@ class CorrespondenceService:
             corr,
             f"Added attachment '{file.filename}' to correspondence '{corr.reference_number}'",
             current_user,
-            new_value={"attachment_id": link.id, "document_id": doc.id},
+            new_value={"attachment_id": link.id, "document_id": doc.id, "av_scan_status": av_scan.scan_status.value if av_scan else "skipped"},
             company_id=corr.company_id,
         )
 

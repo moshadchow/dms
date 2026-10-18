@@ -22,6 +22,7 @@ from workflow.router import router as workflow_router, instance_router as workfl
 from storage_usage.router import router as storage_router
 from company_profile.router import router as company_profile_router
 from correspondence.router import router as correspondence_router
+from antivirus.router    import router as antivirus_router
 
 
 @asynccontextmanager
@@ -112,6 +113,7 @@ app.include_router(memos_router,             prefix=f"{API}/memos",             
 app.include_router(storage_router,           prefix=f"{API}/storage",              tags=["Storage"])
 app.include_router(company_profile_router,   prefix=f"{API}/companies",            tags=["Companies"])
 app.include_router(correspondence_router,    prefix=f"{API}/correspondences",       tags=["Correspondence"])
+app.include_router(antivirus_router,         prefix=f"{API}/antivirus",            tags=["Antivirus"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

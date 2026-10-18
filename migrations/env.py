@@ -5,7 +5,7 @@ Alembic migration environment.
 
 Run from the backend/ directory:
     alembic upgrade head          # apply all migrations
-    alembic revision --autogenerate -m "description"  # generate new migration
+    alembic revision --autogenerate -m 'description'  # generate new migration
     alembic downgrade -1          # roll back one step
 """
 
@@ -30,6 +30,8 @@ import documents.models    # noqa: F401  — Document
 import user_levels.models  # noqa: F401  — UserLevel
 import workflow.models     # noqa: F401  — WorkflowDefinition, WorkflowStep, WorkflowStepApprover
 import notifications.models  # noqa: F401  — EmailNotification
+import antivirus.models      # noqa: F401  — AntivirusScan
+import company_profile.models  # noqa: F401  — Company
 
 from core.config import settings  # noqa: E402  (after sys.path insert)
 
@@ -38,7 +40,7 @@ config = context.config
 
 # Override sqlalchemy.url with the value from .env so alembic.ini
 # never needs a hard-coded production URL.
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+config.set_main_option('sqlalchemy.url', settings.DATABASE_URL)
 
 # Apply logging config from alembic.ini if present
 if config.config_file_name is not None:
@@ -51,19 +53,19 @@ target_metadata = SQLModel.metadata
 # ── Migration runners ─────────────────────────
 
 def run_migrations_offline() -> None:
-    """
+    '''
     Run migrations without a live DB connection.
     Generates SQL statements to stdout instead of executing them.
     Useful for reviewing changes before applying to production.
 
     Usage:  alembic upgrade head --sql
-    """
-    url = config.get_main_option("sqlalchemy.url")
+    '''
+    url = config.get_main_option('sqlalchemy.url')
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
+        dialect_opts={'paramstyle': 'named'},
         # Render column-level CHECK constraints, etc.
         render_as_batch=False,
         compare_type=True,
@@ -73,13 +75,13 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """
+    '''
     Run migrations against a live DB connection.
-    This is the normal path used by `alembic upgrade head`.
-    """
+    This is the normal path used by lembic upgrade head.
+    '''
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+        prefix='sqlalchemy.',
         poolclass=pool.NullPool,   # NullPool is recommended for migrations
     )
 

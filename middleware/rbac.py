@@ -71,6 +71,10 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     ("POST",   "/api/v1/correspondences/"):     PermissionAction.UPDATE,
     ("GET",    "/api/v1/correspondences/"):     PermissionAction.VIEW,
     ("DELETE", "/api/v1/correspondences/"):     PermissionAction.UPDATE,
+    # ── Antivirus ─────────────────────────────
+    ("GET",    "/api/v1/antivirus/scans"):      PermissionAction.VIEW,
+    ("GET",    "/api/v1/antivirus/scans/"):     PermissionAction.VIEW,
+    ("POST",   "/api/v1/antivirus/rescan/"):    PermissionAction.UPDATE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)

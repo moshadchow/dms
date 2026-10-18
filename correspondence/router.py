@@ -347,14 +347,14 @@ def get_movements(
     summary="Upload an attachment to correspondence",
     dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
 )
-def add_attachment(
+async def add_attachment(
     correspondence_id: int,
     file: UploadFile = File(...),
     attachment_type: AttachmentType = Form(AttachmentType.SUPPORTING),
     current_user: CurrentUser = None,
     session: Session = Depends(get_session),
 ):
-    return CorrespondenceService(session).add_attachment(
+    return await CorrespondenceService(session).add_attachment(
         correspondence_id, file, attachment_type, current_user
     )
 

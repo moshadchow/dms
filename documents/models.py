@@ -47,6 +47,14 @@ class DrawingTool(str, Enum):
     PEN = "pen"
 
 
+class ScanStatus(str, Enum):
+    PENDING = "pending"
+    CLEAN = "clean"
+    INFECTED = "infected"
+    ERROR = "error"
+    TIMEOUT = "timeout"
+
+
 ALLOWED_MIME_TYPES: dict[str, FileType] = {
     "application/pdf": FileType.PDF,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": FileType.DOCX,
@@ -79,6 +87,7 @@ class Document(DocumentBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     directory_id: int = Field(foreign_key="directories.id", index=True)
     uploaded_by: int = Field(foreign_key="users.id")
+    av_scan_id: Optional[int] = Field(default=None, foreign_key="antivirus_scans.id", index=True)
 
     file_name: str = Field(max_length=255)
     file_type: FileType = Field(index=True)
@@ -93,6 +102,9 @@ class Document(DocumentBase, table=True):
     directory: "Directory" = Relationship(back_populates="documents")  # type: ignore[assignment]
     uploaded_by_user: "User" = Relationship(  # type: ignore[assignment]
         sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[Document.uploaded_by]"}
+    )
+    av_scan: Optional["AntivirusScan"] = Relationship(  # type: ignore[assignment]
+        sa_relationship_kwargs={"lazy": "selectin", "foreign_keys": "[Document.av_scan_id]"}
     )
     variants: List["DocumentVariant"] = Relationship(  # type: ignore[assignment]
         back_populates="source_document",
@@ -202,6 +214,7 @@ class DocumentRead(DocumentBase):
     updated_at: datetime
     user_level_ids: List[int] = []
     user_level_names: List[str] = []
+    av_scan_status: Optional[ScanStatus] = None
 
     model_config = {"from_attributes": True}
 

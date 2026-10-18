@@ -41,6 +41,9 @@ class AuditAction(str, Enum):
     RENAME_DOCUMENT = "rename_document"
     ARCHIVE_DOCUMENT = "archive_document"
     RESTORE_DOCUMENT = "restore_document"
+    SCAN_DOCUMENT = "scan_document"
+    SCAN_FAILED = "scan_failed"
+    SCAN_INFECTED = "scan_infected"
 
     # Folder Management
     CREATE_DIRECTORY = "create_directory"

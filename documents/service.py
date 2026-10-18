@@ -26,12 +26,22 @@ from documents.models import (
     DocumentStatus,
     DocumentUpdate,
     DocumentUserLevelLink,
+    ScanStatus,
 )
 from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
 from users.models import User
 from user_levels.models import UserLevel
 from company_profile.models import Company
 from workflow.approval_policy import is_eligible_approver_reader
+from core.config import settings
+
+# Antivirus import (conditional to avoid circular imports)
+try:
+    from antivirus.service import AntivirusService
+    from antivirus.engine import ScanStatus as EngineScanStatus
+except ImportError:
+    AntivirusService = None
+    EngineScanStatus = None
 
 
 class DocumentService:
@@ -73,6 +83,7 @@ class DocumentService:
     def _to_read(doc: Document) -> DocumentRead:
         """Convert ORM object → Pydantic schema while session is still open."""
         user_levels = getattr(doc, "user_levels", [])
+        av_scan = getattr(doc, "av_scan", None)
         return DocumentRead(
             id=doc.id,
             title=doc.title,
@@ -88,6 +99,7 @@ class DocumentService:
             updated_at=doc.updated_at,
             user_level_ids=[ul.id for ul in user_levels],
             user_level_names=[ul.name for ul in user_levels],
+            av_scan_status=av_scan.scan_status if av_scan else None,
         )
 
     # ──────────────────────────────────────────
@@ -262,6 +274,102 @@ class DocumentService:
             file, directory.category_id, directory_id, company
         )
 
+        # Antivirus scanning (if enabled)
+        av_scan = None
+        if settings.AV_ENABLED and AntivirusService:
+            try:
+                from antivirus.engine import ScanStatus as EngineScanStatus
+                from core.storage import storage_service
+                
+                # Resolve absolute path for scanning
+                abs_path = storage_service.resolve_path_with_fallback(storage_path, company)
+                
+                av_svc = AntivirusService(self.session)
+                av_scan = await av_svc.scan_file(abs_path, storage_path, company)
+                
+                # Handle scan results
+                if av_scan.scan_status == EngineScanStatus.INFECTED:
+                    # File quarantined by scan_file, delete the document record if created
+                    AuditService(self.session).log_event(
+                        action=AuditAction.UPLOAD_DOCUMENT,
+                        module=AuditModule.DOCUMENTS,
+                        company_id=current_user.company_id,
+                        entity_name="document",
+                        entity_id="scan_failed",
+                        new_value={"title": title, "file_name": file.filename, "threat": av_scan.threat_name},
+                        description=f"Upload rejected: infected file '{title}' ({av_scan.threat_name})",
+                        is_success=False,
+                        failure_reason=f"Malware detected: {av_scan.threat_name}",
+                        user=current_user,
+                    )
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"File rejected: malware detected ({av_scan.threat_name})",
+                    )
+                elif av_scan.scan_status == EngineScanStatus.TIMEOUT:
+                    # Clean up file
+                    from documents.utils import delete_from_disk
+                    delete_from_disk(storage_path, company)
+                    AuditService(self.session).log_event(
+                        action=AuditAction.UPLOAD_DOCUMENT,
+                        module=AuditModule.DOCUMENTS,
+                        company_id=current_user.company_id,
+                        entity_name="document",
+                        entity_id="scan_failed",
+                        new_value={"title": title, "file_name": file.filename},
+                        description=f"Upload failed: scan timeout for '{title}'",
+                        is_success=False,
+                        failure_reason="Antivirus scan timeout",
+                        user=current_user,
+                    )
+                    raise HTTPException(
+                        status_code=504,
+                        detail="Antivirus scan timeout",
+                    )
+                elif av_scan.scan_status == EngineScanStatus.ERROR:
+                    # Clean up file
+                    from documents.utils import delete_from_disk
+                    delete_from_disk(storage_path, company)
+                    AuditService(self.session).log_event(
+                        action=AuditAction.UPLOAD_DOCUMENT,
+                        module=AuditModule.DOCUMENTS,
+                        company_id=current_user.company_id,
+                        entity_name="document",
+                        entity_id="scan_failed",
+                        new_value={"title": title, "file_name": file.filename},
+                        description=f"Upload failed: scan error for '{title}'",
+                        is_success=False,
+                        failure_reason="Antivirus scan error",
+                        user=current_user,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Antivirus scan failed",
+                    )
+                # If clean, continue with document creation
+            except HTTPException:
+                raise
+            except Exception as e:
+                # Unexpected error during scanning - clean up and fail
+                from documents.utils import delete_from_disk
+                delete_from_disk(storage_path, company)
+                AuditService(self.session).log_event(
+                    action=AuditAction.UPLOAD_DOCUMENT,
+                    module=AuditModule.DOCUMENTS,
+                    company_id=current_user.company_id,
+                    entity_name="document",
+                    entity_id="scan_failed",
+                    new_value={"title": title, "file_name": file.filename},
+                    description=f"Upload failed: scan exception for '{title}'",
+                    is_success=False,
+                    failure_reason=f"Antivirus scan error: {str(e)}",
+                    user=current_user,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail="Antivirus scan failed",
+                )
+
         doc = Document(
             title=title,
             description=description,
@@ -272,6 +380,7 @@ class DocumentService:
             mime_type=file.content_type or "",
             file_size=file_size,
             storage_path=storage_path,
+            av_scan_id=av_scan.id if av_scan else None,
         )
         self.session.add(doc)
         self.session.flush()
@@ -292,7 +401,7 @@ class DocumentService:
             company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(doc.id),
-            new_value={"title": title, "file_name": file.filename},
+            new_value={"title": title, "file_name": file.filename, "av_scan_status": av_scan.scan_status.value if av_scan else "skipped"},
             description=f"Uploaded document '{title}'",
             is_success=True,
             user=current_user,

@@ -31,7 +31,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from documents.models import DocumentStatus, FileType
+from documents.models import DocumentStatus, FileType, ScanStatus
 
 
 # ══════════════════════════════════════════════
@@ -121,6 +121,7 @@ class DocumentResponse(BaseModel):
     created_at:   datetime
     updated_at:   datetime
     user_level_ids: List[int]   = Field(default_factory=list, description="IDs of permitted user levels")
+    av_scan_status: Optional[ScanStatus] = Field(default=None, description="Antivirus scan status")
 
     model_config = {"from_attributes": True}
 
@@ -158,6 +159,7 @@ class DocumentCardResponse(BaseModel):
     status:     DocumentStatus
     created_at: datetime
     user_level_ids: List[int] = Field(default_factory=list)
+    av_scan_status: Optional[ScanStatus] = Field(default=None, description="Antivirus scan status")
 
     model_config = {"from_attributes": True}
 
