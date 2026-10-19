@@ -65,7 +65,7 @@ export default function DocumentsPage() {
   useEffect(() => {
     if (isAdmin) {
       Promise.resolve().then(() => setUsersLoading(true))
-      usersApi.list({ limit: 500 })
+      usersApi.list({ limit: 200 })
         .then((data) => setUsers(data.items))
         .catch(() => toast.error('Failed to load users'))
         .finally(() => setUsersLoading(false))
