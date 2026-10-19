@@ -216,14 +216,21 @@ class DocumentService:
         if uploaded_by is not None:
             query = query.where(Document.uploaded_by == uploaded_by)
         # Date range filters
+        # For "from" dates: include the entire day (>= start of day)
+        # For "to" dates: include the entire day (< start of next day)
+        # This ensures date-only strings like '2026-01-20' work as expected (inclusive)
+        from datetime import timedelta
         if created_from is not None:
             query = query.where(Document.created_at >= created_from)
         if created_to is not None:
-            query = query.where(Document.created_at <= created_to)
+            # Add 1 day to include the entire "to" date (inclusive)
+            created_to_inclusive = created_to + timedelta(days=1)
+            query = query.where(Document.created_at < created_to_inclusive)
         if updated_from is not None:
             query = query.where(Document.updated_at >= updated_from)
         if updated_to is not None:
-            query = query.where(Document.updated_at <= updated_to)
+            updated_to_inclusive = updated_to + timedelta(days=1)
+            query = query.where(Document.updated_at < updated_to_inclusive)
 
         # Apply sorting
         sort_field_map = {
@@ -233,11 +240,28 @@ class DocumentService:
             "created_at":  Document.created_at,
             "updated_at":  Document.updated_at,
         }
-        sort_field = sort_field_map.get(sort_by, Document.created_at)
+        
+        # Validate sort_by
+        if sort_by is not None and sort_by not in sort_field_map:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid sort_by value: '{sort_by}'. Allowed values: {', '.join(sort_field_map.keys())}"
+            )
+        
+        # Validate sort_order
+        if sort_order is not None and sort_order not in ("asc", "desc"):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid sort_order value: '{sort_order}'. Allowed values: asc, desc"
+            )
+        
+        # Determine the resolved sort_by key for default sort order logic
+        resolved_sort_by = sort_by if sort_by in sort_field_map else "created_at"
+        sort_field = sort_field_map[resolved_sort_by]
         is_desc = sort_order == "desc"
         # Default sort order: desc for dates, asc for text/size
         if sort_order is None:
-            is_desc = sort_by in ("created_at", "updated_at")
+            is_desc = resolved_sort_by in ("created_at", "updated_at")
 
         query = query.order_by(
             sort_field.desc() if is_desc else sort_field.asc(),
