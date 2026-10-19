@@ -90,6 +90,7 @@ export default function App() {
               <Route path="/dashboard"            element={<DashboardPage />} />
               <Route path="/force-change-password" element={<ForceChangePasswordPage />} />
               <Route path="/directory/:directoryId" element={<DocumentsPage />} />
+              <Route path="/search" element={<DocumentsPage />} />
               <Route path="/admin"                element={<AdminPage />} />
               <Route path="/admin/company-profile" element={<CompanyProfilePage />} />
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />

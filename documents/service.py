@@ -166,6 +166,18 @@ class DocumentService:
                 access_filters.append(Directory.category_id.in_(sorted(category_ids)))
             if effective_dir_ids:
                 access_filters.append(Directory.id.in_(sorted(effective_dir_ids)))
+            
+            # When directory_id and category_id are both None, this is a global search
+            # across all accessible directories. The access_filters already scope to
+            # granted categories + directory subtrees, so no additional narrowing needed.
+            # When either is provided, we validate access to that specific scope.
+            if directory_id is not None:
+                # Navigation through an ancestor directory is allowed; the
+                # access_filters above still scope results to authorized rows.
+                ensure_directory_read_access(self.session, current_user, directory_id)
+            if category_id is not None:
+                ensure_category_read_access(self.session, current_user, category_id)
+
             if not access_filters:
                 # No grants at all: preserve the previous empty-result shape
                 # without emitting `IN ()` (invalid SQL on some backends).
@@ -180,13 +192,6 @@ class DocumentService:
                     (access_filters[0] | access_filters[1]),
                     Category.is_active == True,
                 )
-
-            if directory_id is not None:
-                # Navigation through an ancestor directory is allowed; the
-                # access_filters above still scope results to authorized rows.
-                ensure_directory_read_access(self.session, current_user, directory_id)
-            if category_id is not None:
-                ensure_category_read_access(self.session, current_user, category_id)
 
         # User Level visibility filtering for non-admins
         if not current_user.is_admin():
