@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -31,15 +32,24 @@ router = APIRouter()
 
 @router.get("", response_model=DocumentListResponse, summary="List / search documents")
 def list_documents(
-    directory_id: Optional[int]          = Query(None),
-    category_id:  Optional[int]          = Query(None),
-    file_type:    Optional[str]          = Query(None, description="pdf | docx | excel | image"),
-    search:       Optional[str]          = Query(None, description="Search title or filename"),
-    status:       Optional[DocumentStatus] = Query(None, description="Filter by status (admin only for non-active)"),
-    skip:         int                    = Query(0, ge=0),
-    limit:        int                    = Query(50, ge=1, le=200),
-    current_user: CurrentUser            = None,
-    session:      Session                = Depends(get_session),
+    directory_id:    Optional[int]          = Query(None),
+    category_id:     Optional[int]          = Query(None),
+    file_type:       Optional[str]          = Query(None, description="pdf | docx | excel | image"),
+    search:          Optional[str]          = Query(None, description="Search title or filename"),
+    status:          Optional[DocumentStatus] = Query(None, description="Filter by status (admin only for non-active)"),
+    # Sorting
+    sort_by:         Optional[str]          = Query(None, description="Sort field: title, file_name, file_size, created_at, updated_at"),
+    sort_order:      Optional[str]          = Query(None, description="Sort order: asc or desc"),
+    # Additional filters
+    uploaded_by:     Optional[int]          = Query(None, description="Filter by uploader user ID"),
+    created_from:    Optional[datetime]     = Query(None, description="Filter by created_at >= (ISO 8601)"),
+    created_to:      Optional[datetime]     = Query(None, description="Filter by created_at <= (ISO 8601)"),
+    updated_from:    Optional[datetime]     = Query(None, description="Filter by updated_at >= (ISO 8601)"),
+    updated_to:      Optional[datetime]     = Query(None, description="Filter by updated_at <= (ISO 8601)"),
+    skip:            int                    = Query(0, ge=0),
+    limit:           int                    = Query(50, ge=1, le=200),
+    current_user:    CurrentUser            = None,
+    session:         Session                = Depends(get_session),
 ):
     return DocumentService(session).list_documents(
         current_user=current_user,
@@ -48,6 +58,13 @@ def list_documents(
         file_type=file_type,
         search=search,
         status=status,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        uploaded_by=uploaded_by,
+        created_from=created_from,
+        created_to=created_to,
+        updated_from=updated_from,
+        updated_to=updated_to,
         skip=skip,
         limit=limit,
     )

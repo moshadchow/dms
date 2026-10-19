@@ -205,26 +205,81 @@ class DocumentListResponse(BaseModel):
 # File type filter (used as query param schema)
 # ══════════════════════════════════════════════
 
+class SortField(str):
+    """Allowed sort fields for document listing."""
+    TITLE = "title"
+    FILE_NAME = "file_name"
+    FILE_SIZE = "file_size"
+    CREATED_AT = "created_at"
+    UPDATED_AT = "updated_at"
+
+    @classmethod
+    def values(cls) -> list[str]:
+        return [cls.TITLE, cls.FILE_NAME, cls.FILE_SIZE, cls.CREATED_AT, cls.UPDATED_AT]
+
+
+class SortOrder(str):
+    """Sort order options."""
+    ASC = "asc"
+    DESC = "desc"
+
+
 class DocumentFilterParams(BaseModel):
     """
     Query parameters accepted by GET /documents.
     Validated centrally so routers stay clean.
     """
 
-    directory_id: Optional[int]      = None
-    category_id:  Optional[int]      = None
-    file_type:    Optional[FileType] = Field(None, description="pdf | docx | excel | image")
-    status:       Optional[DocumentStatus] = Field(
-                                               DocumentStatus.ACTIVE,
-                                               description="Defaults to active",
-                                             )
-    search:       Optional[str]      = Field(
-                                           None,
-                                           max_length=255,
-                                           description="Search title or filename",
-                                       )
-    skip:         int = Field(0, ge=0)
-    limit:        int = Field(50, ge=1, le=200)
+    directory_id:   Optional[int]      = None
+    category_id:    Optional[int]      = None
+    file_type:      Optional[FileType] = Field(None, description="pdf | docx | excel | image")
+    status:         Optional[DocumentStatus] = Field(
+                                                DocumentStatus.ACTIVE,
+                                                description="Defaults to active",
+                                              )
+    search:         Optional[str]      = Field(
+                                            None,
+                                            max_length=255,
+                                            description="Search title or filename",
+                                        )
+    # Sorting
+    sort_by:        Optional[str]      = Field(
+                                                None,
+                                                description="Sort field: title, file_name, file_size, created_at, updated_at",
+                                            )
+    sort_order:     Optional[str]      = Field(
+                                                None,
+                                                description="Sort order: asc or desc",
+                                            )
+    # Additional filters
+    uploaded_by:    Optional[int]      = Field(None, description="Filter by uploader user ID")
+    created_from:   Optional[datetime] = Field(None, description="Filter by created_at >= (ISO 8601)")
+    created_to:     Optional[datetime] = Field(None, description="Filter by created_at <= (ISO 8601)")
+    updated_from:   Optional[datetime] = Field(None, description="Filter by updated_at >= (ISO 8601)")
+    updated_to:     Optional[datetime] = Field(None, description="Filter by updated_at <= (ISO 8601)")
+    # Pagination
+    skip:           int = Field(0, ge=0)
+    limit:          int = Field(50, ge=1, le=200)
+
+    @field_validator("sort_by")
+    @classmethod
+    def validate_sort_by(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in SortField.values():
+            raise ValueError(
+                f"Invalid sort_by '{v}'. Allowed values: {', '.join(SortField.values())}"
+            )
+        return v
+
+    @field_validator("sort_order")
+    @classmethod
+    def validate_sort_order(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in (SortOrder.ASC, SortOrder.DESC):
+            raise ValueError(f"Invalid sort_order '{v}'. Allowed values: asc, desc")
+        return v
 
 
 # ══════════════════════════════════════════════
