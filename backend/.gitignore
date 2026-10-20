@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+storage/uploads/
+*.pyc
+node_modules/
+*.py[cod]
+.claude/settings.local.json

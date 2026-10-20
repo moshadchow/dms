@@ -6,8 +6,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER:     dmsuser
-      POSTGRES_PASSWORD: dmspass2026
-      POSTGRES_DB:       dmsdb
+      POSTGRES_PASSWORD: dmspass_2026
+      POSTGRES_DB:       dms_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -19,13 +19,13 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    build: ./dms
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:root@db:5432/dmsdb
+      DATABASE_URL: postgresql+psycopg2://dmsuser:dmspass_2026@db:5432/dms_db
       JWT_SECRET_KEY: "${JWT_SECRET_KEY:-change-me-in-production}"
       DEBUG: "false"
       STORAGE_ROOT: /app/storage/uploads

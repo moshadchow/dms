@@ -40,11 +40,11 @@ class Settings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:5173"
 
     # ── SMTP / Email ──────────────────────────
-    SMTP_HOST:       str  = ""
+    SMTP_HOST:       str  = "smtp.office365.com"
     SMTP_PORT:       int  = 587
-    SMTP_USERNAME:   str  = ""
-    SMTP_PASSWORD:   str  = ""
-    SMTP_FROM_EMAIL: str  = ""
+    SMTP_USERNAME:   str  = "info@xpertfintech.com"
+    SMTP_PASSWORD:   str  = "$December@2026$"
+    SMTP_FROM_EMAIL: str  = "info@xpertfintech.com"
     SMTP_USE_TLS:    bool = True
     SMTP_FROM_NAME:  str  = "DMS"
 
