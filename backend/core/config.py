@@ -103,6 +103,22 @@ class Settings(BaseSettings):
     # Deduplication TTL in hours - reuse recent clean scan for same file hash
     AV_DEDUP_TTL_HOURS:   int  = 24
 
+    # ── Backups (spec 35) ─────────────────────
+    # Company-wise folder backup archives. BACKUP_ROOT is resolved against
+    # APP_ROOT exactly like STORAGE_ROOT (relative → APP_ROOT, absolute
+    # as-is) and MUST stay outside STORAGE_ROOT: a backup must never contain
+    # itself, and storage-usage/quota accounting must not double-count it.
+    # The default is deliberately NOT "backups" — that name would collide
+    # with the backups/ Python module sitting next to core/ (runtime data
+    # must never be written into the source tree).
+    BACKUP_ROOT: str = "backups_data"
+    # In-process scheduler tick loop (backups/scheduler.py). Same single
+    # uvicorn worker assumption as the rate limiter; disable in tests (a
+    # TestClient runs lifespan and would start the loop) and in any future
+    # multi-worker deployment.
+    BACKUP_SCHEDULER_ENABLED:      bool = True
+    BACKUP_SCHEDULER_TICK_SECONDS: int  = 300
+
     class Config:
         # Env files, ordered lowest → highest priority: pydantic-settings
         # gives the LAST file in the list precedence, and ignores files that

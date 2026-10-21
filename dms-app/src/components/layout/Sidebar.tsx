@@ -203,6 +203,12 @@ export default function Sidebar({ isOpen }: Props) {
                 icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>}
                 active={location.pathname === '/admin/audit-trail'}
               />
+              <NavBtn
+                label="Folder Backups"
+                onClick={() => navigate('/admin/backups')}
+                icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>}
+                active={location.pathname === '/admin/backups'}
+              />
               {isSuperAdmin() && (
                 <NavBtn
                   label="Company Profile"

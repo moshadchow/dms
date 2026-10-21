@@ -106,6 +106,12 @@ class AuditAction(str, Enum):
     COMPLETE_CORRESPONDENCE = "complete_correspondence"
     ARCHIVE_CORRESPONDENCE = "archive_correspondence"
 
+    # Backups (spec 35)
+    CREATE_BACKUP = "create_backup"
+    BACKUP_FAILED = "backup_failed"
+    DOWNLOAD_BACKUP = "download_backup"
+    UPDATE_BACKUP_SETTINGS = "update_backup_settings"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"
@@ -118,6 +124,7 @@ class AuditModule(str, Enum):
     WORKFLOW = "workflow"
     COMPANIES = "companies"
     CORRESPONDENCE = "correspondence"
+    BACKUPS = "backups"
 
 
 # ──────────────────────────────────────────────

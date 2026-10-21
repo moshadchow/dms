@@ -10,6 +10,7 @@ import core.database
 import middleware.rbac
 import middleware.audit
 import notifications.tasks
+import backups.scheduler
 from core.database import get_session
 from core.security import create_access_token, hash_password
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
@@ -46,6 +47,13 @@ def client(tmp_path, monkeypatch):
     # notifications/tasks.py binds engine at import time — patch it too so
     # background tasks run against the test DB instead of the real one.
     monkeypatch.setattr(notifications.tasks, "engine", engine)
+    # backups/scheduler.py binds engine at import time (spec 35) — patch it
+    # too so a scheduler pass hits the test DB instead of the real one.
+    monkeypatch.setattr(backups.scheduler, "engine", engine)
+    # Backup scheduler must never start under TestClient (entering the
+    # context manager runs lifespan) and archives go to a per-test temp dir.
+    monkeypatch.setattr(core.database.settings, "BACKUP_SCHEDULER_ENABLED", False)
+    monkeypatch.setattr(core.database.settings, "BACKUP_ROOT", str(tmp_path / "backups"))
     monkeypatch.setattr(core.database.settings, "DEBUG", False)
     monkeypatch.setattr(core.database.settings, "STORAGE_ROOT", str(tmp_path / "storage"))
     # Never open real network connections from tests (tasks send email once

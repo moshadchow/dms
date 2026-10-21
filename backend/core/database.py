@@ -38,6 +38,7 @@ def create_db_and_tables() -> None:
     import memos.models            # noqa: F401
     import antivirus.models        # noqa: F401 (must be before company_profile due to FK)
     import company_profile.models  # noqa: F401
+    import backups.models          # noqa: F401 (must be after company_profile due to FK)
 
     SQLModel.metadata.create_all(engine)
 

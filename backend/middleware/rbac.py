@@ -75,6 +75,12 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     ("GET",    "/api/v1/antivirus/scans"):      PermissionAction.VIEW,
     ("GET",    "/api/v1/antivirus/scans/"):     PermissionAction.VIEW,
     ("POST",   "/api/v1/antivirus/rescan/"):    PermissionAction.UPDATE,
+    # ── Backups (spec 35) ─────────────────────
+    # GET also covers /{id} and /{id}/download (prefix match); the
+    # per-endpoint AdminUser guard is authoritative on every route.
+    ("GET",    "/api/v1/backups"):        PermissionAction.VIEW,
+    ("POST",   "/api/v1/backups"):        PermissionAction.CREATE,
+    ("PUT",    "/api/v1/backups"):        PermissionAction.UPDATE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)

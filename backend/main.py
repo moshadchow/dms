@@ -6,6 +6,8 @@ from fastapi.openapi.utils import get_openapi
 
 from audit.router        import router as audit_router
 from auth.router         import router as auth_router
+from backups.router      import router as backups_router
+from backups.scheduler   import start_scheduler, stop_scheduler
 from categories.router   import router as categories_router
 from core.config         import settings
 from core.database       import create_db_and_tables
@@ -29,7 +31,13 @@ from antivirus.router    import router as antivirus_router
 async def lifespan(app: FastAPI):
     if settings.DEBUG:
         create_db_and_tables()
+    if settings.BACKUP_SCHEDULER_ENABLED:
+        # Company backup scheduler (spec 35) — in-process asyncio tick loop,
+        # single uvicorn worker assumption (same as the rate limiter).
+        # Tests disable it via conftest because a TestClient runs lifespan.
+        start_scheduler()
     yield
+    await stop_scheduler()
 
 
 app = FastAPI(
@@ -114,6 +122,7 @@ app.include_router(storage_router,           prefix=f"{API}/storage",           
 app.include_router(company_profile_router,   prefix=f"{API}/companies",            tags=["Companies"])
 app.include_router(correspondence_router,    prefix=f"{API}/correspondences",       tags=["Correspondence"])
 app.include_router(antivirus_router,         prefix=f"{API}/antivirus",            tags=["Antivirus"])
+app.include_router(backups_router,           prefix=f"{API}/backups",              tags=["Backups"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

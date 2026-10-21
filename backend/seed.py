@@ -18,11 +18,17 @@ from core.config import settings
 from core.database import engine
 from core.security import hash_password
 
-# Import all models to ensure SQLModel metadata is populated
-import directories.models  # noqa: F401
-import documents.models    # noqa: F401
-import categories.models   # noqa: F401
-import user_levels.models  # noqa: F401
+# Import all models so SQLModel metadata (and mapper relationships) are
+# fully populated — mirror create_db_and_tables()
+import directories.models      # noqa: F401
+import documents.models        # noqa: F401
+import categories.models       # noqa: F401
+import user_levels.models      # noqa: F401
+import workflow.models         # noqa: F401
+import memos.models            # noqa: F401
+import antivirus.models        # noqa: F401 (must be before company_profile due to FK)
+import company_profile.models  # noqa: F401
+import backups.models          # noqa: F401 (must be after company_profile due to FK)
 from user_levels.models import UserLevel
 from users.models import (
     Permission,
@@ -191,6 +197,21 @@ def seed() -> None:
             print("  [+] Storage capacity set to 100 GB")
         else:
             print(f"  [=] Storage capacity already set: {cap_row.value} GB")
+
+        # ── 6. Backup schedule defaults (spec 35) ─────
+
+        BACKUP_SETTING_DEFAULTS = [
+            ("backup_enabled", "true", "Company-wise folder backup scheduler enabled"),
+            ("backup_interval_hours", "24", "Hours between scheduled company backups"),
+            ("backup_retention_count", "7", "Archives kept per company before pruning"),
+        ]
+        for key, value, description in BACKUP_SETTING_DEFAULTS:
+            row = session.get(SystemSetting, key)
+            if not row:
+                session.add(SystemSetting(key=key, value=value, description=description))
+                print(f"  [+] Backup setting: {key} = {value}")
+            else:
+                print(f"  [=] Backup setting already set: {key} = {row.value}")
 
         session.commit()
         print("\n  Seed complete.")
