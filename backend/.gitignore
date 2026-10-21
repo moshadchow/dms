@@ -5,6 +5,7 @@ __pycache__/
 .env.*
 !.env.example
 storage/uploads/
+backups_data/
 *.pyc
 node_modules/
 *.py[cod]

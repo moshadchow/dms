@@ -14,6 +14,7 @@ const MemoDetailPage = lazy(() => import('@/pages/MemoDetailPage'))
 const AdminPage     = lazy(() => import('@/pages/AdminPage'))
 const CompanyProfilePage = lazy(() => import('@/pages/CompanyProfilePage'))
 const AuditTrailPage = lazy(() => import('@/pages/AuditTrailPage'))
+const BackupsPage = lazy(() => import('@/pages/BackupsPage'))
 const PendingApprovalPage = lazy(() => import('@/pages/PendingApprovalPage'))
 const ApprovalHistoryPage = lazy(() => import('@/pages/ApprovalHistoryPage'))
 const ForceChangePasswordPage = lazy(() => import('@/pages/ForceChangePasswordPage'))
@@ -94,6 +95,7 @@ export default function App() {
               <Route path="/admin"                element={<AdminPage />} />
               <Route path="/admin/company-profile" element={<CompanyProfilePage />} />
               <Route path="/admin/audit-trail"    element={<AuditTrailPage />} />
+              <Route path="/admin/backups"        element={<BackupsPage />} />
               <Route path="/approvals/pending"    element={<PendingApprovalPage />} />
               <Route path="/approvals/history"    element={<ApprovalHistoryPage />} />
               <Route path="/correspondence"         element={<CorrespondenceListPage />} />
