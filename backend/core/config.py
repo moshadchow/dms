@@ -1,7 +1,26 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import List
 
 from pydantic_settings import BaseSettings
+
+
+# The application root — the directory that holds `core/` (and, in every
+# supported deployment, `main.py`):
+#
+#   dev  : F:\Python-Project\dms\backend
+#   prod : /var/www/dms
+#
+# Path-ish settings are resolved against this directory rather than the
+# process working directory, so the app resolves the same tree no matter
+# where uvicorn was launched from.
+APP_ROOT: Path = Path(__file__).resolve().parents[1]
+
+# The repository root — the parent of the application root. The shared `.env`
+# lives here (see `.env.example`), while the backend package lives in
+# `backend/`, so this is where the env file is found when the server is
+# started from the application directory.
+REPO_ROOT: Path = APP_ROOT.parent
 
 
 class Settings(BaseSettings):
@@ -85,7 +104,22 @@ class Settings(BaseSettings):
     AV_DEDUP_TTL_HOURS:   int  = 24
 
     class Config:
-        env_file        = ".env"
+        # Env files, ordered lowest → highest priority: pydantic-settings
+        # gives the LAST file in the list precedence, and ignores files that
+        # do not exist.
+        #
+        #   1. <repo root>/.env  — the documented location (`.env.example`)
+        #   2. <app root>/.env   — a self-contained backend deployment
+        #   3. ./.env            — relative to the process working directory
+        #
+        # Before this list the app only ever looked at `./.env`, which meant
+        # that starting the server from `backend/` silently ignored the
+        # repo-root `.env` and fell back to the code defaults.
+        env_file = (
+            str(REPO_ROOT / ".env"),
+            str(APP_ROOT / ".env"),
+            ".env",
+        )
         env_file_encoding = "utf-8"
         case_sensitive  = False
         # Unknown env vars (e.g. stale Azure AD credential vars left in an

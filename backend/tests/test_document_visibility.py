@@ -8,7 +8,7 @@ import io
 import json
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from core.security import create_access_token, hash_password
 from documents.models import DocumentUserLevelLink
@@ -36,17 +36,40 @@ def seeded_visibility_data(client, seeded_data):
         low_level = session.get(UserLevel, seeded_data["low_level_id"])
 
         maker_role = session.exec(
-            __import__("sqlmodel", fromlist=["select"]).select(Role).where(Role.name == RoleName.MAKER)
+            select(Role).where(Role.name == RoleName.MAKER)
         ).first()
 
-        checker_role = Role(name=RoleName.CHECKER, description="Checker")
-        session.add(checker_role)
-        session.flush()
+        # The seeded fixture already creates the CHECKER role (with VIEW,
+        # DOWNLOAD and UPDATE). Creating it again violated the UNIQUE
+        # constraint on roles.name, which errored out every test in this
+        # module — including test_preview_respects_visibility, the one that
+        # guards document reads. Look the role up instead of re-creating it.
+        checker_role = session.exec(
+            select(Role).where(Role.name == RoleName.CHECKER)
+        ).first()
+        assert checker_role is not None, "seeded CHECKER role is missing"
+
+        # Grant the checker role anything the seeded fixture did not already
+        # give it (role_permission_links has a composite primary key).
+        existing = {
+            link.permission_id
+            for link in session.exec(
+                select(RolePermissionLink).where(
+                    RolePermissionLink.role_id == checker_role.id
+                )
+            ).all()
+        }
         for action in (PermissionAction.VIEW, PermissionAction.DOWNLOAD):
             perm = session.exec(
-                __import__("sqlmodel", fromlist=["select"]).select(Permission).where(Permission.action == action)
+                select(Permission).where(Permission.action == action)
             ).first()
-            session.add(RolePermissionLink(role_id=checker_role.id, permission_id=perm.id))
+            if perm is not None and perm.id not in existing:
+                session.add(RolePermissionLink(role_id=checker_role.id, permission_id=perm.id))
+
+        # A user without a company can never pass ensure_category_access
+        # (the category must belong to the user's company), so these accounts
+        # need the seeded company or every category-scoped read 404s.
+        company_id = seeded_data["company_id"]
 
         maker_high = User(
             full_name="Maker High",
@@ -54,6 +77,7 @@ def seeded_visibility_data(client, seeded_data):
             hashed_password=hash_password("Maker@1234"),
             is_active=True,
             user_level_id=high_level.id,
+            company_id=company_id,
         )
         maker_medium = User(
             full_name="Maker Medium",
@@ -61,6 +85,7 @@ def seeded_visibility_data(client, seeded_data):
             hashed_password=hash_password("Maker@1234"),
             is_active=True,
             user_level_id=medium_level.id,
+            company_id=company_id,
         )
         maker_low = User(
             full_name="Maker Low",
@@ -68,6 +93,7 @@ def seeded_visibility_data(client, seeded_data):
             hashed_password=hash_password("Maker@1234"),
             is_active=True,
             user_level_id=low_level.id,
+            company_id=company_id,
         )
         checker_high = User(
             full_name="Checker High",
@@ -75,6 +101,7 @@ def seeded_visibility_data(client, seeded_data):
             hashed_password=hash_password("Checker@1234"),
             is_active=True,
             user_level_id=high_level.id,
+            company_id=company_id,
         )
         checker_medium = User(
             full_name="Checker Medium",
@@ -82,6 +109,7 @@ def seeded_visibility_data(client, seeded_data):
             hashed_password=hash_password("Checker@1234"),
             is_active=True,
             user_level_id=medium_level.id,
+            company_id=company_id,
         )
         checker_low = User(
             full_name="Checker Low",
@@ -89,6 +117,7 @@ def seeded_visibility_data(client, seeded_data):
             hashed_password=hash_password("Checker@1234"),
             is_active=True,
             user_level_id=low_level.id,
+            company_id=company_id,
         )
         session.add_all([maker_high, maker_medium, maker_low, checker_high, checker_medium, checker_low])
         session.flush()

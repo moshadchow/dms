@@ -97,7 +97,7 @@ async def save_upload(
 
     dest_path.write_bytes(content)
 
-    relative = str(dest_path.relative_to(storage_service.get_company_root(company)))
+    relative = dest_path.relative_to(storage_service.get_company_root(company)).as_posix()
     return relative, len(content)
 
 
@@ -114,7 +114,7 @@ def build_variant_storage_path(
     relative = Path(str(category_id)) / str(directory_id) / "_variants" / str(owner_user_id) / str(variant_id) / safe_name
     abs_dir = uploads_root / relative.parent
     abs_dir.mkdir(parents=True, exist_ok=True)
-    return str(relative)
+    return relative.as_posix()
 
 
 def copy_into_storage(source_relative_path: str, dest_relative_path: str, company: Company) -> int:

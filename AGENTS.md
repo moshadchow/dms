@@ -38,7 +38,14 @@ Any model change needs a migration. **Never** rely on `DEBUG=True` in a shared/d
 ## DB / Startup Invariant
 `main.py`'s lifespan calls `create_db_and_tables()` when `DEBUG=True`, silently bypassing Alembic. It builds tables from SQLModel metadata only, so it will not apply column adds to existing tables. Production runs `DEBUG=false` + `alembic upgrade head` only.
 
-Postgres in production (`requirements.txt`: `psycopg2-binary`). Storage: `STORAGE_ROOT` from `.env` — code default is `storage`, `.env.example` sets `storage/uploads`.
+Postgres in production (`requirements.txt`: `psycopg2-binary`).
+
+## Config / Storage Root Invariant
+`core/config.py` resolves its env file **without depending on the working directory**: the candidates are `<repo root>/.env` → `<app root>/.env` → `./.env` (last one wins, pydantic-settings). The app root is `core/config.py`'s parent's parent (`backend/` in the repo, `/var/www/dms` on the server) — it is where `main.py` lives. The repo-root `.env` is the documented location; the backend package sitting in `backend/` used to mean it was never found when the server was started from there, so **every setting silently fell back to its code default**.
+
+`STORAGE_ROOT` is therefore the one to watch: a **relative** value resolves against the **app root**, never against the CWD (`core/storage.py::storage_service.storage_root`), so the same config yields the same tree regardless of where uvicorn was launched. An absolute value is used as-is (tests, containers). Code default is `storage`, `.env.example` sets `storage/uploads` — a mismatch moves the company root and makes every file read answer 404 "File not found on disk" (which reads like an access denial, but is not). Always read the root through `storage_service.storage_root`; never rebuild it from `settings.STORAGE_ROOT` by hand.
+
+Stored `storage_path` values are **company-relative and POSIX** (`uploads/<category_id>/<directory_id>/<file>`). Rows written on Windows hold backslashes, which are literal filename characters on Linux — the resolver normalizes `\` → `/` at the single resolution point, and new rows are written with `as_posix()`.
 
 ## Testing: SQLite In-Memory
 `tests/conftest.py` builds a `StaticPool` in-memory engine — **not** Postgres — and monkeypatches `engine` in four modules: `core.database`, `middleware.rbac`, `middleware.audit`, `notifications.tasks`, plus settings (`DEBUG=False`, `STORAGE_ROOT` → per-test temp dir, `SMTP_HOST=""` so no mail goes out). A new module that does `from core.database import engine` at import time bypasses the patch and hits the real DB; add it to the fixture.
@@ -52,7 +59,9 @@ Company-isolation regressions are the norm here; they get their own file (`test_
 
 **The suite is slow.** The `client` fixture rebuilds the whole schema on a fresh in-memory DB per test (~2 s setup), and `test_correspondence.py` alone takes ~5 min (100 tests) with PDF generation on top. A full run is ~20 min. Target a file/class while iterating, but budget a long run before declaring done.
 
-**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`) + 14 errors in `test_document_visibility.py`. Recent healthy runs: `2 failed, 589 passed, 14 errors` (the 2 + 14 are constant; passed grows with new tests). The cause in several of these is tests creating a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) — in tests, **look up the seeded role**, don't create one.
+**The full suite is not green — known baseline failures** (present on a clean checkout; do not chase them as your regressions): 2 failures (`test_workflow.py::TestApprovalActionService::test_parallel_step_any_approve_completes`, `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`). Recent healthy runs: `2 failed, 686 passed` (the 2 are constant; passed grows with new tests).
+
+The 14 errors that used to sit in `test_document_visibility.py` are **fixed** — its fixture created a `Role(...)` that seeded data already created (`roles.name` is UNIQUE) and gave its users no `company_id` (a user without a company can never pass `ensure_category_access`, so every category-scoped read 404'd). **Look up the seeded role, don't create one**, and give test users a company. A fixture that dies in setup hides the assertions behind it — that is how a document-read regression reached production unnoticed.
 
 ## Module Convention
 `models.py` (SQLModel + read schemas) · `schemas.py` (write schemas, optional) · `service.py` (class-based, takes `Session`) · `router.py` (thin — business logic belongs in the service). Keep routers thin.
@@ -85,6 +94,8 @@ Non-admin denials return **404, not 403** (oracle avoidance) — a 404 on these 
 `core/storage.py` `StorageService` (module singleton `storage_service`) owns all path building. Layout: `STORAGE_ROOT/<short_name>/{uploads,memos,signatures,correspondence}/`.
 
 **Always resolve through `documents/utils.py::resolve_storage_path(relative_path, company)`** — never `STORAGE_ROOT / relative_path` by hand. It validates the resolved path stays under the company root (path-traversal guard) and 404s if absent. `resolve_path_with_fallback` tries the company-prefixed path first, then the legacy non-prefixed path, for pre-migration files. `delete_from_disk` is idempotent. `scripts/migrate_storage.py` and `scripts/fix_storage_paths.py` backfill the layout.
+
+A **missing file and a misconfigured root both surface as a bare 404**, which is indistinguishable from an access denial (non-admin denials are 404 by design — see *Company Scoping*). `resolve_path` logs `dms.storage` WARNING when the *company root itself* is missing — check the server log before assuming a permissions problem. Regression coverage: `tests/test_storage_root.py`.
 
 ## RBAC: two layers
 1. `middleware/rbac.py` `ROUTE_PERMISSION_MAP` maps `(HTTP_METHOD, path_prefix)` → `PermissionAction`, matched by **longest prefix** — so a broad prefix covers its subpaths (e.g. in `correspondence/` both `POST .../{id}/...` and `DELETE .../{id}/...` resolve to `UPDATE`). A new **top-level prefix** with no entry is silently skipped by the middleware (only per-endpoint guards remain), so add one. Paths under `PUBLIC_PATH_PREFIXES` (`/api/v1/auth`, `/docs`, `/redoc`, `/openapi.json`, `/health`) bypass it entirely.

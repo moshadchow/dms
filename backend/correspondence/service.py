@@ -305,7 +305,7 @@ class CorrespondenceService:
         abs_path = root / filename
         abs_path.write_text(html_content, encoding="utf-8")
         company_root = storage_service.get_company_root(company)
-        return str(abs_path.relative_to(company_root))
+        return abs_path.relative_to(company_root).as_posix()
 
     def _log_audit(
         self,
@@ -1413,7 +1413,7 @@ class CorrespondenceService:
         dest_path = dest_dir / safe_name
         dest_path.write_bytes(content)
 
-        storage_path = str(dest_path.relative_to(storage_service.get_company_root(company)))
+        storage_path = dest_path.relative_to(storage_service.get_company_root(company)).as_posix()
         file_size = len(content)
 
         # Antivirus scanning (if enabled)

@@ -85,10 +85,11 @@ export const documentsApi = {
     return `${apiRoot}/documents/${id}/view`
   },
 
-  // Returns a blob URL for inline preview or download
+  // Returns the endpoint for an inline preview. The access token travels in
+  // the Authorization header (see apiClient / fetch callers) — never as a
+  // query parameter, which would write the JWT into the access logs.
   getViewUrl: (id: number): string => {
-    const token = localStorage.getItem('access_token')
-    return `${documentsApi.getViewEndpoint(id)}?token=${token}`
+    return documentsApi.getViewEndpoint(id)
   },
 
   getVariantViewEndpoint: (variantId: number): string => {
@@ -96,8 +97,7 @@ export const documentsApi = {
   },
 
   getVariantViewUrl: (variantId: number): string => {
-    const token = localStorage.getItem('access_token')
-    return `${documentsApi.getVariantViewEndpoint(variantId)}?token=${token}`
+    return documentsApi.getVariantViewEndpoint(variantId)
   },
 
   download: async (id: number, fileName: string): Promise<void> => {

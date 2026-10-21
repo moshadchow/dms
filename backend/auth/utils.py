@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile, status
 
 from core.config import settings
+from core.storage import storage_service
 from documents.models import ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, FileType
 
 
@@ -34,7 +35,7 @@ async def save_upload(
     Returns:
         (relative_storage_path, file_size_in_bytes)
     """
-    storage_root = Path(settings.STORAGE_ROOT)
+    storage_root = storage_service.storage_root
     dest_dir = storage_root / str(category_id) / str(directory_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -54,14 +55,14 @@ async def save_upload(
     dest_path.write_bytes(content)
 
     # Relative path stored in DB (never the absolute path)
-    relative = str(dest_path.relative_to(storage_root))
+    relative = dest_path.relative_to(storage_root).as_posix()
     return relative, len(content)
 
 
 def resolve_storage_path(relative_path: str) -> Path:
     """Return the absolute Path for a stored file, ensuring it exists."""
-    storage_root = Path(settings.STORAGE_ROOT)
-    abs_path = (storage_root / relative_path).resolve()
+    storage_root = storage_service.storage_root
+    abs_path = (storage_root / relative_path.replace("\\", "/")).resolve()
 
     # Security: prevent path traversal outside storage root
     if not str(abs_path).startswith(str(storage_root.resolve())):

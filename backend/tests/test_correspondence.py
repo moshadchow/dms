@@ -1,5 +1,6 @@
 """Tests for the Correspondence module."""
 
+import asyncio
 from datetime import datetime
 
 from fastapi import BackgroundTasks, HTTPException
@@ -873,7 +874,9 @@ class TestInboundSubmitWithAttachment:
                 filename="letter.pdf",
                 headers=Headers({"content-type": "application/pdf"}),
             )
-            svc.add_attachment(corr.id, upload_file, "original", maker)
+            # add_attachment is async — it must be awaited or the attachment
+            # is never created (the coroutine is simply discarded).
+            asyncio.run(svc.add_attachment(corr.id, upload_file, "original", maker))
 
             link = session.exec(
                 select(CorrespondenceAttachment)
@@ -1033,7 +1036,7 @@ class TestInboundSubmitRestriction:
                 filename="incoming.pdf",
                 headers=Headers({"content-type": "application/pdf"}),
             )
-            att = svc.add_attachment(parent.id, upload_file, "original", maker)
+            att = asyncio.run(svc.add_attachment(parent.id, upload_file, "original", maker))
             doc_id = att.document_id
 
         resp = test_client.post(

@@ -314,7 +314,7 @@ class MemoService:
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / f"{uuid.uuid4().hex}.html"
         dest_path.write_text(build_memo_html(memo.subject, memo.body), encoding="utf-8")
-        return str(dest_path.relative_to(storage_service.get_company_root(company)))
+        return dest_path.relative_to(storage_service.get_company_root(company)).as_posix()
 
     def _validate_user_levels(self, user_level_ids: list[int]) -> set[int]:
         if not user_level_ids:

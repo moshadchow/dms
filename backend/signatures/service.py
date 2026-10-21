@@ -105,7 +105,7 @@ class SignatureService:
         dest_path = dest_dir / safe_name
         dest_path.write_bytes(content)
 
-        relative_path = str(dest_path.relative_to(storage_service.get_company_root(company)))
+        relative_path = dest_path.relative_to(storage_service.get_company_root(company)).as_posix()
 
         sig = Signature(
             user_id=current_user.id,
@@ -305,7 +305,7 @@ class SignatureService:
         dest_path = dest_dir / safe_name
         dest_path.write_bytes(content)
 
-        relative_path = str(dest_path.relative_to(storage_service.get_company_root(company)))
+        relative_path = dest_path.relative_to(storage_service.get_company_root(company)).as_posix()
 
         sig = Signature(
             user_id=target_user_id,

@@ -22,7 +22,6 @@ from typing import Optional, Tuple
 
 from sqlmodel import Session, select
 
-from core.config import settings
 from core.database import engine
 from core.storage import storage_service
 from company_profile.models import Company
@@ -38,7 +37,7 @@ class StorageMigrator:
     def __init__(self, session: Session, dry_run: bool = True):
         self.session = session
         self.dry_run = dry_run
-        self.storage_root = Path(settings.STORAGE_ROOT).resolve()
+        self.storage_root = storage_service.storage_root
         self.stats = {
             "documents_moved": 0,
             "documents_skipped": 0,

@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from sqlmodel import Session, col, func, select
 
 from categories.models import Category
-from core.config import settings
 from core.storage import storage_service
 from directories.models import Directory
 from documents.models import Document, DocumentStatus
@@ -114,7 +113,7 @@ def _get_disk_usage() -> Tuple[int, Dict[int, int]]:
 
     Returns (total_bytes, {category_id: bytes})
     """
-    storage_root = Path(settings.STORAGE_ROOT).resolve()
+    storage_root = storage_service.storage_root
     if not storage_root.is_dir():
         return 0, {}
 
