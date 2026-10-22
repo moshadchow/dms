@@ -81,6 +81,13 @@ ROUTE_PERMISSION_MAP: dict[tuple[str, str], PermissionAction] = {
     ("GET",    "/api/v1/backups"):        PermissionAction.VIEW,
     ("POST",   "/api/v1/backups"):        PermissionAction.CREATE,
     ("PUT",    "/api/v1/backups"):        PermissionAction.UPDATE,
+    # ── Database backups (spec 36) ────────────
+    # Deployment-scoped (no company_id), so every route is SuperAdmin-only
+    # at the endpoint — this map is only the coarse pre-filter, and ADMIN
+    # bypasses it entirely via User.is_admin().
+    ("GET",    "/api/v1/db-backups"):     PermissionAction.VIEW,
+    ("POST",   "/api/v1/db-backups"):     PermissionAction.CREATE,
+    ("PUT",    "/api/v1/db-backups"):     PermissionAction.UPDATE,
 }
 
 # Paths that bypass RBAC (auth endpoints, health checks, docs)

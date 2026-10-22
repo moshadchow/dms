@@ -112,6 +112,12 @@ class AuditAction(str, Enum):
     DOWNLOAD_BACKUP = "download_backup"
     UPDATE_BACKUP_SETTINGS = "update_backup_settings"
 
+    # Database backups (spec 36)
+    CREATE_DB_BACKUP = "create_db_backup"
+    DB_BACKUP_FAILED = "db_backup_failed"
+    DOWNLOAD_DB_BACKUP = "download_db_backup"
+    UPDATE_DB_BACKUP_SETTINGS = "update_db_backup_settings"
+
 
 class AuditModule(str, Enum):
     AUTH = "auth"
@@ -125,6 +131,7 @@ class AuditModule(str, Enum):
     COMPANIES = "companies"
     CORRESPONDENCE = "correspondence"
     BACKUPS = "backups"
+    DB_BACKUPS = "db_backups"
 
 
 # ──────────────────────────────────────────────

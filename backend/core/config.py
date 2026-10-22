@@ -119,6 +119,32 @@ class Settings(BaseSettings):
     BACKUP_SCHEDULER_ENABLED:      bool = True
     BACKUP_SCHEDULER_TICK_SECONDS: int  = 300
 
+    # ── Database Backup (spec 36) ──────────────
+    # Whole-database dumps (db_backups/). This is the PostgreSQL half of
+    # disaster recovery — spec 35 archives the file tree, this one archives
+    # `dms_db` itself (categories, users, workflows, correspondence,
+    # audit history all live there, not on disk).
+    #
+    # DB_BACKUP_ROOT gets the same APP_ROOT-relative resolution as
+    # STORAGE_ROOT/BACKUP_ROOT and must stay outside BOTH: a dump must
+    # never contain a backup of the archives it sits next to, and quota
+    # accounting must not double-count it. The default deliberately avoids
+    # the bare name `db_backups` — that is the Python module sitting next
+    # to core/, and runtime data must never be written into the source tree.
+    DB_BACKUP_ROOT: str = "db_backups_data"
+    # In-process asyncio tick loop (db_backups/scheduler.py). Same single
+    # uvicorn worker assumption as the folder-backup scheduler and the rate
+    # limiter; disable in tests (a TestClient runs lifespan) and in any
+    # future multi-worker deployment.
+    DB_BACKUP_SCHEDULER_ENABLED:      bool = True
+    DB_BACKUP_SCHEDULER_TICK_SECONDS: int  = 300
+    # pg_dump executable — a bare name resolved on PATH, or an absolute
+    # path so a server can pin a specific major version's client.
+    PG_DUMP_PATH: str = "pg_dump"
+    # A hung dump is killed and recorded as `failed`; it is never left
+    # `running` forever.
+    PG_DUMP_TIMEOUT_SECONDS: int = 3600
+
     class Config:
         # Env files, ordered lowest → highest priority: pydantic-settings
         # gives the LAST file in the list precedence, and ignores files that

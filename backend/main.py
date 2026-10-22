@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -25,6 +26,12 @@ from storage_usage.router import router as storage_router
 from company_profile.router import router as company_profile_router
 from correspondence.router import router as correspondence_router
 from antivirus.router    import router as antivirus_router
+from db_backups.router   import router as db_backups_router
+from db_backups.scheduler import (
+    start_scheduler as start_db_backup_scheduler,
+    stop_scheduler  as stop_db_backup_scheduler,
+)
+from db_backups.service  import get_db_backup_root
 
 
 @asynccontextmanager
@@ -36,7 +43,27 @@ async def lifespan(app: FastAPI):
         # single uvicorn worker assumption (same as the rate limiter).
         # Tests disable it via conftest because a TestClient runs lifespan.
         start_scheduler()
+    # Spec 36: fail loudly on a DB_BACKUP_ROOT that sits inside STORAGE_ROOT
+    # or BACKUP_ROOT. The message is logged rather than raised on purpose —
+    # a misconfigured *backup* path must never keep the DMS from serving
+    # documents. The authoritative guard still runs inside
+    # get_db_backup_root(), which every dump/download calls first, so a bad
+    # root can never receive a write (it degrades to status=failed, the same
+    # way spec 35 does).
+    try:
+        get_db_backup_root()
+    except Exception:
+        logging.getLogger("dms.db_backups").exception(
+            "DB_BACKUP_ROOT is misconfigured — database backups will fail"
+        )
+    if settings.DB_BACKUP_SCHEDULER_ENABLED:
+        # Database backup scheduler (spec 36) — a second in-process asyncio
+        # tick loop, kept separate from the folder-backup one so the two can
+        # be enabled/disabled independently. Disabled in tests for the same
+        # reason: a TestClient runs lifespan.
+        start_db_backup_scheduler()
     yield
+    await stop_db_backup_scheduler()
     await stop_scheduler()
 
 
@@ -123,6 +150,7 @@ app.include_router(company_profile_router,   prefix=f"{API}/companies",         
 app.include_router(correspondence_router,    prefix=f"{API}/correspondences",       tags=["Correspondence"])
 app.include_router(antivirus_router,         prefix=f"{API}/antivirus",            tags=["Antivirus"])
 app.include_router(backups_router,           prefix=f"{API}/backups",              tags=["Backups"])
+app.include_router(db_backups_router,        prefix=f"{API}/db-backups",           tags=["Database Backups"])
 
 
 # ── Custom OpenAPI — replace OAuth2 with clean HTTPBearer ────

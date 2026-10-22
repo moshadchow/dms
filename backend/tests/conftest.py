@@ -11,6 +11,7 @@ import middleware.rbac
 import middleware.audit
 import notifications.tasks
 import backups.scheduler
+import db_backups.scheduler
 from core.database import get_session
 from core.security import create_access_token, hash_password
 from documents.models import Document, DocumentStatus, DocumentUserLevelLink, FileType
@@ -50,10 +51,22 @@ def client(tmp_path, monkeypatch):
     # backups/scheduler.py binds engine at import time (spec 35) — patch it
     # too so a scheduler pass hits the test DB instead of the real one.
     monkeypatch.setattr(backups.scheduler, "engine", engine)
+    # db_backups/scheduler.py binds engine at import time (spec 36) — patch
+    # it too so a scheduled dump pass hits the test DB, never the real one.
+    monkeypatch.setattr(db_backups.scheduler, "engine", engine)
     # Backup scheduler must never start under TestClient (entering the
     # context manager runs lifespan) and archives go to a per-test temp dir.
     monkeypatch.setattr(core.database.settings, "BACKUP_SCHEDULER_ENABLED", False)
     monkeypatch.setattr(core.database.settings, "BACKUP_ROOT", str(tmp_path / "backups"))
+    # Same for the database-backup scheduler (spec 36); dumps land in a
+    # per-test temp dir sitting alongside storage/ and backups/ so the
+    # DB_BACKUP_ROOT containment guard still passes.
+    monkeypatch.setattr(core.database.settings, "DB_BACKUP_SCHEDULER_ENABLED", False)
+    monkeypatch.setattr(core.database.settings, "DB_BACKUP_ROOT", str(tmp_path / "db_backups"))
+    # NO TEST MAY EVER SHELL OUT. Point pg_dump at a file that cannot exist;
+    # tests that need a dump exercise db_backups.service._run_pg_dump by
+    # monkeypatching it (success / non-zero exit / missing binary / timeout).
+    monkeypatch.setattr(core.database.settings, "PG_DUMP_PATH", str(tmp_path / "no_such_pg_dump"))
     monkeypatch.setattr(core.database.settings, "DEBUG", False)
     monkeypatch.setattr(core.database.settings, "STORAGE_ROOT", str(tmp_path / "storage"))
     # Never open real network connections from tests (tasks send email once
