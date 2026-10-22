@@ -210,12 +210,20 @@ export default function Sidebar({ isOpen }: Props) {
                 active={location.pathname === '/admin/backups'}
               />
               {isSuperAdmin() && (
-                <NavBtn
-                  label="Company Profile"
-                  onClick={() => navigate('/admin/company-profile')}
-                  icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M9 8h1"/><path d="M9 12h1"/><path d="M9 16h1"/><path d="M14 8h1"/><path d="M14 12h1"/><path d="M14 16h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>}
-                  active={location.pathname === '/admin/company-profile'}
-                />
+                <>
+                  <NavBtn
+                    label="Database Backups"
+                    onClick={() => navigate('/admin/db-backups')}
+                    icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>}
+                    active={location.pathname === '/admin/db-backups'}
+                  />
+                  <NavBtn
+                    label="Company Profile"
+                    onClick={() => navigate('/admin/company-profile')}
+                    icon={<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 21h18"/><path d="M9 8h1"/><path d="M9 12h1"/><path d="M9 16h1"/><path d="M14 8h1"/><path d="M14 12h1"/><path d="M14 16h1"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/></svg>}
+                    active={location.pathname === '/admin/company-profile'}
+                  />
+                </>
               )}
             </>
           )}

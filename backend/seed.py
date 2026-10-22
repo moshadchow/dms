@@ -29,6 +29,7 @@ import memos.models            # noqa: F401
 import antivirus.models        # noqa: F401 (must be before company_profile due to FK)
 import company_profile.models  # noqa: F401
 import backups.models          # noqa: F401 (must be after company_profile due to FK)
+import db_backups.models       # noqa: F401 (FK to users)
 from user_levels.models import UserLevel
 from users.models import (
     Permission,
@@ -212,6 +213,21 @@ def seed() -> None:
                 print(f"  [+] Backup setting: {key} = {value}")
             else:
                 print(f"  [=] Backup setting already set: {key} = {row.value}")
+
+        # ── 7. Database backup schedule defaults (spec 36) ─────
+
+        DB_BACKUP_SETTING_DEFAULTS = [
+            ("db_backup_enabled", "true", "PostgreSQL dump scheduler enabled"),
+            ("db_backup_interval_hours", "24", "Hours between scheduled database dumps"),
+            ("db_backup_retention_count", "7", "Dump files kept before pruning"),
+        ]
+        for key, value, description in DB_BACKUP_SETTING_DEFAULTS:
+            row = session.get(SystemSetting, key)
+            if not row:
+                session.add(SystemSetting(key=key, value=value, description=description))
+                print(f"  [+] Database backup setting: {key} = {value}")
+            else:
+                print(f"  [=] Database backup setting already set: {key} = {row.value}")
 
         session.commit()
         print("\n  Seed complete.")
