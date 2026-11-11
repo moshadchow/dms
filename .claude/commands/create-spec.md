@@ -111,18 +111,18 @@ something that can be verified by running the app.
 ---
 
 ## Step 4 — Save the spec
-Save to: `plans/<step_number>-<feature_slug>.md`
+Save to: `specs/<step_number>-<feature_slug>.md`
 
 ## Step 5 — Report to the user
 Print a short summary in this exact format:
 ```
 Branch:    <branch_name>
-Spec file: plans/<step_number>-<feature_slug>.md
+Spec file: specs/<step_number>-<feature_slug>.md
 Title:     <feature_title>
 ```
 
 Then tell the user:
-"Review the spec at `plans/<step_number>-<feature_slug>.md`
+"Review the spec at `specs/<step_number>-<feature_slug>.md`
 then enter Plan Mode with Shift+Tab twice to begin implementation."
 
 Do not print the full spec in chat unless explicitly asked.
