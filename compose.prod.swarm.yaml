@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER_FILE: /run/secrets/postgres_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB_FILE: /run/secrets/postgres_db
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - app-network
+    secrets:
+      - postgres_user
+      - postgres_password
+      - postgres_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  backend:
+    image: dms-backend:latest
+    command: >
+      sh -c "
+      export DATABASE_URL=$$(cat /run/secrets/database_url) &&
+      export JWT_SECRET_KEY=$$(cat /run/secrets/jwt_secret_key) &&
+      export JWT_ALGORITHM=$$(cat /run/secrets/jwt_algorithm) &&
+      export GUNICORN_WORKERS=$$(cat /run/secrets/gunicorn_workers) &&
+      exec gunicorn --workers $${GUNICORN_WORKERS} --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 main:app --access-logfile /tmp/log.txt
+      "
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+      - document_storage:/app/storage/uploads
+    networks:
+      - app-network
+    secrets:
+      - database_url
+      - jwt_secret_key
+      - jwt_algorithm
+      - gunicorn_workers
+    deploy:
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      restart_policy:
+        condition: on-failure
+
+  migrate:
+    image: fastapi-ecom-backend:latest
+    command: >
+      sh -c "
+      until pg_isready -h db -p 5432 -U postgres;do
+        echo 'Waiting for DB...';
+        sleep 3;
+      done &&
+      export DATABASE_URL=$$(cat /run/secrets/database_url) &&
+      exec alembic upgrade head
+      "
+    networks:
+      - app-network
+    secrets:
+      - database_url
+    deploy:
+      restart_policy:
+        condition: none
+
+secrets:
+  database_url:
+    external: true
+  jwt_secret_key:
+    external: true
+  jwt_algorithm:
+    external: true
+  postgres_user:
+    external: true
+  postgres_password:
+    external: true
+  postgres_db:
+    external: true
+  gunicorn_workers:
+    external: true
+
+volumes:
+  db_data:
+  document_storage:
+
+networks:
+  app-network:
+    driver: overlay

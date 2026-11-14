@@ -242,6 +242,8 @@ Non-admin denials return **404, not 403** (oracle avoidance).
 
 - Production is **not** Docker: `dms-backend.service` (systemd unit, uvicorn on 127.0.0.1:8000) + `dms.conf` (nginx TLS terminating).
 - `docker-compose.yml` is stale — it builds `./backend` and `./frontend`, which do not exist.
+- **Production Docker Compose**: `compose.prod.yaml` — fixed production compose file (removed undefined redis service, added `document_storage` volume for uploads, added `gunicorn` to requirements). Uses `env_file: .env.prod`.
+- **Docker Swarm**: `compose.prod.swarm.yaml` — Swarm-mode compose with secrets-based configuration and overlay network. Requires external secrets for database_url, jwt secrets, and gunicorn_workers.
 - TLS via Let's Encrypt/bootstrap with `scripts/tls/install_tls.sh`.
 
 ### Commits
