@@ -15,12 +15,12 @@ RUN apt-get update \
 
 # 4. Copy requirements file and install dependencies
 # We assume you have a requirements.txt with: celery, redis, etc.
-COPY requirement.txt .
+COPY backend/requirements.txt .
 RUN pip install --upgrade pip \
-    && pip wheel --no-cache-dir --no-deps --wheel-dir /wheels -r requirement.txt
+    && pip wheel --no-cache-dir --no-deps --wheel-dir /wheels -r requirements.txt
 
 # 5. Copy the rest of the application code
-COPY . /app
+COPY backend/ /app
 
 
 
@@ -46,5 +46,3 @@ COPY --from=builder /app /app
 
 RUN chown -R app:app /app
 USER app
-
-CMD

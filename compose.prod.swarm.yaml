@@ -1,6 +1,18 @@
 version: '3.8'
 
 services:
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - .nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      -  app-network
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
   db:
     image: postgres:16
     environment:
@@ -9,8 +21,6 @@ services:
       POSTGRES_DB_FILE: /run/secrets/postgres_db
     volumes:
       - db_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     networks:
       - app-network
     secrets:
@@ -18,7 +28,7 @@ services:
       - postgres_password
       - postgres_db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U dmsuser"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -30,17 +40,13 @@ services:
   backend:
     image: dms-backend:latest
     command: >
-      sh -c "
-      export DATABASE_URL=$$(cat /run/secrets/database_url) &&
-      export JWT_SECRET_KEY=$$(cat /run/secrets/jwt_secret_key) &&
-      export JWT_ALGORITHM=$$(cat /run/secrets/jwt_algorithm) &&
-      export GUNICORN_WORKERS=$$(cat /run/secrets/gunicorn_workers) &&
-      exec gunicorn --workers $${GUNICORN_WORKERS} --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 main:app --access-logfile /tmp/log.txt
-      "
+      sh -c 'for f in /run/secrets/*; do n=$$(basename $$f | tr a-z A-Z);
+      export "$$n=$$(cat $$f)"; done;
+      exec gunicorn --workers 1 --worker-class uvicorn.workers.UvicornWorker
+      --bind 0.0.0.0:8000 main:app --access-logfile -'
     ports:
       - "8000:8000"
     volumes:
-      - ./:/app
       - document_storage:/app/storage/uploads
     networks:
       - app-network
@@ -59,10 +65,10 @@ services:
         condition: on-failure
 
   migrate:
-    image: fastapi-ecom-backend:latest
+    image: dms-backend:latest
     command: >
       sh -c "
-      until pg_isready -h db -p 5432 -U postgres;do
+      until pg_isready -h db -p 5432 -U dmsuser;do
         echo 'Waiting for DB...';
         sleep 3;
       done &&
