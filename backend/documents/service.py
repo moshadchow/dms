@@ -136,6 +136,32 @@ class DocumentService:
 
         effective_status = status if status is not None else DocumentStatus.ACTIVE
 
+        # Global search with no query and no other filters: return an empty
+        # paginated response instead of all accessible documents.
+        # Directory/category browsing (directory_id or category_id set) and
+        # any other filtering (file_type, status, uploaded_by, date ranges)
+        # are unaffected and still return matching results.
+        has_any_filter = (
+            directory_id is not None
+            or category_id is not None
+            or file_type is not None
+            or status is not None
+            or uploaded_by is not None
+            or created_from is not None
+            or created_to is not None
+            or updated_from is not None
+            or updated_to is not None
+            or sort_by is not None
+            or sort_order is not None
+        )
+        if not search and not has_any_filter:
+            return DocumentListResponse(
+                total=0,
+                page=skip // limit + 1,
+                limit=limit,
+                items=[],
+            )
+
         query = (
             select(Document)
             .join(Directory, Document.directory_id == Directory.id)

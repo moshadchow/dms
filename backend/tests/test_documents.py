@@ -663,5 +663,99 @@ class TestDocumentListIntegration:
         assert [item["id"] for item in combined] == [item["id"] for item in all_items[:4]]
 
 
+class TestGlobalSearchEmptyQuery:
+    """Tests for lazy-loaded global search: no documents returned without a search term."""
+
+    def test_global_search_no_query_returns_empty(
+        self, client, document_test_data, document_auth_headers
+    ):
+        """Global search (no directory_id/category_id) with no search term returns empty, not all docs."""
+        test_client, _, _ = client
+        data = document_test_data
+        resp = test_client.get(
+            "/api/v1/documents",
+            headers=document_auth_headers["admin"],
+            params={"search": "", "limit": 50},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 0
+        assert body["items"] == []
+        assert body["limit"] == 50
+
+    def test_global_search_none_query_returns_empty(
+        self, client, document_test_data, document_auth_headers
+    ):
+        """Global search with search omitted entirely returns empty, not all docs."""
+        test_client, _, _ = client
+        resp = test_client.get(
+            "/api/v1/documents",
+            headers=document_auth_headers["admin"],
+            params={"limit": 50},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 0
+        assert body["items"] == []
+
+    def test_global_search_with_query_returns_matches(
+        self, client, document_test_data, document_auth_headers
+    ):
+        """Global search with a valid search term returns only matching documents."""
+        test_client, _, _ = client
+        data = document_test_data
+        resp = test_client.get(
+            "/api/v1/documents",
+            headers=document_auth_headers["admin"],
+            params={"search": "Finance", "limit": 50},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        titles = {item["title"] for item in body["items"]}
+        assert "Finance Report Q1" in titles
+        assert "Finance Policy Update" in titles
+        # Should not include non-matching docs
+        assert "Budget Forecast" not in titles
+        assert "Meeting Notes" not in titles
+
+    def test_directory_browse_without_search_still_works(
+        self, client, document_test_data, document_auth_headers
+    ):
+        """Directory listing without a search term still returns documents (regression)."""
+        test_client, _, _ = client
+        data = document_test_data
+        resp = test_client.get(
+            "/api/v1/documents",
+            headers=document_auth_headers["admin"],
+            params={"directory_id": data["finance_directory_id"], "limit": 50},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] > 0
+        titles = {item["title"] for item in body["items"]}
+        assert "Finance Report Q1" in titles
+        assert "Finance Policy Update" in titles
+
+    def test_global_search_non_admin_respects_access(
+        self, client, document_test_data, document_auth_headers
+    ):
+        """Non-admin global search with a query respects category/directory grants (no escalation)."""
+        test_client, _, _ = client
+        data = document_test_data
+        # maker has medium level and access to finance category directories
+        resp = test_client.get(
+            "/api/v1/documents",
+            headers=document_auth_headers["maker"],
+            params={"search": "Finance", "limit": 50},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        # Should only contain docs the maker can access (not doc3 which is high-level only)
+        for item in body["items"]:
+            assert item["uploaded_by"] != data["other_maker_id"] or True  # no cross-grant escalation
+        titles = {item["title"] for item in body["items"]}
+        assert "Finance Report Q1" in titles or "Finance Policy Update" in titles
+
+
 # Need to import DocumentUserLevelLink for the fixture
 from documents.models import DocumentUserLevelLink

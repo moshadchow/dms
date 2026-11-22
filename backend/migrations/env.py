@@ -14,7 +14,7 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool, text
 from sqlmodel import SQLModel
 
 # ── Make sure backend/ is on sys.path so all modules are importable ──
@@ -32,6 +32,13 @@ import workflow.models     # noqa: F401  — WorkflowDefinition, WorkflowStep, W
 import notifications.models  # noqa: F401  — EmailNotification
 import antivirus.models      # noqa: F401  — AntivirusScan
 import company_profile.models  # noqa: F401  — Company
+import memos.models          # noqa: F401  — Memo
+import backups.models        # noqa: F401  — CompanyBackup
+import storage_usage.models  # noqa: F401  — SystemSetting
+import db_backups.models     # noqa: F401  — DBBackup
+import audit.models          # noqa: F401  — AuditEvent
+import correspondence.models  # noqa: F401  — Correspondence
+import rbac.models           # noqa: F401  — RBAC models
 
 from core.config import settings  # noqa: E402  (after sys.path insert)
 
@@ -77,15 +84,25 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     '''
     Run migrations against a live DB connection.
-    This is the normal path used by lembic upgrade head.
+    This is the normal path used by alembic upgrade head.
     '''
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix='sqlalchemy.',
+    url = config.get_main_option('sqlalchemy.url')
+    connectable = create_engine(
+        url,
         poolclass=pool.NullPool,   # NullPool is recommended for migrations
+        connect_args={'options': '-csearch_path=public'},
     )
 
     with connectable.connect() as connection:
+        # Create public schema if it doesn't exist (some PG instances use template0)
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS public"))
+        connection.execute(text("SET search_path TO public"))
+        # SQLAlchemy 2.0 "begin once" leaves an implicit transaction open after
+        # the two execute() calls above. Commit it now so that alembic's own
+        # context.begin_transaction() starts a clean transaction whose commit
+        # persists the migration DDL. Without this, the connection close rolls
+        # back the implicit transaction and undoes every CREATE TABLE.
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

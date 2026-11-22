@@ -35,6 +35,9 @@ const ALLOWED_MIME = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'image/jpeg',
   'image/png',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
 ]
 
 export default function CorrespondenceForm({ initialDirection, onSubmit, onCancel, loading }: Props) {
@@ -269,7 +272,7 @@ export default function CorrespondenceForm({ initialDirection, onSubmit, onCance
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.docx,.xlsx,.xls,.jpg,.jpeg,.png"
+            accept=".pdf,.docx,.xlsx,.xls,.ppt,.pps,.pptx,.ppsx,.jpg,.jpeg,.png"
             style={{ display: 'none' }}
             onChange={handleFileSelect}
           />

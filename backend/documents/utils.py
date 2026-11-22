@@ -25,7 +25,7 @@ from fastapi import HTTPException, UploadFile, status
 
 from core.config import settings
 from core.storage import storage_service
-from documents.models import ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, FileType
+from documents.models import ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES, FileType
 from company_profile.models import Company
 
 
@@ -35,10 +35,10 @@ from company_profile.models import Company
 
 def validate_file(file: UploadFile) -> FileType:
     """
-    Validate the uploaded file's MIME type against the allow-list.
+    Validate the uploaded file's MIME type and extension against the allow-list.
 
     Returns the resolved FileType enum on success.
-    Raises HTTP 422 for unsupported types.
+    Raises HTTP 422 for unsupported types or extensions.
 
     Size validation is deferred to save_upload() once the full
     byte stream has been read.
@@ -47,11 +47,26 @@ def validate_file(file: UploadFile) -> FileType:
     if mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail=(
+            detail=(
                 f"File type '{mime}' is not supported. "
-                "Allowed types: PDF, DOCX, Excel (.xlsx/.xls), JPG, PNG"
+                "Allowed types: PDF, DOCX, Excel (.xlsx/.xls), "
+                "PowerPoint (.pptx/.ppt/.ppsx/.pps), JPG, PNG"
             ),
         )
+
+    # Case-insensitive extension check as defense-in-depth.
+    filename = file.filename or ""
+    extension = Path(filename).suffix.lower()
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"File extension '{extension or '(none)'}' is not supported. "
+                "Allowed extensions: .pdf, .docx, .xls, .xlsx, "
+                ".ppt, .pps, .pptx, .ppsx, .jpg, .jpeg, .png"
+            ),
+        )
+
     return ALLOWED_MIME_TYPES[mime]
 
 

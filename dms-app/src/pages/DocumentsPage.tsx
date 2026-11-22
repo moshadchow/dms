@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { toast } from 'react-hot-toast'
 import { isAccessDeniedError } from '@/api/client'
@@ -48,6 +48,9 @@ export default function DocumentsPage() {
   const [bulkRestoring, setBulkRestoring]   = useState(false)
   const [page, setPage]             = useState(1)
   const LIMIT = 20
+  const MIN_SEARCH_LEN = 3
+  const DEBOUNCE_MS = 300
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sorting & Advanced Filtering state
   const [sortBy, setSortBy]         = useState<SortField>('created_at')
@@ -245,14 +248,64 @@ export default function DocumentsPage() {
   }
 
   useEffect(() => {
+    // Global search: only load when a meaningful search term is present.
+    // Otherwise show the empty-state guidance and do not fetch any documents.
     if (isGlobalSearch) {
-      loadDocuments()
+      const trimmed = search.trim()
+      if (trimmed.length >= MIN_SEARCH_LEN) {
+        loadDocuments()
+      } else {
+        Promise.resolve().then(() => setDocData(null))
+      }
     } else if (resolvedDirId) {
       loadDocuments()
     } else {
       Promise.resolve().then(() => setDocData(null))
     }
-  }, [resolvedDirId, isGlobalSearch, loadDocuments])
+  }, [resolvedDirId, isGlobalSearch, loadDocuments, search, MIN_SEARCH_LEN])
+
+  // Debounced search: only call the API after typing stops and min length met.
+  // Clearing the input immediately clears results without waiting for debounce.
+  useEffect(() => {
+    const trimmed = search.trim()
+
+    // Clear results immediately when input is cleared — no API call.
+    if (trimmed.length === 0) {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current)
+        searchTimer.current = null
+      }
+      setTimeout(() => {
+        setDocData(null)
+        setPage(1)
+      }, 0)
+      return
+    }
+
+    // Below minimum length: do not call the API; show guidance instead.
+    if (trimmed.length < MIN_SEARCH_LEN) {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current)
+        searchTimer.current = null
+      }
+      return
+    }
+
+    if (searchTimer.current) {
+      clearTimeout(searchTimer.current)
+    }
+    searchTimer.current = setTimeout(() => {
+      loadDocuments()
+      searchTimer.current = null
+    }, DEBOUNCE_MS)
+
+    return () => {
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current)
+        searchTimer.current = null
+      }
+    }
+  }, [search, MIN_SEARCH_LEN, DEBOUNCE_MS, loadDocuments])
 
   // Reset page when search/filter/status changes (adjusted during render)
   const docFilterKey = search + '|' + fileTypeFilter + '|' + String(showArchived) + '|' + sortBy + '|' + sortOrder + '|' + uploadedBy + '|' + createdFrom + '|' + createdTo + '|' + updatedFrom + '|' + updatedTo + '|' + (resolvedDirId ?? '') + '|' + String(isGlobalSearch)
@@ -736,7 +789,7 @@ export default function DocumentsPage() {
                       <polyline points="14 2 14 8 20 8"/>
                     </svg>
                     <p style={{ fontWeight: 600, color: 'var(--text-tertiary)', margin: 0 }}>
-                      {search || fileTypeFilter || uploadedBy || createdFrom || createdTo || updatedFrom || updatedTo ? 'No documents match your filters' : 'No documents found across accessible directories'}
+                      {search.trim().length >= MIN_SEARCH_LEN ? 'No documents match your filters' : 'Enter a document name or keyword to search'}
                     </p>
                   </div>
                 ) : (

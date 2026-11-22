@@ -13,8 +13,11 @@ const ALLOWED_MIME = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'image/jpeg',
   'image/png',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
 ]
-const ALLOWED_EXT  = '.pdf,.docx,.xlsx,.xls,.jpg,.jpeg,.png'
+const ALLOWED_EXT  = '.pdf,.docx,.xlsx,.xls,.ppt,.pps,.pptx,.ppsx,.jpg,.jpeg,.png'
 const MAX_BYTES    = 50 * 1024 * 1024   // 50 MB
 
 interface Props {
@@ -182,7 +185,7 @@ export default function UploadModal({ isOpen, onClose, directoryId, onSuccess }:
               Drop files here or <span style={{ color: '#4f46e5' }}>browse</span>
             </p>
             <p style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', margin: 0 }}>
-              PDF, DOCX, Excel, JPG, PNG — max 50 MB each
+              PDF, DOCX, Excel, PowerPoint, JPG, PNG — max 50 MB each
             </p>
             <input ref={inputRef} type="file" accept={ALLOWED_EXT} multiple style={{ display: 'none' }} onChange={(e) => addFiles(e.target.files)} />
           </div>

@@ -16,6 +16,7 @@ class FileType(str, Enum):
     EXCEL = "excel"
     IMAGE = "image"
     HTML = "html"
+    PPT = "ppt"
 
 
 class DocumentStatus(str, Enum):
@@ -62,6 +63,23 @@ ALLOWED_MIME_TYPES: dict[str, FileType] = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": FileType.EXCEL,
     "image/jpeg": FileType.IMAGE,
     "image/png": FileType.IMAGE,
+    "application/vnd.ms-powerpoint": FileType.PPT,
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": FileType.PPT,
+    "application/vnd.openxmlformats-officedocument.presentationml.slideshow": FileType.PPT,
+}
+
+ALLOWED_EXTENSIONS: set[str] = {
+    ".pdf",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pps",
+    ".pptx",
+    ".ppsx",
+    ".jpg",
+    ".jpeg",
+    ".png",
 }
 
 MAX_FILE_SIZE_BYTES: int = 50 * 1024 * 1024

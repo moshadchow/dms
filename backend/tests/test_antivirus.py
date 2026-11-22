@@ -655,5 +655,282 @@ class TestAntivirusIntegration:
         pass
 
 
+# ──────────────────────────────
+# File Type Validation Tests
+# ──────────────────────────────
+
+
+def _make_mock_file(filename: str, content_type: str):
+    """Create a mock UploadFile with the given filename and content type."""
+    mock_file = MagicMock(spec=UploadFile)
+    mock_file.filename = filename
+    mock_file.content_type = content_type
+    return mock_file
+
+
+def test_validate_file_pptx_accepted():
+    """PowerPoint .pptx (presentationml) MIME type is accepted."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file(
+        "presentation.pptx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ))
+    assert file_type == FileType.PPT
+
+
+def test_validate_file_ppt_accepted():
+    """PowerPoint .ppt (ms-powerpoint) MIME type is accepted."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file("presentation.ppt", "application/vnd.ms-powerpoint"))
+    assert file_type == FileType.PPT
+
+
+def test_validate_file_pps_accepted():
+    """PowerPoint .pps (ms-powerpoint) MIME type is accepted."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file("slideshow.pps", "application/vnd.ms-powerpoint"))
+    assert file_type == FileType.PPT
+
+
+def test_validate_file_ppsx_accepted():
+    """PowerPoint .ppsx (presentationml.slideshow) MIME type is accepted."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file(
+        "slideshow.ppsx",
+        "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    ))
+    assert file_type == FileType.PPT
+
+
+def test_validate_file_jpg_case_insensitive():
+    """.JPG uppercase extension is accepted (case-insensitive)."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file("photo.JPG", "image/jpeg"))
+    assert file_type == FileType.IMAGE
+
+
+def test_validate_file_png_case_insensitive():
+    """.PNG uppercase extension is accepted (case-insensitive)."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file("photo.PNG", "image/png"))
+    assert file_type == FileType.IMAGE
+
+
+def test_validate_file_pptx_case_insensitive():
+    """.PPTX uppercase extension is accepted (case-insensitive)."""
+    from documents.utils import validate_file
+
+    file_type = validate_file(_make_mock_file(
+        "deck.PPTX",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ))
+    assert file_type == FileType.PPT
+
+
+def test_validate_file_txt_rejected():
+    """.txt extension is rejected (422)."""
+    from documents.utils import validate_file
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        validate_file(_make_mock_file("notes.txt", "text/plain"))
+    assert exc.value.status_code == 422
+
+
+def test_validate_file_exe_rejected():
+    """.exe extension is rejected (422)."""
+    from documents.utils import validate_file
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        validate_file(_make_mock_file("payload.exe", "application/octet-stream"))
+    assert exc.value.status_code == 422
+
+
+def test_validate_file_mime_extension_mismatch_rejected():
+    """PDF MIME type but .exe extension is rejected (extension check)."""
+    from documents.utils import validate_file
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        validate_file(_make_mock_file("evil.exe", "application/pdf"))
+    assert exc.value.status_code == 422
+
+
+def test_validate_file_extension_mime_mismatch_rejected():
+    """.pdf extension but text/plain MIME is rejected (MIME check)."""
+    from documents.utils import validate_file
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc:
+        validate_file(_make_mock_file("notes.pdf", "text/plain"))
+    assert exc.value.status_code == 422
+
+
+# ──────────────────────────────
+# Document Upload Integration Tests (PowerPoint / Image)
+# ──────────────────────────────
+
+
+async def test_upload_document_pptx_accepted(
+    mock_session,
+    test_user,
+    test_directory,
+    dummy_engine,
+    tmp_path,
+):
+    """.pptx upload is accepted end-to-end."""
+    from user_levels.models import UserLevel
+    from documents.models import Document
+
+    with patch("documents.service.ensure_directory_access", return_value=test_directory):
+        with patch("documents.service.save_upload") as mock_save:
+            mock_save.return_value = ("uploads/1/1/deck.pptx", 1024)
+
+            mock_level = MagicMock(spec=UserLevel)
+            mock_level.id = 1
+            mock_level.is_active = True
+            mock_session.exec.return_value.all.return_value = [mock_level]
+
+            added_objects = []
+
+            def mock_add(obj):
+                added_objects.append(obj)
+
+            def mock_flush():
+                for obj in added_objects:
+                    if isinstance(obj, Document):
+                        obj.id = 1
+
+            mock_session.add.side_effect = mock_add
+            mock_session.flush.side_effect = mock_flush
+
+            with patch("core.storage.storage_service") as mock_storage:
+                mock_storage.resolve_path_with_fallback.return_value = tmp_path / "deck.pptx"
+                mock_storage.get_company_root.return_value = tmp_path
+
+                svc = DocumentService(mock_session)
+                with patch("documents.service.AntivirusService") as mock_av_svc_class:
+                    mock_av_svc = MagicMock()
+                    mock_scan = MagicMock()
+                    mock_scan.id = 1
+                    mock_scan.scan_status = ModelScanStatus.CLEAN
+                    mock_av_svc.scan_file = AsyncMock(return_value=mock_scan)
+                    mock_av_svc_class.return_value = mock_av_svc
+
+                    mock_file = _make_mock_file(
+                        "deck.pptx",
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    )
+
+                    result = await svc.upload_document(
+                        file=mock_file,
+                        title="Presentation",
+                        description="Test",
+                        directory_id=1,
+                        uploaded_by=1,
+                        current_user=test_user,
+                        user_level_ids=[1],
+                    )
+
+    assert result is not None
+    assert mock_av_svc.scan_file.called
+
+
+async def test_upload_document_jpg_accepted(
+    mock_session,
+    test_user,
+    test_directory,
+    dummy_engine,
+    tmp_path,
+):
+    """.jpg upload is accepted end-to-end (image regression)."""
+    from user_levels.models import UserLevel
+    from documents.models import Document
+
+    with patch("documents.service.ensure_directory_access", return_value=test_directory):
+        with patch("documents.service.save_upload") as mock_save:
+            mock_save.return_value = ("uploads/1/1/photo.jpg", 1024)
+
+            mock_level = MagicMock(spec=UserLevel)
+            mock_level.id = 1
+            mock_level.is_active = True
+            mock_session.exec.return_value.all.return_value = [mock_level]
+
+            added_objects = []
+
+            def mock_add(obj):
+                added_objects.append(obj)
+
+            def mock_flush():
+                for obj in added_objects:
+                    if isinstance(obj, Document):
+                        obj.id = 1
+
+            mock_session.add.side_effect = mock_add
+            mock_session.flush.side_effect = mock_flush
+
+            with patch("core.storage.storage_service") as mock_storage:
+                mock_storage.resolve_path_with_fallback.return_value = tmp_path / "photo.jpg"
+                mock_storage.get_company_root.return_value = tmp_path
+
+                svc = DocumentService(mock_session)
+                with patch("documents.service.AntivirusService") as mock_av_svc_class:
+                    mock_av_svc = MagicMock()
+                    mock_scan = MagicMock()
+                    mock_scan.id = 1
+                    mock_scan.scan_status = ModelScanStatus.CLEAN
+                    mock_av_svc.scan_file = AsyncMock(return_value=mock_scan)
+                    mock_av_svc_class.return_value = mock_av_svc
+
+                    mock_file = _make_mock_file("photo.jpg", "image/jpeg")
+
+                    result = await svc.upload_document(
+                        file=mock_file,
+                        title="Photo",
+                        description="Test",
+                        directory_id=1,
+                        uploaded_by=1,
+                        current_user=test_user,
+                        user_level_ids=[1],
+                    )
+
+    assert result is not None
+    assert mock_av_svc.scan_file.called
+
+
+async def test_upload_document_txt_rejected(
+    mock_session,
+    test_user,
+    test_directory,
+    tmp_path,
+):
+    """.txt upload is rejected (422) at validation, before save."""
+    from fastapi import HTTPException
+
+    with patch("documents.service.ensure_directory_access", return_value=test_directory):
+        svc = DocumentService(mock_session)
+        mock_file = _make_mock_file("notes.txt", "text/plain")
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.upload_document(
+                file=mock_file,
+                title="Notes",
+                description="Test",
+                directory_id=1,
+                uploaded_by=1,
+                current_user=test_user,
+                user_level_ids=[1],
+            )
+
+    assert exc.value.status_code == 422
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

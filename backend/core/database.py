@@ -14,6 +14,7 @@ engine = create_engine(
     pool_pre_ping=True,             # Detect stale connections before use
     pool_size=10,
     max_overflow=20,
+    connect_args={'options': '-csearch_path=public'},
 )
 
 
