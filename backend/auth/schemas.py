@@ -1,12 +1,31 @@
+from typing import List, Optional
+
 from pydantic import BaseModel
 
 
+class CompanyOption(BaseModel):
+    id:   int
+    name: str
+
+
 class LoginRequest(BaseModel):
-    # Plain str intentionally — login must accept any stored email value
-    # (including non-public domains like .local, .internal, .test).
-    # Format validation belongs on UserCreate, not on the login form.
-    email:    str
-    password: str
+    email:      str
+    password:   str
+    company_id: Optional[int] = None
+
+
+class LoginResponse(BaseModel):
+    access_token:              Optional[str] = None
+    refresh_token:             Optional[str] = None
+    token_type:                str = "bearer"
+    requires_company_selection: bool = False
+    selection_token:           Optional[str] = None
+    companies:                 Optional[List[CompanyOption]] = None
+
+
+class SelectCompanyRequest(BaseModel):
+    selection_token: str
+    company_id:      int
 
 
 class TokenResponse(BaseModel):

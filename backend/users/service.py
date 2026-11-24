@@ -171,8 +171,15 @@ class UserService:
         return _user_to_read(user)
 
     def create_user(self, data: UserCreate, current_user: User = None) -> UserRead:
+        # Determine target company for uniqueness scoping
+        target_company_id = data.company_id
+        if current_user is not None:
+            is_superadmin = any(r.name == RoleName.SUPERADMIN for r in current_user.roles)
+            is_admin = any(r.name == RoleName.ADMIN for r in current_user.roles)
+            if is_admin and not is_superadmin:
+                target_company_id = current_user.company_id
         exists = self.session.exec(
-            select(User).where(User.email == data.email)
+            select(User).where(User.email == data.email, User.company_id == target_company_id)
         ).first()
         if exists:
             raise HTTPException(
@@ -308,8 +315,15 @@ class UserService:
         if data.full_name is not None:
             user.full_name = data.full_name
         if data.email is not None:
+            company_ids = {user.company_id}
+            if data.company_id is not None:
+                company_ids.add(data.company_id)
             dup = self.session.exec(
-                select(User).where(User.email == data.email, User.id != user_id)
+                select(User).where(
+                    User.email == data.email,
+                    User.id != user_id,
+                    User.company_id.in_(company_ids),
+                )
             ).first()
             if dup:
                 raise HTTPException(

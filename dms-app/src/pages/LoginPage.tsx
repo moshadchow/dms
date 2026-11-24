@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/authStore'
 import { getErrorMessage } from '@/api/client'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import ucbLogo from '@/assets/ucb_logo.png'
+import type { LoginResponse } from '@/types/auth.types'
 import type { AzureProviderCompany } from '@/types/company.types'
 
 export default function LoginPage() {
@@ -25,9 +26,10 @@ export default function LoginPage() {
   const [azureCompanies, setAzureCompanies] = useState<AzureProviderCompany[]>([])
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | ''>('')
   const [showCompanySelector, setShowCompanySelector] = useState(false)
+  const [localSelection, setLocalSelection] = useState(false)
+  const [companyOptions, setCompanyOptions] = useState<{ id: number; name: string }[]>([])
 
   useEffect(() => {
-    if (isAuthenticated()) navigate('/dashboard', { replace: true })
     // Check which companies offer Microsoft sign-in (company-scoped config)
     fetch(`${apiRoot}/auth/azure/config`)
       .then((r) => r.json())
@@ -40,12 +42,23 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    // Clear any stale session before attempting login
+    useAuthStore.getState().logout()
     setError('')
     if (!email.trim() || !password.trim()) { setError('Email and password are required.'); return }
     setLoading(true)
     try {
-      const tokens = await authApi.login({ email: email.trim(), password })
-      setTokens(tokens.access_token, tokens.refresh_token)
+      const companies = await authApi.companiesByEmail(email.trim())
+      if (companies.length > 1) {
+        setCompanyOptions(companies)
+        setLocalSelection(true)
+        setShowCompanySelector(true)
+        return
+      }
+      const companyId = companies.length === 1 ? companies[0].id : undefined
+      const result = await authApi.login({ email: email.trim(), password, company_id: companyId })
+      if (!result.access_token || !result.refresh_token) { setError('Login failed.'); return }
+      setTokens(result.access_token, result.refresh_token)
       const user = await authApi.me()
       setUser(user)
       toast.success(`Welcome back, ${user.full_name.split(' ')[0]}!`)
@@ -71,6 +84,27 @@ export default function LoginPage() {
       // Show company selector
       setShowCompanySelector(true)
     }
+  }
+
+  const handleLocalCompanySelected = async () => {
+    if (!localSelection || selectedCompanyId === '') { setError('Please select a company.'); return }
+    setLoading(true)
+    try {
+      const result = await authApi.login({ email: email.trim(), password, company_id: Number(selectedCompanyId) })
+      if (!result.access_token || !result.refresh_token) { setError('Login failed.'); return }
+      setTokens(result.access_token, result.refresh_token)
+      const user = await authApi.me()
+      setUser(user)
+      toast.success(`Welcome back, ${user.full_name.split(' ')[0]}!`)
+      if (user.must_change_password) {
+        navigate('/force-change-password', { replace: true })
+      } else {
+        navigate('/dashboard', { replace: true })
+      }
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setLoading(false)
   }
 
   const handleCompanySelected = () => {
@@ -154,18 +188,18 @@ export default function LoginPage() {
                 style={{ width: '100%', fontSize: '0.875rem' }}
               >
                 <option value="">-- Select company --</option>
-                {azureCompanies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
+                {(localSelection ? companyOptions : azureCompanies).map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.name ?? c.full_name ?? c.short_name}</option>
                 ))}
               </select>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
-                onClick={handleCompanySelected}
+                onClick={localSelection ? handleLocalCompanySelected : handleCompanySelected}
                 className="btn btn-primary"
                 style={{ flex: 1, padding: '0.75rem', fontSize: '0.95rem', fontWeight: 700 }}
               >
-                Continue with Microsoft
+                {localSelection ? 'Continue' : 'Continue with Microsoft'}
               </button>
               <button
                 onClick={() => { setShowCompanySelector(false); setSelectedCompanyId('') }}
@@ -243,7 +277,9 @@ export default function LoginPage() {
           Don't have an account? <span style={{ color: 'var(--text)', fontWeight: 600 }}>Contact administrator</span>
         </p>
       </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); }`}</style>
     </div>
   )
+}
+
 }
