@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -17,7 +17,7 @@ from auth.azure_service import (
     resolve_azure_user,
     validate_id_token,
 )
-from auth.schemas import LoginRequest, PasswordChangeRequest, RefreshRequest, TokenResponse
+from auth.schemas import CompanyOption, LoginRequest, LoginResponse, PasswordChangeRequest, RefreshRequest, SelectCompanyRequest, TokenResponse
 from auth.service import AuthService
 from audit.models import AuditAction, AuditModule
 from audit.service import AuditService
@@ -34,6 +34,23 @@ from users.models import (
 )
 
 router = APIRouter()
+
+@router.get("/companies", response_model=List[CompanyOption], summary="List active companies for an email")
+def companies_for_email(email: str, session: Session = Depends(get_session)):
+    from users.models import User
+    from company_profile.models import Company
+    from auth.schemas import CompanyOption
+    users = session.exec(select(User).where(User.email == email, User.is_active == True)).all()
+    result = []
+    seen = set()
+    for u in users:
+        if u.company_id is None or u.company_id in seen:
+            continue
+        company = session.get(Company, u.company_id)
+        if company and company.is_active:
+            seen.add(u.company_id)
+            result.append(CompanyOption(id=company.id, name=company.full_name))
+    return result
 
 # In-memory store for PKCE/state/nonce (production should use Redis or encrypted cookies).
 # This store is the authority for the OAuth company context: the callback reads
@@ -69,20 +86,20 @@ def _get_client_ip(request: Request) -> str:
 # Local Authentication
 # ─────────────────────────────────────────────────
 
-@router.post("/login", response_model=TokenResponse, summary="Obtain JWT token pair")
+@router.post("/login", response_model=LoginResponse, summary="Obtain JWT token pair or company selection")
 def login(
     payload: LoginRequest,
     session: Session = Depends(get_session),
 ):
-    """
-    Authenticate with email + password.
-    Returns an access token (1 h) and a refresh token (7 days).
-    """
-    token_pair = AuthService(session).login(payload.email, payload.password)
-    return TokenResponse(
-        access_token=token_pair.access_token,
-        refresh_token=token_pair.refresh_token,
-    )
+    return AuthService(session).login(payload.email, payload.password, payload.company_id)
+
+
+@router.post("/select-company", response_model=LoginResponse, summary="Select company after multi-company login")
+def select_company(
+    payload: SelectCompanyRequest,
+    session: Session = Depends(get_session),
+):
+    return AuthService(session).select_company(payload.selection_token, payload.company_id)
 
 
 @router.post("/refresh", response_model=TokenResponse, summary="Rotate token pair")

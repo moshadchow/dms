@@ -399,9 +399,9 @@ def resolve_azure_user(
         )
         return existing
 
-    # 2. Look up by email (link to existing local account)
+    # 2. Look up by email (link to existing local account) — scoped to company
     existing = session.exec(
-        select(User).where(User.email == email)
+        select(User).where(User.email == email, User.company_id == company_id)
     ).first()
     if existing:
         _ensure_company_membership(existing, company_id)
@@ -428,6 +428,13 @@ def resolve_azure_user(
             is_success=True,
         )
         return existing
+
+    # Cross-company/company-less handling: company-less legacy account is rejected.
+    global_existing = session.exec(
+        select(User).where(User.email == email)
+    ).first()
+    if global_existing is not None and global_existing.company_id is None:
+        _ensure_company_membership(global_existing, company_id)  # raises 403
 
     # 3. JIT provision a new user
     role_name = default_role_name or DEFAULT_JIT_ROLE_NAME

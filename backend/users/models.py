@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, Session, SQLModel, select
+from sqlalchemy import UniqueConstraint
 
 from company_profile.models import CompanyRead
 from user_levels.models import UserLevelRead
@@ -144,12 +145,15 @@ class RoleRead(RoleBase):
 
 class UserBase(SQLModel):
     full_name: str  = Field(max_length=150)
-    email:     str  = Field(unique=True, index=True, max_length=255)
+    email:     str  = Field(index=True, max_length=255)
     is_active: bool = Field(default=True)
 
 
 class User(UserBase, table=True):
     __tablename__ = "users"
+    __table_args__ = (
+        UniqueConstraint("company_id", "email", name="uq_users_company_email"),
+    )
 
     id:                    Optional[int] = Field(default=None, primary_key=True)
     hashed_password:       Optional[str] = Field(default=None, max_length=255)

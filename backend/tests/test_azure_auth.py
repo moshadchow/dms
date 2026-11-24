@@ -755,7 +755,7 @@ class TestAzureUserResolution:
             assert resolved.azure_object_id == "new-azure-oid"
             assert resolved.auth_provider == AuthProvider.AZURE_AD.value
 
-    def test_email_match_other_company_is_rejected_and_not_linked(
+    def test_email_match_other_company_provisions_separate_account(
         self, seeded_data, client
     ):
         _, engine, _ = client
@@ -766,15 +766,16 @@ class TestAzureUserResolution:
             ).first()
             assert other_admin.company_id == seeded_data["other_company_id"]
 
-            with pytest.raises(HTTPException) as exc:
-                resolve_azure_user(
-                    session,
-                    self._make_claims(
-                        oid="attacker-oid", email="other_admin@example.com"
-                    ),
-                    company_a,
-                )
-            assert exc.value.status_code == 403
+            resolved = resolve_azure_user(
+                session,
+                self._make_claims(
+                    oid="attacker-oid", email="other_admin@example.com"
+                ),
+                company_a,
+            )
+            assert resolved.id != other_admin.id
+            assert resolved.company_id == company_a
+            assert resolved.email == other_admin.email
 
             session.expire_all()
             unchanged = session.get(User, other_admin.id)
