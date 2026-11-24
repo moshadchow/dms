@@ -1,46 +1,32 @@
-# Investigation and Fix Plan: Duplicate-Email Company Selection
+# Login Page Blank Content Investigation Plan
 
-## Root Cause Candidates
-1. Backend candidate filtering: `AuthService.login` only includes users whose password verifies. If the duplicate accounts have different passwords, only one authenticates, so no selection list is returned.
-2. Frontend stale session: cached JWT/localStorage may redirect to dashboard before login.
-3. Company association validity: one or more duplicate accounts may be inactive or lack passwords.
+## Symptom
+`/login` renders an empty/blank page; email and password fields are not visible.
 
-## Evidence
-- `snm-user1@dms.local` exists under company 1 and company 2, both active local users with passwords.
-- Backend returns `requires_company_selection=true` only when more than one password-valid candidate exists.
+## Likely Root Causes
+1. Runtime render failure inside `LoginPage` caught by `ErrorBoundary`, leaving only blank shell.
+2. CSS theme variables (`--bg`, `--text`, `--surface`) may be undefined if `index.css` is not applied or `data-theme` is unset.
+3. `showCompanySelector` may be true on initial render, hiding the form behind an unstyled/empty selector.
+4. A stale persisted auth state may redirect before render completes.
 
-## Required Changes
-### Backend
-- Decide authentication model:
-  - If all duplicate accounts share one password, current backend logic is sufficient.
-  - If passwords differ, switch to company-first login: collect email, show associated active companies, then authenticate against selected company.
-- Add diagnostic logging of candidate count and valid count (without exposing hashes).
-- Ensure `/auth/select-company` validates selection token and company membership.
+## Investigation Steps
+1. Open browser DevTools on `/login`:
+   - Console: capture runtime errors.
+   - Elements: inspect `#root` and `.LoginPage` container.
+   - Computed styles: verify `--bg`, `--surface`, `--text`, width, height, display.
+2. Confirm `index.css` is loaded and `:root` variables are defined.
+3. Check whether `showCompanySelector` is unexpectedly true.
+4. Verify `useAuthStore` does not redirect authenticated state.
+5. Test with a minimal inline-styled login form to isolate CSS vs component logic.
 
-### Frontend
-- Clear auth store before login attempt.
-- Handle `requires_company_selection` and render selector.
-- Do not navigate to dashboard until tokens are issued.
-- Use `/auth/select-company` for final token.
+## Recommended Fix
+- Add explicit, theme-independent inline styles for container, card, labels, and inputs as a fallback.
+- Guard `showCompanySelector` so it only displays when company options exist.
+- Ensure `useEffect` does not clear state in a way that triggers remount loops.
+- Add a visible fallback/error boundary message for login render failures.
 
-### Database
-- Verify duplicate accounts are active and have passwords.
-- Verify companies are active.
-
-## Edge Cases
-- Inactive company/user excluded from selection.
-- Single valid company logs in directly.
-- Invalid selection token rejected.
-- Cross-company data access blocked by JWT user context.
-
-## Tests
-- Duplicate active local users with same password -> selection required.
-- Duplicate users with different passwords -> either company-first flow or direct login depending on chosen model.
-- Unique email -> direct login.
-- Selection token tampering rejected.
-- Selected company scopes `/auth/me` and dashboard data.
-
-## Regression Checks
-- Existing auth tests.
-- Company scoping tests.
-- Azure duplicate-email tests.
+## Validation
+- Light and dark themes.
+- Desktop, tablet, and mobile widths.
+- No console errors.
+- Email/password inputs visible and focusable.
