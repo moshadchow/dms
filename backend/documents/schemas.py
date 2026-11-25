@@ -33,10 +33,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from documents.models import DocumentStatus, FileType, ScanStatus
 
-
 # ══════════════════════════════════════════════
 # Upload (multipart/form-data fields)
 # ══════════════════════════════════════════════
+
 
 class DocumentUploadForm(BaseModel):
     """
@@ -45,15 +45,17 @@ class DocumentUploadForm(BaseModel):
     the expected shape and validates values after parsing.
     """
 
-    title:        str           = Field(..., min_length=1, max_length=255,
-                                        examples=["Q1 Financial Report"])
-    description:  Optional[str] = Field(None, max_length=1000)
-    directory_id: int           = Field(..., description="Target directory ID")
+    title: str = Field(
+        ..., min_length=1, max_length=255, examples=["Q1 Financial Report"]
+    )
+    description: Optional[str] = Field(None, max_length=1000)
+    directory_id: int = Field(..., description="Target directory ID")
 
 
 # ══════════════════════════════════════════════
 # Update
 # ══════════════════════════════════════════════
+
 
 class DocumentUpdateRequest(BaseModel):
     """
@@ -63,12 +65,12 @@ class DocumentUpdateRequest(BaseModel):
     status should only be used by Admin to override lifecycle state.
     """
 
-    title:       Optional[str]            = Field(None, min_length=1, max_length=255)
-    description: Optional[str]            = Field(None, max_length=1000)
-    status:      Optional[DocumentStatus] = Field(
-                                               None,
-                                               description="Admin override of document status",
-                                           )
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = Field(None, max_length=1000)
+    status: Optional[DocumentStatus] = Field(
+        None,
+        description="Admin override of document status",
+    )
 
     @field_validator("status")
     @classmethod
@@ -83,15 +85,30 @@ class DocumentUpdateRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════
+# Move
+# ══════════════════════════════════════════════
+
+
+class DocumentMoveRequest(BaseModel):
+    """
+    Body for PATCH /documents/{document_id}/move.
+    Requires UPDATE permission.
+    """
+
+    new_directory_id: int = Field(..., description="Target directory ID")
+
+
+# ══════════════════════════════════════════════
 # Uploader short projection (embedded in document responses)
 # ══════════════════════════════════════════════
+
 
 class UploaderShortResponse(BaseModel):
     """Lightweight user info embedded inside DocumentDetailResponse."""
 
-    id:        int
+    id: int
     full_name: str
-    email:     str
+    email: str
 
     model_config = {"from_attributes": True}
 
@@ -99,6 +116,7 @@ class UploaderShortResponse(BaseModel):
 # ══════════════════════════════════════════════
 # Document — Responses
 # ══════════════════════════════════════════════
+
 
 class DocumentResponse(BaseModel):
     """
@@ -108,20 +126,24 @@ class DocumentResponse(BaseModel):
     Clients use /view and /download endpoints to access file content.
     """
 
-    id:           int
-    title:        str
-    description:  Optional[str]
+    id: int
+    title: str
+    description: Optional[str]
     directory_id: int
-    uploaded_by:  int
-    file_name:    str
-    file_type:    FileType
-    mime_type:    str
-    file_size:    int           = Field(..., description="File size in bytes")
-    status:       DocumentStatus
-    created_at:   datetime
-    updated_at:   datetime
-    user_level_ids: List[int]   = Field(default_factory=list, description="IDs of permitted user levels")
-    av_scan_status: Optional[ScanStatus] = Field(default=None, description="Antivirus scan status")
+    uploaded_by: int
+    file_name: str
+    file_type: FileType
+    mime_type: str
+    file_size: int = Field(..., description="File size in bytes")
+    status: DocumentStatus
+    created_at: datetime
+    updated_at: datetime
+    user_level_ids: List[int] = Field(
+        default_factory=list, description="IDs of permitted user levels"
+    )
+    av_scan_status: Optional[ScanStatus] = Field(
+        default=None, description="Antivirus scan status"
+    )
 
     model_config = {"from_attributes": True}
 
@@ -150,16 +172,18 @@ class DocumentCardResponse(BaseModel):
     Omits heavy fields (description, mime_type) to keep list payloads small.
     """
 
-    id:         int
-    title:      str
-    file_name:  str
-    file_type:  FileType
-    file_size:  int
+    id: int
+    title: str
+    file_name: str
+    file_type: FileType
+    file_size: int
     uploaded_by: int
-    status:     DocumentStatus
+    status: DocumentStatus
     created_at: datetime
     user_level_ids: List[int] = Field(default_factory=list)
-    av_scan_status: Optional[ScanStatus] = Field(default=None, description="Antivirus scan status")
+    av_scan_status: Optional[ScanStatus] = Field(
+        default=None, description="Antivirus scan status"
+    )
 
     model_config = {"from_attributes": True}
 
@@ -168,6 +192,7 @@ class DocumentCardResponse(BaseModel):
 # Document — List / Search
 # ══════════════════════════════════════════════
 
+
 class DocumentListResponse(BaseModel):
     """
     Paginated document list returned by GET /documents.
@@ -175,10 +200,10 @@ class DocumentListResponse(BaseModel):
     page is 1-based.  next_page / prev_page are null at boundaries.
     """
 
-    total:     int
-    page:      int
-    limit:     int
-    items:     List[DocumentResponse]
+    total: int
+    page: int
+    limit: int
+    items: List[DocumentResponse]
     next_page: Optional[int] = None
     prev_page: Optional[int] = None
 
@@ -205,8 +230,10 @@ class DocumentListResponse(BaseModel):
 # File type filter (used as query param schema)
 # ══════════════════════════════════════════════
 
+
 class SortField(str):
     """Allowed sort fields for document listing."""
+
     TITLE = "title"
     FILE_NAME = "file_name"
     FILE_SIZE = "file_size"
@@ -220,6 +247,7 @@ class SortField(str):
 
 class SortOrder(str):
     """Sort order options."""
+
     ASC = "asc"
     DESC = "desc"
 
@@ -230,36 +258,46 @@ class DocumentFilterParams(BaseModel):
     Validated centrally so routers stay clean.
     """
 
-    directory_id:   Optional[int]      = None
-    category_id:    Optional[int]      = None
-    file_type:      Optional[FileType] = Field(None, description="pdf | docx | excel | image")
-    status:         Optional[DocumentStatus] = Field(
-                                                DocumentStatus.ACTIVE,
-                                                description="Defaults to active",
-                                              )
-    search:         Optional[str]      = Field(
-                                            None,
-                                            max_length=255,
-                                            description="Search title or filename",
-                                        )
+    directory_id: Optional[int] = None
+    category_id: Optional[int] = None
+    file_type: Optional[FileType] = Field(
+        None, description="pdf | docx | excel | image"
+    )
+    status: Optional[DocumentStatus] = Field(
+        DocumentStatus.ACTIVE,
+        description="Defaults to active",
+    )
+    search: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Search title or filename",
+    )
     # Sorting
-    sort_by:        Optional[str]      = Field(
-                                                None,
-                                                description="Sort field: title, file_name, file_size, created_at, updated_at",
-                                            )
-    sort_order:     Optional[str]      = Field(
-                                                None,
-                                                description="Sort order: asc or desc",
-                                            )
+    sort_by: Optional[str] = Field(
+        None,
+        description="Sort field: title, file_name, file_size, created_at, updated_at",
+    )
+    sort_order: Optional[str] = Field(
+        None,
+        description="Sort order: asc or desc",
+    )
     # Additional filters
-    uploaded_by:    Optional[int]      = Field(None, description="Filter by uploader user ID")
-    created_from:   Optional[datetime] = Field(None, description="Filter by created_at >= (ISO 8601)")
-    created_to:     Optional[datetime] = Field(None, description="Filter by created_at <= (ISO 8601)")
-    updated_from:   Optional[datetime] = Field(None, description="Filter by updated_at >= (ISO 8601)")
-    updated_to:     Optional[datetime] = Field(None, description="Filter by updated_at <= (ISO 8601)")
+    uploaded_by: Optional[int] = Field(None, description="Filter by uploader user ID")
+    created_from: Optional[datetime] = Field(
+        None, description="Filter by created_at >= (ISO 8601)"
+    )
+    created_to: Optional[datetime] = Field(
+        None, description="Filter by created_at <= (ISO 8601)"
+    )
+    updated_from: Optional[datetime] = Field(
+        None, description="Filter by updated_at >= (ISO 8601)"
+    )
+    updated_to: Optional[datetime] = Field(
+        None, description="Filter by updated_at <= (ISO 8601)"
+    )
     # Pagination
-    skip:           int = Field(0, ge=0)
-    limit:          int = Field(50, ge=1, le=200)
+    skip: int = Field(0, ge=0)
+    limit: int = Field(50, ge=1, le=200)
 
     @field_validator("sort_by")
     @classmethod
@@ -286,33 +324,40 @@ class DocumentFilterParams(BaseModel):
 # Archive / Restore / Delete
 # ══════════════════════════════════════════════
 
+
 class DocumentStatusResponse(BaseModel):
     """
     Generic status-change confirmation.
     Returned by /archive, /restore, and DELETE endpoints.
     """
 
-    detail:      str
+    detail: str
     document_id: int
-    status:      DocumentStatus
+    status: DocumentStatus
 
 
 # ══════════════════════════════════════════════
 # Bulk restore
 # ══════════════════════════════════════════════
 
+
 class BulkRestoreRequest(BaseModel):
-    document_ids: List[int] = Field(..., min_length=1, description="IDs of documents to restore")
+    document_ids: List[int] = Field(
+        ..., min_length=1, description="IDs of documents to restore"
+    )
 
 
 class BulkRestoreResponse(BaseModel):
     restored: List[DocumentResponse]
-    failed:   List[dict] = Field(default_factory=list, description="List of {id, error} dicts")
+    failed: List[dict] = Field(
+        default_factory=list, description="List of {id, error} dicts"
+    )
 
 
 # ══════════════════════════════════════════════
 # Upload progress / batch (future-ready)
 # ══════════════════════════════════════════════
+
 
 class BatchUploadResponse(BaseModel):
     """
@@ -321,8 +366,8 @@ class BatchUploadResponse(BaseModel):
     """
 
     total_uploaded: int
-    succeeded:      List[DocumentResponse]
-    failed:         List[dict]             = Field(
-                                               default_factory=list,
-                                               description="List of {filename, error} dicts",
-                                           )
+    succeeded: List[DocumentResponse]
+    failed: List[dict] = Field(
+        default_factory=list,
+        description="List of {filename, error} dicts",
+    )

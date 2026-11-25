@@ -9,6 +9,7 @@ import type {
   DocumentListParams,
   DocumentWorkspaceResponse,
   BulkRestoreResponse,
+  DocumentMoveRequest,
 } from '@/types/document.types'
 
 export const documentsApi = {
@@ -59,6 +60,11 @@ export const documentsApi = {
 
   update: async (id: number, data: DocumentUpdateRequest): Promise<Document> => {
     const res = await apiClient.patch<Document>(`/documents/${id}`, data)
+    return res.data
+  },
+
+  move: async (id: number, data: DocumentMoveRequest): Promise<Document> => {
+    const res = await apiClient.patch<Document>(`/documents/${id}/move`, data)
     return res.data
   },
 

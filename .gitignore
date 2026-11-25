@@ -4,5 +4,10 @@
 .claude/settings.local.json
 # Runtime backup archives (spec 35)
 backups_data/
+backend/backups_data/
 # Runtime database dumps (spec 36) — a pg_dump of dms_db is live production data
 db_backups_data/
+backend/db_backups_data/
+#Runtime storage (spec 37)
+storage/    
+backlog/storage/

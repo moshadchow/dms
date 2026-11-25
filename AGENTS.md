@@ -35,7 +35,7 @@ mypy backend/
 ```bash
 npm install
 npm run dev          # proxies /api → backend :8000
-npm run build        # tsc + vite build
+npm run build        # tsc + vite build (includes typecheck)
 npm run lint         # ESLint
 ```
 
@@ -64,6 +64,8 @@ npm run lint         # ESLint
 - `test_workflow_company.py::TestSuperAdminCategoryRestrictions::test_superadmin_cannot_modify_category_ids`
 
 Healthy run: `2 failed, 686 passed`.
+
+**New feature (Spec 37)**: Move Directories and Documents — 22 new tests in `tests/test_move_directories.py` and `tests/test_move_documents.py` (all passing).
 
 ---
 

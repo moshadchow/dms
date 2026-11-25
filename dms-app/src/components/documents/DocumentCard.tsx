@@ -5,6 +5,7 @@ import { documentsApi } from '@/api/documents.api'
 import { getErrorMessage } from '@/api/client'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatFileSize, formatDateTime } from '@/utils/formatters'
+import MoveDocumentModal from './MoveDocumentModal'
 import type { Document } from '@/types/document.types'
 
 interface Props {
@@ -61,6 +62,7 @@ const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }>
 export default function DocumentCard({ doc, onView, onRefresh, selectable, selected, onSelect }: Props) {
   const { canUpdate, canDelete, canDownload, isAdmin } = usePermissions()
   const [menuOpen, setMenuOpen]   = useState(false)
+  const [moveDoc, setMoveDoc]     = useState<Document | null>(null)
 
   const statusStyle = STATUS_STYLE[doc.status] ?? STATUS_STYLE.active
   const fileIcon    = FILE_ICONS[doc.file_type]
@@ -108,29 +110,35 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
     }
   }
 
+  const handleMove = () => {
+    setMenuOpen(false)
+    setMoveDoc(doc)
+  }
+
   return (
-    <div style={{
-      backgroundColor: 'var(--surface)',
-      borderRadius: '0.875rem',
-      border: '1px solid var(--border)',
-      padding: '1rem',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '0.75rem',
-      transition: 'box-shadow 150ms, border-color 150ms',
-      position: 'relative',
-      cursor: 'pointer',
-    }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.boxShadow = 'var(--shadow-md)'
-        e.currentTarget.style.borderColor = 'var(--border-soft)'
+    <>
+      <div style={{
+        backgroundColor: 'var(--surface)',
+        borderRadius: '0.875rem',
+        border: '1px solid var(--border)',
+        padding: '1rem',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '0.75rem',
+        transition: 'box-shadow 150ms, border-color 150ms',
+        position: 'relative',
+        cursor: 'pointer',
       }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.boxShadow = 'none'
-        e.currentTarget.style.borderColor = 'var(--border)'
-      }}
-      onClick={() => onView(doc)}
-    >
+        onMouseEnter={(e) => {
+          e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+          e.currentTarget.style.borderColor = 'var(--border-soft)'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = 'none'
+          e.currentTarget.style.borderColor = 'var(--border)'
+        }}
+        onClick={() => onView(doc)}
+      >
       {/* Top row — icon + title + menu */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
         {selectable && (
@@ -178,6 +186,12 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
                 {canDownload && <MenuItem icon="download"  label="Download" onClick={() => { setMenuOpen(false); handleDownload() }} />}
                 {canUpdate && doc.status === 'active'   && <MenuItem icon="archive"  label="Archive"  onClick={handleArchive} />}
                 {isAdmin    && doc.status !== 'active'  && <MenuItem icon="restore"  label="Restore"  onClick={handleRestore} />}
+                {canUpdate && (
+                  <>
+                    <div style={{ height: '1px', backgroundColor: 'var(--bg)', margin: '0.2rem 0' }} />
+                    <MenuItem icon="move" label="Move" onClick={handleMove} />
+                  </>
+                )}
                 {canDelete  && (
                   <>
                     <div style={{ height: '1px', backgroundColor: 'var(--bg)', margin: '0.2rem 0' }} />
@@ -212,6 +226,13 @@ export default function DocumentCard({ doc, onView, onRefresh, selectable, selec
         </p>
       </div>
     </div>
+    <MoveDocumentModal
+      isOpen={!!moveDoc}
+      document={moveDoc}
+      onClose={() => setMoveDoc(null)}
+      onSuccess={onRefresh}
+    />
+    </>
   )
 }
 
@@ -221,6 +242,7 @@ function MenuItem({ icon, label, onClick, danger, disabled }: { icon: string; la
     download: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
     archive:  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>,
     restore:  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></svg>,
+    move:     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
     trash:    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>,
   }
   return (

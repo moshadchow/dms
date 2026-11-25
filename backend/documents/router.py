@@ -18,7 +18,11 @@ from documents.models import (
     DocumentVariantSaveRequest,
     DocumentWorkspaceRead,
 )
-from documents.schemas import BulkRestoreRequest, BulkRestoreResponse
+from documents.schemas import (
+    BulkRestoreRequest,
+    BulkRestoreResponse,
+    DocumentMoveRequest,
+)
 from documents.service import DocumentService
 from documents.variants import DocumentVariantService
 from users.models import PermissionAction
@@ -30,26 +34,40 @@ router = APIRouter()
 # List / Search
 # ──────────────────────────────────────────────
 
+
 @router.get("", response_model=DocumentListResponse, summary="List / search documents")
 def list_documents(
-    directory_id:    Optional[int]          = Query(None),
-    category_id:     Optional[int]          = Query(None),
-    file_type:       Optional[str]          = Query(None, description="pdf | docx | excel | image"),
-    search:          Optional[str]          = Query(None, description="Search title or filename"),
-    status:          Optional[DocumentStatus] = Query(None, description="Filter by status (admin only for non-active)"),
+    directory_id: Optional[int] = Query(None),
+    category_id: Optional[int] = Query(None),
+    file_type: Optional[str] = Query(None, description="pdf | docx | excel | image"),
+    search: Optional[str] = Query(None, description="Search title or filename"),
+    status: Optional[DocumentStatus] = Query(
+        None, description="Filter by status (admin only for non-active)"
+    ),
     # Sorting
-    sort_by:         Optional[str]          = Query(None, description="Sort field: title, file_name, file_size, created_at, updated_at"),
-    sort_order:      Optional[str]          = Query(None, description="Sort order: asc or desc"),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Sort field: title, file_name, file_size, created_at, updated_at",
+    ),
+    sort_order: Optional[str] = Query(None, description="Sort order: asc or desc"),
     # Additional filters
-    uploaded_by:     Optional[int]          = Query(None, description="Filter by uploader user ID"),
-    created_from:    Optional[datetime]     = Query(None, description="Filter by created_at >= (ISO 8601)"),
-    created_to:      Optional[datetime]     = Query(None, description="Filter by created_at <= (ISO 8601)"),
-    updated_from:    Optional[datetime]     = Query(None, description="Filter by updated_at >= (ISO 8601)"),
-    updated_to:      Optional[datetime]     = Query(None, description="Filter by updated_at <= (ISO 8601)"),
-    skip:            int                    = Query(0, ge=0),
-    limit:           int                    = Query(50, ge=1, le=200),
-    current_user:    CurrentUser            = None,
-    session:         Session                = Depends(get_session),
+    uploaded_by: Optional[int] = Query(None, description="Filter by uploader user ID"),
+    created_from: Optional[datetime] = Query(
+        None, description="Filter by created_at >= (ISO 8601)"
+    ),
+    created_to: Optional[datetime] = Query(
+        None, description="Filter by created_at <= (ISO 8601)"
+    ),
+    updated_from: Optional[datetime] = Query(
+        None, description="Filter by updated_at >= (ISO 8601)"
+    ),
+    updated_to: Optional[datetime] = Query(
+        None, description="Filter by updated_at <= (ISO 8601)"
+    ),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
 ):
     return DocumentService(session).list_documents(
         current_user=current_user,
@@ -74,6 +92,7 @@ def list_documents(
 # Upload
 # ──────────────────────────────────────────────
 
+
 @router.post(
     "/upload",
     response_model=DocumentRead,
@@ -82,13 +101,13 @@ def list_documents(
     dependencies=[Depends(require_permission(PermissionAction.CREATE))],
 )
 async def upload_document(
-    file:         UploadFile    = File(...),
-    title:        str           = Form(..., max_length=255),
-    description:  Optional[str] = Form(None),
-    directory_id: int           = Form(...),
-    user_level_ids: str         = Form("[]", description="JSON array of user level IDs"),
-    current_user: CurrentUser   = None,
-    session:      Session       = Depends(get_session),
+    file: UploadFile = File(...),
+    title: str = Form(..., max_length=255),
+    description: Optional[str] = Form(None),
+    directory_id: int = Form(...),
+    user_level_ids: str = Form("[]", description="JSON array of user level IDs"),
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
 ):
     try:
         parsed_level_ids = json.loads(user_level_ids)
@@ -113,6 +132,7 @@ async def upload_document(
 # Workspace / private variants
 #
 
+
 @router.get(
     "/{document_id}/workspace",
     response_model=DocumentWorkspaceRead,
@@ -120,9 +140,9 @@ async def upload_document(
     dependencies=[Depends(require_permission(PermissionAction.VIEW))],
 )
 def get_document_workspace(
-    document_id:  int,
+    document_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     return DocumentVariantService(session).get_workspace(document_id, current_user)
 
@@ -134,12 +154,14 @@ def get_document_workspace(
     dependencies=[Depends(require_permission(PermissionAction.VIEW))],
 )
 def save_private_variant(
-    document_id:  int,
-    payload:      DocumentVariantSaveRequest,
+    document_id: int,
+    payload: DocumentVariantSaveRequest,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
-    return DocumentVariantService(session).save_private_variant(document_id, payload, current_user)
+    return DocumentVariantService(session).save_private_variant(
+        document_id, payload, current_user
+    )
 
 
 @router.get(
@@ -149,9 +171,9 @@ def save_private_variant(
     dependencies=[Depends(require_permission(PermissionAction.VIEW))],
 )
 def get_private_variant(
-    variant_id:   int,
+    variant_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     return DocumentVariantService(session).get_variant(variant_id, current_user)
 
@@ -162,11 +184,13 @@ def get_private_variant(
     dependencies=[Depends(require_permission(PermissionAction.VIEW))],
 )
 def view_private_variant(
-    variant_id:   int,
+    variant_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
-    abs_path, variant = DocumentVariantService(session).get_variant_file_path(variant_id, current_user)
+    abs_path, variant = DocumentVariantService(session).get_variant_file_path(
+        variant_id, current_user
+    )
 
     def _iter(path: Path, chunk: int = 256 * 1024):
         with open(path, "rb") as f:
@@ -176,7 +200,9 @@ def view_private_variant(
     return StreamingResponse(
         _iter(abs_path),
         media_type=variant.source_mime_type,
-        headers={"Content-Disposition": f'inline; filename="{variant.source_file_name}"'},
+        headers={
+            "Content-Disposition": f'inline; filename="{variant.source_file_name}"'
+        },
     )
 
 
@@ -186,27 +212,34 @@ def view_private_variant(
     dependencies=[Depends(require_permission(PermissionAction.DOWNLOAD))],
 )
 def download_private_variant(
-    variant_id:   int,
+    variant_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
-    abs_path, variant = DocumentVariantService(session).get_variant_file_path(variant_id, current_user)
+    abs_path, variant = DocumentVariantService(session).get_variant_file_path(
+        variant_id, current_user
+    )
     return FileResponse(
         path=str(abs_path),
         filename=variant.source_file_name,
         media_type=variant.source_mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{variant.source_file_name}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{variant.source_file_name}"'
+        },
     )
 
 
 # Single document metadata
 # ──────────────────────────────────────────────
 
-@router.get("/{document_id}", response_model=DocumentRead, summary="Get document metadata")
+
+@router.get(
+    "/{document_id}", response_model=DocumentRead, summary="Get document metadata"
+)
 def get_document(
-    document_id:  int,
+    document_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     return DocumentService(session).get_document(document_id, current_user)
 
@@ -215,15 +248,16 @@ def get_document(
 # View (inline browser preview)
 # ──────────────────────────────────────────────
 
+
 @router.get(
     "/{document_id}/view",
     summary="Preview document in browser",
     dependencies=[Depends(require_permission(PermissionAction.VIEW))],
 )
 def view_document(
-    document_id:  int,
+    document_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     abs_path, doc = DocumentService(session).get_file_path(document_id, current_user)
 
@@ -243,15 +277,16 @@ def view_document(
 # Download
 # ──────────────────────────────────────────────
 
+
 @router.get(
     "/{document_id}/download",
     summary="Download document",
     dependencies=[Depends(require_permission(PermissionAction.DOWNLOAD))],
 )
 def download_document(
-    document_id:  int,
+    document_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     abs_path, doc = DocumentService(session).get_file_path(document_id, current_user)
     return FileResponse(
@@ -266,6 +301,7 @@ def download_document(
 # Update metadata
 # ──────────────────────────────────────────────
 
+
 @router.patch(
     "/{document_id}",
     response_model=DocumentRead,
@@ -273,17 +309,41 @@ def download_document(
     dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
 )
 def update_document(
-    document_id:  int,
-    payload:      DocumentUpdate,
+    document_id: int,
+    payload: DocumentUpdate,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     return DocumentService(session).update_document(document_id, payload, current_user)
+
+
+@router.patch(
+    "/{document_id}/move",
+    response_model=DocumentRead,
+    summary="Move document to a different directory",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def move_document(
+    document_id: int,
+    payload: DocumentMoveRequest,
+    current_user: CurrentUser = None,
+    session: Session = Depends(get_session),
+):
+    """
+    Move a document to a different directory.
+    Requires UPDATE permission.
+    """
+    return DocumentService(session).move_document(
+        document_id,
+        payload.new_directory_id,
+        current_user,
+    )
 
 
 # ──────────────────────────────────────────────
 # Archive / Restore
 # ──────────────────────────────────────────────
+
 
 @router.post(
     "/{document_id}/archive",
@@ -292,9 +352,9 @@ def update_document(
     dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
 )
 def archive_document(
-    document_id:  int,
+    document_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     return DocumentService(session).archive_document(document_id, current_user)
 
@@ -305,11 +365,13 @@ def archive_document(
     summary="Restore multiple archived or deleted documents (Admin only)",
 )
 def bulk_restore_documents(
-    payload:      BulkRestoreRequest,
+    payload: BulkRestoreRequest,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
-    result = DocumentService(session).bulk_restore_documents(payload.document_ids, current_user)
+    result = DocumentService(session).bulk_restore_documents(
+        payload.document_ids, current_user
+    )
     return result
 
 
@@ -319,11 +381,12 @@ def bulk_restore_documents(
     summary="Restore an archived or deleted document (Admin only)",
 )
 def restore_document(
-    document_id:  int,
+    document_id: int,
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     from fastapi import HTTPException
+
     if not current_user.is_admin():
         raise HTTPException(status_code=403, detail="Admin only")
     return DocumentService(session).restore_document(document_id, current_user)
@@ -333,6 +396,7 @@ def restore_document(
 # Delete
 # ──────────────────────────────────────────────
 
+
 @router.delete(
     "/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -340,12 +404,13 @@ def restore_document(
     dependencies=[Depends(require_permission(PermissionAction.DELETE))],
 )
 def delete_document(
-    document_id:  int,
-    hard:         bool        = Query(False, description="Permanently delete file from disk"),
+    document_id: int,
+    hard: bool = Query(False, description="Permanently delete file from disk"),
     current_user: CurrentUser = None,
-    session:      Session     = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     from fastapi import HTTPException
+
     if hard and not current_user.is_admin():
         raise HTTPException(status_code=403, detail="Hard delete requires Admin role")
     DocumentService(session).delete_document(document_id, current_user, hard=hard)

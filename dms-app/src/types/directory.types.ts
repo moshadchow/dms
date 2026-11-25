@@ -27,3 +27,7 @@ export interface DirectoryUpdateRequest {
   name?: string
   description?: string
 }
+
+export interface DirectoryMoveRequest {
+  new_parent_id: number | null
+}

@@ -122,3 +122,7 @@ export interface BulkRestoreResponse {
   restored: Document[]
   failed: { id: number; error: string }[]
 }
+
+export interface DocumentMoveRequest {
+  new_directory_id: number
+}
