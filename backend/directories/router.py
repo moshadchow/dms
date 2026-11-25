@@ -12,6 +12,7 @@ from directories.models import (
     DirectoryReadWithDocCount,
     DirectoryUpdate,
 )
+from directories.schemas import DirectoryMoveRequest
 from directories.service import DirectoryService
 from users.models import PermissionAction
 
@@ -51,9 +52,9 @@ def list_directories(
     summary="Full nested directory tree for a category",
 )
 def get_tree(
-    category_id:  int,
+    category_id: int,
     current_user: CurrentUser,
-    session:      Session = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     """
     Returns the complete recursive directory tree.
@@ -70,9 +71,9 @@ def get_tree(
     dependencies=[Depends(require_permission(PermissionAction.CREATE))],
 )
 def create_directory(
-    payload:      DirectoryCreate,
+    payload: DirectoryCreate,
     current_user: CurrentUser,
-    session:      Session = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     """
     Create a directory (or subdirectory by setting parent_id).
@@ -85,11 +86,13 @@ def create_directory(
     )
 
 
-@router.get("/{directory_id}", response_model=DirectoryRead, summary="Get directory by ID")
+@router.get(
+    "/{directory_id}", response_model=DirectoryRead, summary="Get directory by ID"
+)
 def get_directory(
     directory_id: int,
     current_user: CurrentUser,
-    session:      Session = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     return DirectoryService(session).get_directory(directory_id, current_user)
 
@@ -102,11 +105,36 @@ def get_directory(
 )
 def update_directory(
     directory_id: int,
-    payload:      DirectoryUpdate,
+    payload: DirectoryUpdate,
     current_user: CurrentUser,
-    session:      Session = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
-    return DirectoryService(session).update_directory(directory_id, payload, current_user)
+    return DirectoryService(session).update_directory(
+        directory_id, payload, current_user
+    )
+
+
+@router.patch(
+    "/{directory_id}/move",
+    response_model=DirectoryRead,
+    summary="Move directory to a new parent",
+    dependencies=[Depends(require_permission(PermissionAction.UPDATE))],
+)
+def move_directory(
+    directory_id: int,
+    payload: DirectoryMoveRequest,
+    current_user: CurrentUser,
+    session: Session = Depends(get_session),
+):
+    """
+    Move a directory to a new parent (or root if new_parent_id is null).
+    Requires UPDATE permission.
+    """
+    return DirectoryService(session).move_directory(
+        directory_id,
+        payload.new_parent_id,
+        current_user,
+    )
 
 
 @router.delete(
@@ -118,7 +146,7 @@ def update_directory(
 def delete_directory(
     directory_id: int,
     current_user: CurrentUser,
-    session:      Session = Depends(get_session),
+    session: Session = Depends(get_session),
 ):
     """Directory must have no subdirectories and no active documents."""
     DirectoryService(session).delete_directory(directory_id, current_user)

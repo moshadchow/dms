@@ -6,6 +6,7 @@ import { useDirectoryStore } from '@/store/directoryStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { getErrorMessage } from '@/api/client'
 import DirectoryFormModal from './DirectoryFormModal'
+import MoveDirectoryModal from './MoveDirectoryModal'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import type { DirectoryNode, Directory } from '@/types/directory.types'
 
@@ -33,6 +34,7 @@ export default function DirectoryTree({ categoryId, tree, onRefresh }: Props) {
   const [contextMenu, setContextMenu]     = useState<ContextMenu | null>(null)
   const [deletingDir, setDeletingDir]     = useState<DirectoryNode | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [moveDir, setMoveDir]             = useState<DirectoryNode | null>(null)
 
   // ── Actions ───────────────────────────────────────────────────────
   const openCreate = (pid: number | null = null) => {
@@ -47,6 +49,11 @@ export default function DirectoryTree({ categoryId, tree, onRefresh }: Props) {
     setParentId(null)
     setContextMenu(null)
     setFormOpen(true)
+  }
+
+  const openMove = (node: DirectoryNode) => {
+    setMoveDir(node)
+    setContextMenu(null)
   }
 
   const handleSelect = (node: DirectoryNode) => {
@@ -164,6 +171,12 @@ export default function DirectoryTree({ categoryId, tree, onRefresh }: Props) {
                 Rename
               </button>
             )}
+            {canUpdate && (
+              <button onClick={() => openMove(contextMenu.node)} style={ctxItemStyle}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                Move
+              </button>
+            )}
             {canDelete && (
               <>
                 <div style={{ height: '1px', backgroundColor: 'var(--bg)', margin: '0.2rem 0' }} />
@@ -184,6 +197,13 @@ export default function DirectoryTree({ categoryId, tree, onRefresh }: Props) {
         parentId={editingDir ? null : parentId}
         editing={editingDir}
         onClose={() => { setFormOpen(false); setEditingDir(null) }}
+        onSuccess={handleFormSuccess}
+      />
+
+      <MoveDirectoryModal
+        isOpen={!!moveDir}
+        directory={moveDir}
+        onClose={() => setMoveDir(null)}
         onSuccess={handleFormSuccess}
       />
 

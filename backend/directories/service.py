@@ -36,7 +36,9 @@ class DirectoryService:
 
     def get_directory(self, directory_id: int, current_user: User) -> DirectoryRead:
         """Read access: direct, or navigation via an accessible descendant."""
-        directory = ensure_directory_read_access(self.session, current_user, directory_id)
+        directory = ensure_directory_read_access(
+            self.session, current_user, directory_id
+        )
         return DirectoryRead(
             **directory.model_dump(),
             navigation_only=not has_directory_content_access(
@@ -44,7 +46,9 @@ class DirectoryService:
             ),
         )
 
-    def list_by_category(self, category_id: int, current_user: User) -> List[DirectoryRead]:
+    def list_by_category(
+        self, category_id: int, current_user: User
+    ) -> List[DirectoryRead]:
         """Return root-level directories (parent_id IS NULL) for a category.
 
         Partial-access users see only granted roots (or roots that are
@@ -73,7 +77,9 @@ class DirectoryService:
             ).all()
         )
         visible_roots = [
-            d for d in all_dirs if d.parent_id is None and self._subtree_has(d, all_dirs, effective)
+            d
+            for d in all_dirs
+            if d.parent_id is None and self._subtree_has(d, all_dirs, effective)
         ]
         visible_roots = sorted(visible_roots, key=lambda d: d.name)
         return [
@@ -104,7 +110,9 @@ class DirectoryService:
         ).all()
         return self._build_pruned_tree(all_dirs, parent_id=None, effective=effective)
 
-    def _subtree_has(self, root: Directory, all_dirs: List[Directory], effective: set) -> bool:
+    def _subtree_has(
+        self, root: Directory, all_dirs: List[Directory], effective: set
+    ) -> bool:
         if root.id in effective:
             return True
         return any(
@@ -133,7 +141,9 @@ class DirectoryService:
                 node = DirectoryNode(
                     **d.model_dump(),
                     navigation_only=d.id not in effective,
-                    children=self._build_pruned_tree(all_dirs, parent_id=d.id, effective=effective),
+                    children=self._build_pruned_tree(
+                        all_dirs, parent_id=d.id, effective=effective
+                    ),
                 )
                 nodes.append(node)
         return sorted(nodes, key=lambda n: n.name)
@@ -141,11 +151,13 @@ class DirectoryService:
     def list_all(self, current_user: User) -> List[Directory]:
         """Return all directories the user has category or directory access to."""
         if current_user.is_admin():
-            dirs = list(self.session.exec(
-                select(Directory).order_by(Directory.name)
-            ).all())
+            dirs = list(
+                self.session.exec(select(Directory).order_by(Directory.name)).all()
+            )
         else:
-            accessible_cat_ids = list(get_user_category_ids(self.session, current_user.id))
+            accessible_cat_ids = list(
+                get_user_category_ids(self.session, current_user.id)
+            )
             grant_ids = get_user_directory_grant_ids(self.session, current_user.id)
             conditions = []
             if accessible_cat_ids:
@@ -185,7 +197,9 @@ class DirectoryService:
     # Mutations
     # ──────────────────────────────────────────
 
-    def create_directory(self, data: DirectoryCreate, created_by: int, current_user: User) -> Directory:
+    def create_directory(
+        self, data: DirectoryCreate, created_by: int, current_user: User
+    ) -> Directory:
         ensure_category_access(self.session, current_user, data.category_id)
 
         # Treat parent_id=0 the same as null — means root-level directory
@@ -245,7 +259,9 @@ class DirectoryService:
 
         return directory
 
-    def update_directory(self, directory_id: int, data: DirectoryUpdate, current_user: User) -> Directory:
+    def update_directory(
+        self, directory_id: int, data: DirectoryUpdate, current_user: User
+    ) -> Directory:
         directory = ensure_directory_access(self.session, current_user, directory_id)
         old_values = {"name": directory.name}
         updates = data.model_dump(exclude_unset=True)
@@ -287,10 +303,12 @@ class DirectoryService:
 
         # Block delete if any active or archived documents exist
         active_docs = self.session.exec(
-            select(Document).where(
+            select(Document)
+            .where(
                 Document.directory_id == directory_id,
                 Document.status != DocumentStatus.DELETED,
-            ).limit(1)
+            )
+            .limit(1)
         ).first()
         if active_docs:
             raise HTTPException(
@@ -328,7 +346,138 @@ class DirectoryService:
             user=current_user,
         )
 
+    def move_directory(
+        self,
+        directory_id: int,
+        new_parent_id: Optional[int],
+        current_user: User,
+    ) -> Directory:
+        """
+        Move a directory to a new parent (or root if new_parent_id is None).
+        Validates access, prevents cycles, handles cross-category moves.
+        """
+        # Block SuperAdmin mutations
+        from users.models import RoleName
+
+        if any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot modify directories",
+            )
+
+        # Source directory - requires direct write access
+        directory = ensure_directory_access(self.session, current_user, directory_id)
+
+        # Validate destination
+        old_parent_id = directory.parent_id
+        old_category_id = directory.category_id
+
+        if new_parent_id is not None:
+            # Moving under a new parent
+            new_parent = ensure_directory_access(
+                self.session, current_user, new_parent_id
+            )
+            new_category_id = new_parent.category_id
+
+            # Prevent cycle: check if new_parent is a descendant of directory
+            current = new_parent_id
+            seen = set()
+            while current is not None and current not in seen:
+                if current == directory_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot move a directory into its own subtree",
+                    )
+                seen.add(current)
+                parent = self.session.get(Directory, current)
+                current = parent.parent_id if parent else None
+
+            # Check for sibling name conflict
+            sibling = self.session.exec(
+                select(Directory).where(
+                    Directory.name == directory.name,
+                    Directory.category_id == new_category_id,
+                    Directory.parent_id == new_parent_id,
+                    Directory.id != directory_id,
+                )
+            ).first()
+            if sibling:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A directory named '{directory.name}' already exists in the destination",
+                )
+        else:
+            # Moving to root of current category
+            new_category_id = directory.category_id
+            ensure_category_access(self.session, current_user, new_category_id)
+
+            # Check for sibling name conflict at root level
+            sibling = self.session.exec(
+                select(Directory).where(
+                    Directory.name == directory.name,
+                    Directory.category_id == new_category_id,
+                    Directory.parent_id == None,  # noqa: E711
+                    Directory.id != directory_id,
+                )
+            ).first()
+            if sibling:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A directory named '{directory.name}' already exists at the root level",
+                )
+
+        # Cross-category move: update category_id for directory and all descendants
+        if new_category_id != old_category_id:
+            # Get all descendants
+            all_dirs = list(
+                self.session.exec(
+                    select(Directory).where(Directory.category_id == old_category_id)
+                ).all()
+            )
+            children_of = {}
+            for d in all_dirs:
+                children_of.setdefault(d.parent_id, []).append(d.id)
+
+            # Collect all IDs in subtree
+            subtree_ids = [directory_id]
+            stack = [directory_id]
+            while stack:
+                current = stack.pop()
+                for child_id in children_of.get(current, []):
+                    subtree_ids.append(child_id)
+                    stack.append(child_id)
+
+            # Update category_id for all directories in subtree
+            for sub_id in subtree_ids:
+                sub_dir = self.session.get(Directory, sub_id)
+                if sub_dir:
+                    sub_dir.category_id = new_category_id
+                    sub_dir.updated_at = datetime.utcnow()
+                    self.session.add(sub_dir)
+
+        # Perform the move
+        directory.parent_id = new_parent_id
+        directory.updated_at = datetime.utcnow()
+        self.session.add(directory)
+        self.session.commit()
+        self.session.refresh(directory)
+
+        # Log audit event
+        AuditService(self.session).log_event(
+            action=AuditAction.MOVE_DIRECTORY,
+            module=AuditModule.DIRECTORIES,
+            company_id=current_user.company_id,
+            entity_name="directory",
+            entity_id=str(directory_id),
+            old_value={"parent_id": old_parent_id, "category_id": old_category_id},
+            new_value={"parent_id": new_parent_id, "category_id": new_category_id},
+            description=f"Moved directory '{directory.name}'",
+            is_success=True,
+            user=current_user,
+        )
+
+        return directory
+
     # ──────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────
-

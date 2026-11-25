@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 from sqlmodel import Session, select
 
 from categories.models import Category
@@ -28,7 +28,12 @@ from documents.models import (
     DocumentUserLevelLink,
     ScanStatus,
 )
-from documents.utils import delete_from_disk, resolve_storage_path, save_upload, validate_file
+from documents.utils import (
+    delete_from_disk,
+    resolve_storage_path,
+    save_upload,
+    validate_file,
+)
 from users.models import User
 from user_levels.models import UserLevel
 from company_profile.models import Company
@@ -52,7 +57,9 @@ class DocumentService:
     # Internal — ORM fetch (session-bound)
     # ──────────────────────────────────────────
 
-    def _get_orm(self, document_id: int, current_user: User, *, include_deleted: bool = False) -> Document:
+    def _get_orm(
+        self, document_id: int, current_user: User, *, include_deleted: bool = False
+    ) -> Document:
         """Return a session-bound ORM Document (for mutations only)."""
         return ensure_document_access(
             self.session,
@@ -73,9 +80,8 @@ class DocumentService:
         try:
             ensure_document_user_level_access(self.session, current_user, doc)
         except HTTPException as exc:
-            if (
-                exc.status_code != 403
-                or not is_eligible_approver_reader(self.session, doc.id, current_user)
+            if exc.status_code != 403 or not is_eligible_approver_reader(
+                self.session, doc.id, current_user
             ):
                 raise
 
@@ -114,25 +120,31 @@ class DocumentService:
     def list_documents(
         self,
         current_user: User,
-        directory_id:    Optional[int] = None,
-        category_id:     Optional[int] = None,
-        file_type:       Optional[str]  = None,
-        search:          Optional[str]  = None,
-        status:          Optional[DocumentStatus] = None,
+        directory_id: Optional[int] = None,
+        category_id: Optional[int] = None,
+        file_type: Optional[str] = None,
+        search: Optional[str] = None,
+        status: Optional[DocumentStatus] = None,
         # Sorting
-        sort_by:         Optional[str]  = None,
-        sort_order:      Optional[str]  = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
         # Additional filters
-        uploaded_by:     Optional[int]  = None,
-        created_from:    Optional[datetime] = None,
-        created_to:      Optional[datetime] = None,
-        updated_from:    Optional[datetime] = None,
-        updated_to:      Optional[datetime] = None,
-        skip:            int = 0,
-        limit:           int = 50,
+        uploaded_by: Optional[int] = None,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        updated_from: Optional[datetime] = None,
+        updated_to: Optional[datetime] = None,
+        skip: int = 0,
+        limit: int = 50,
     ) -> DocumentListResponse:
-        if status is not None and status != DocumentStatus.ACTIVE and not current_user.is_admin():
-            raise HTTPException(status_code=403, detail="Only admins can filter by non-active status")
+        if (
+            status is not None
+            and status != DocumentStatus.ACTIVE
+            and not current_user.is_admin()
+        ):
+            raise HTTPException(
+                status_code=403, detail="Only admins can filter by non-active status"
+            )
 
         effective_status = status if status is not None else DocumentStatus.ACTIVE
 
@@ -192,7 +204,7 @@ class DocumentService:
                 access_filters.append(Directory.category_id.in_(sorted(category_ids)))
             if effective_dir_ids:
                 access_filters.append(Directory.id.in_(sorted(effective_dir_ids)))
-            
+
             # When directory_id and category_id are both None, this is a global search
             # across all accessible directories. The access_filters already scope to
             # granted categories + directory subtrees, so no additional narrowing needed.
@@ -225,7 +237,8 @@ class DocumentService:
                 link.document_id
                 for link in self.session.exec(
                     select(DocumentUserLevelLink).where(
-                        DocumentUserLevelLink.user_level_id == current_user.user_level_id,
+                        DocumentUserLevelLink.user_level_id
+                        == current_user.user_level_id,
                     )
                 ).all()
             ]
@@ -251,6 +264,7 @@ class DocumentService:
         # For "to" dates: include the entire day (< start of next day)
         # This ensures date-only strings like '2026-01-20' work as expected (inclusive)
         from datetime import timedelta
+
         if created_from is not None:
             query = query.where(Document.created_at >= created_from)
         if created_to is not None:
@@ -265,27 +279,27 @@ class DocumentService:
 
         # Apply sorting
         sort_field_map = {
-            "title":       Document.title,
-            "file_name":   Document.file_name,
-            "file_size":   Document.file_size,
-            "created_at":  Document.created_at,
-            "updated_at":  Document.updated_at,
+            "title": Document.title,
+            "file_name": Document.file_name,
+            "file_size": Document.file_size,
+            "created_at": Document.created_at,
+            "updated_at": Document.updated_at,
         }
-        
+
         # Validate sort_by
         if sort_by is not None and sort_by not in sort_field_map:
             raise HTTPException(
                 status_code=422,
-                detail=f"Invalid sort_by value: '{sort_by}'. Allowed values: {', '.join(sort_field_map.keys())}"
+                detail=f"Invalid sort_by value: '{sort_by}'. Allowed values: {', '.join(sort_field_map.keys())}",
             )
-        
+
         # Validate sort_order
         if sort_order is not None and sort_order not in ("asc", "desc"):
             raise HTTPException(
                 status_code=422,
-                detail=f"Invalid sort_order value: '{sort_order}'. Allowed values: asc, desc"
+                detail=f"Invalid sort_order value: '{sort_order}'. Allowed values: asc, desc",
             )
-        
+
         # Determine the resolved sort_by key for default sort order logic
         resolved_sort_by = sort_by if sort_by in sort_field_map else "created_at"
         sort_field = sort_field_map[resolved_sort_by]
@@ -300,10 +314,8 @@ class DocumentService:
         )
 
         all_docs = self.session.exec(query).all()
-        total    = len(all_docs)
-        page_docs = self.session.exec(
-            query.offset(skip).limit(limit)
-        ).all()
+        total = len(all_docs)
+        page_docs = self.session.exec(query.offset(skip).limit(limit)).all()
 
         return DocumentListResponse(
             total=total,
@@ -318,11 +330,11 @@ class DocumentService:
 
     async def upload_document(
         self,
-        file:         UploadFile,
-        title:        str,
-        description:  Optional[str],
+        file: UploadFile,
+        title: str,
+        description: Optional[str],
         directory_id: int,
-        uploaded_by:  int,
+        uploaded_by: int,
         current_user: User,
         user_level_ids: Optional[list[int]] = None,
     ) -> DocumentRead:
@@ -362,7 +374,7 @@ class DocumentService:
         if not company:
             raise HTTPException(
                 status_code=400,
-                detail="User must belong to a company to upload documents"
+                detail="User must belong to a company to upload documents",
             )
 
         # Save to disk
@@ -376,13 +388,15 @@ class DocumentService:
             try:
                 from antivirus.engine import ScanStatus as EngineScanStatus
                 from core.storage import storage_service
-                
+
                 # Resolve absolute path for scanning
-                abs_path = storage_service.resolve_path_with_fallback(storage_path, company)
-                
+                abs_path = storage_service.resolve_path_with_fallback(
+                    storage_path, company
+                )
+
                 av_svc = AntivirusService(self.session)
                 av_scan = await av_svc.scan_file(abs_path, storage_path, company)
-                
+
                 # Handle scan results
                 if av_scan.scan_status == EngineScanStatus.INFECTED:
                     # File quarantined by scan_file, delete the document record if created
@@ -392,7 +406,11 @@ class DocumentService:
                         company_id=current_user.company_id,
                         entity_name="document",
                         entity_id="scan_failed",
-                        new_value={"title": title, "file_name": file.filename, "threat": av_scan.threat_name},
+                        new_value={
+                            "title": title,
+                            "file_name": file.filename,
+                            "threat": av_scan.threat_name,
+                        },
                         description=f"Upload rejected: infected file '{title}' ({av_scan.threat_name})",
                         is_success=False,
                         failure_reason=f"Malware detected: {av_scan.threat_name}",
@@ -405,6 +423,7 @@ class DocumentService:
                 elif av_scan.scan_status == EngineScanStatus.TIMEOUT:
                     # Clean up file
                     from documents.utils import delete_from_disk
+
                     delete_from_disk(storage_path, company)
                     AuditService(self.session).log_event(
                         action=AuditAction.UPLOAD_DOCUMENT,
@@ -425,6 +444,7 @@ class DocumentService:
                 elif av_scan.scan_status == EngineScanStatus.ERROR:
                     # Clean up file
                     from documents.utils import delete_from_disk
+
                     delete_from_disk(storage_path, company)
                     AuditService(self.session).log_event(
                         action=AuditAction.UPLOAD_DOCUMENT,
@@ -448,6 +468,7 @@ class DocumentService:
             except Exception as e:
                 # Unexpected error during scanning - clean up and fail
                 from documents.utils import delete_from_disk
+
                 delete_from_disk(storage_path, company)
                 AuditService(self.session).log_event(
                     action=AuditAction.UPLOAD_DOCUMENT,
@@ -497,7 +518,11 @@ class DocumentService:
             company_id=current_user.company_id,
             entity_name="document",
             entity_id=str(doc.id),
-            new_value={"title": title, "file_name": file.filename, "av_scan_status": av_scan.scan_status.value if av_scan else "skipped"},
+            new_value={
+                "title": title,
+                "file_name": file.filename,
+                "av_scan_status": av_scan.scan_status.value if av_scan else "skipped",
+            },
             description=f"Uploaded document '{title}'",
             is_success=True,
             user=current_user,
@@ -510,7 +535,9 @@ class DocumentService:
     # Update
     # ──────────────────────────────────────────
 
-    def update_document(self, document_id: int, data: DocumentUpdate, current_user: User) -> DocumentRead:
+    def update_document(
+        self, document_id: int, data: DocumentUpdate, current_user: User
+    ) -> DocumentRead:
         doc = self._get_orm(document_id, current_user)
         old_values = {"title": doc.title, "description": doc.description}
         for field, value in data.model_dump(exclude_unset=True).items():
@@ -565,7 +592,9 @@ class DocumentService:
         return self._to_read(doc)
 
     def restore_document(self, document_id: int, current_user: User) -> DocumentRead:
-        doc = ensure_document_access(self.session, current_user, document_id, include_deleted=True)
+        doc = ensure_document_access(
+            self.session, current_user, document_id, include_deleted=True
+        )
         old_status = doc.status.value
         doc.status = DocumentStatus.ACTIVE
         doc.updated_at = datetime.utcnow()
@@ -589,7 +618,9 @@ class DocumentService:
 
         return self._to_read(doc)
 
-    def bulk_restore_documents(self, document_ids: list[int], current_user: User) -> dict:
+    def bulk_restore_documents(
+        self, document_ids: list[int], current_user: User
+    ) -> dict:
         if not current_user.is_admin():
             raise HTTPException(status_code=403, detail="Admin only")
         restored = []
@@ -607,7 +638,9 @@ class DocumentService:
     # Delete
     # ──────────────────────────────────────────
 
-    def delete_document(self, document_id: int, current_user: User, hard: bool = False) -> None:
+    def delete_document(
+        self, document_id: int, current_user: User, hard: bool = False
+    ) -> None:
         doc = self._get_orm(document_id, current_user)
         old_values = {"status": doc.status.value, "title": doc.title}
         if hard:
@@ -634,6 +667,93 @@ class DocumentService:
             is_success=True,
             user=current_user,
         )
+
+    def move_document(
+        self,
+        document_id: int,
+        new_directory_id: int,
+        current_user: User,
+    ) -> "DocumentRead":
+        """
+        Move a document to a different directory.
+        Supports cross-category moves within the same company.
+        Updates document and associated private variants.
+        """
+        # Block SuperAdmin mutations
+        from users.models import RoleName
+
+        if any(r.name == RoleName.SUPERADMIN for r in current_user.roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin cannot modify documents",
+            )
+
+        # Source document - requires direct write access
+        doc = self._get_orm(document_id, current_user)
+        old_directory_id = doc.directory_id
+        old_category_id = doc.directory.category_id
+
+        # Destination directory - requires direct write access
+        new_directory = ensure_directory_access(
+            self.session, current_user, new_directory_id
+        )
+        new_category_id = new_directory.category_id
+
+        # Verify same company (both categories must belong to user's company)
+        if doc.directory.category.company_id != current_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cross-company move not allowed",
+            )
+        if new_directory.category.company_id != current_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cross-company move not allowed",
+            )
+
+        # Perform the move
+        doc.directory_id = new_directory_id
+        doc.updated_at = datetime.utcnow()
+        self.session.add(doc)
+
+        # Update private variants
+        from documents.models import DocumentVariant
+
+        variants = self.session.exec(
+            select(DocumentVariant).where(
+                DocumentVariant.source_document_id == document_id
+            )
+        ).all()
+        for variant in variants:
+            variant.directory_id = new_directory_id
+            variant.category_id = new_category_id
+            variant.updated_at = datetime.utcnow()
+            self.session.add(variant)
+
+        self.session.commit()
+        self.session.refresh(doc)
+
+        # Log audit event
+        AuditService(self.session).log_event(
+            action=AuditAction.MOVE_DOCUMENT,
+            module=AuditModule.DOCUMENTS,
+            company_id=current_user.company_id,
+            entity_name="document",
+            entity_id=str(document_id),
+            old_value={
+                "directory_id": old_directory_id,
+                "category_id": old_category_id,
+            },
+            new_value={
+                "directory_id": new_directory_id,
+                "category_id": new_category_id,
+            },
+            description=f"Moved document '{doc.title}'",
+            is_success=True,
+            user=current_user,
+        )
+
+        return self._to_read(doc)
 
     # ──────────────────────────────────────────
     # Download / Preview — returns ORM for streaming

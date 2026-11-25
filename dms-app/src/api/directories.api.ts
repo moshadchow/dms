@@ -4,6 +4,7 @@ import type {
   DirectoryNode,
   DirectoryCreateRequest,
   DirectoryUpdateRequest,
+  DirectoryMoveRequest,
 } from '@/types/directory.types'
 
 export const directoriesApi = {
@@ -14,6 +15,11 @@ export const directoriesApi = {
 
   listByCategory: async (categoryId: number): Promise<Directory[]> => {
     const res = await apiClient.get<Directory[]>(`/directories/category/${categoryId}`)
+    return res.data
+  },
+
+  listAll: async (): Promise<Directory[]> => {
+    const res = await apiClient.get<Directory[]>('/directories')
     return res.data
   },
 
@@ -34,6 +40,11 @@ export const directoriesApi = {
 
   update: async (id: number, data: DirectoryUpdateRequest): Promise<Directory> => {
     const res = await apiClient.patch<Directory>(`/directories/${id}`, data)
+    return res.data
+  },
+
+  move: async (id: number, data: DirectoryMoveRequest): Promise<Directory> => {
+    const res = await apiClient.patch<Directory>(`/directories/${id}/move`, data)
     return res.data
   },
 
