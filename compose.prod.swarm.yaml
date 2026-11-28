@@ -28,11 +28,12 @@ services:
       - postgres_password
       - postgres_db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dmsuser"]
+      test: ["CMD-SHELL", "pg_isready -U dmsuser -d dmsdb"]
       interval: 10s
       timeout: 5s
       retries: 3
-    deploy:
+     deploy:
+      endpoint_mode: dnsrr
       placement:
         constraints:
           - node.role == manager
